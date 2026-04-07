@@ -1,0 +1,42 @@
+{
+  "name": "scholarpen",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "AI-Assisted Academic Article Writer for macOS",
+  "private": true,
+  "scripts": {
+    "start": "vite build && electrobun dev",
+    "dev": "electrobun dev --watch",
+    "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
+    "hmr": "vite --port 5173",
+    "build:release": "vite build && electrobun build --env=release"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^2.0.38",
+    "@blocknote/core": "^0.47.3",
+    "@blocknote/mantine": "^0.47.3",
+    "@blocknote/react": "^0.47.3",
+    "@blocknote/xl-ai": "^0.47.3",
+    "@lancedb/lancedb": "latest",
+    "@types/katex": "^0.16.8",
+    "electrobun": "^1.16.0",
+    "katex": "^0.16.45",
+    "ollama": "^0.6.3",
+    "ollama-ai-provider": "^1.2.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/three": "^0.183.1",
+    "@vitejs/plugin-react": "^4.4.1",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.1.2",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.2"
+  }
+}

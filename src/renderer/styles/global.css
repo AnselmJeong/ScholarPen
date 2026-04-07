@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --scholar-bg: #f8f9fc;
+  --scholar-sidebar: #f0f2f7;
+  --scholar-border: #e2e6ed;
+  --scholar-text: #1a1d23;
+  --scholar-muted: #6b7280;
+  --scholar-accent: #4f6ef7;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--scholar-bg);
+  color: var(--scholar-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* BlockNote overrides */
+.bn-editor {
+  background: white;
+  min-height: 100%;
+}
+
+.bn-container {
+  height: 100%;
+}
