@@ -1,5 +1,10 @@
 import React, { useState, useRef, useCallback } from "react";
-import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
+import { X, RotateCcw, Copy, Settings2, Paperclip, Mic, Send, StopCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
+import type { OllamaStatus, ProjectInfo } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { rpc } from "../../rpc";
 
@@ -17,7 +22,6 @@ interface Message {
   content: string;
 }
 
-// Extract plain text from BlockNote blocks for context
 function blocksToText(blocks: unknown[]): string {
   function extract(node: unknown): string {
     if (!node || typeof node !== "object") return "";
@@ -32,16 +36,7 @@ function blocksToText(blocks: unknown[]): string {
   return blocks.map(extract).join("\n\n");
 }
 
-function getContextLabel(mode: ContextMode): string {
-  return mode === "selection" ? "Selection" : mode === "page" ? "Page" : "Manuscript";
-}
-
-export function AISidebar({
-  project: _project,
-  ollamaStatus,
-  editor,
-  onClose,
-}: AISidebarProps) {
+export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: AISidebarProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -55,24 +50,16 @@ export function AISidebar({
 
   const buildSystemPrompt = useCallback((): string => {
     if (!editor) return "You are a helpful academic writing assistant.";
-
     let context = "";
     if (contextMode === "selection") {
       const selection = editor.getSelection();
-      if (selection) {
-        context = blocksToText(selection.blocks);
-      }
-    } else if (contextMode === "page" || contextMode === "manuscript") {
+      if (selection) context = blocksToText(selection.blocks);
+    } else {
       context = blocksToText(editor.document);
     }
-
-    const contextLabel = getContextLabel(contextMode);
-    return (
-      `You are a helpful academic writing assistant. ` +
-      (context.trim()
-        ? `The user is working on the following ${contextLabel.toLowerCase()}:\n\n${context}\n\nHelp them with their request.`
-        : "Help the user with their academic writing.")
-    );
+    const label = contextMode === "selection" ? "selection" : contextMode === "page" ? "document" : "manuscript";
+    return `You are a helpful academic writing assistant.` +
+      (context.trim() ? ` The user is working on the following ${label}:\n\n${context}\n\nHelp them with their request.` : "");
   }, [editor, contextMode]);
 
   const handleSend = useCallback(async () => {
@@ -93,19 +80,15 @@ export function AISidebar({
     const newMessages: Message[] = [...messages, { role: "user", content: userMsg }];
     setMessages(newMessages);
     setLoading(true);
-
-    // Placeholder for streaming assistant reply
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
     scrollToBottom();
 
     const model = ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "gemma3";
     const systemPrompt = buildSystemPrompt();
-
     abortRef.current = new AbortController();
     let accumulated = "";
 
     try {
-      // Use RPC to call Bun which proxies to Ollama (avoids CORS issues)
       await rpc.generateTextStream(
         model,
         [
@@ -116,24 +99,16 @@ export function AISidebar({
           accumulated += chunk;
           setMessages((prev) => {
             const updated = [...prev];
-            updated[updated.length - 1] = {
-              role: "assistant",
-              content: accumulated,
-            };
+            updated[updated.length - 1] = { role: "assistant", content: accumulated };
             return updated;
           });
         }
       );
     } catch (err) {
-      if ((err as Error).name === "AbortError") {
-        // user stopped generation
-      } else {
+      if ((err as Error).name !== "AbortError") {
         setMessages((prev) => {
           const updated = [...prev];
-          updated[updated.length - 1] = {
-            role: "assistant",
-            content: `Error: ${(err as Error).message}`,
-          };
+          updated[updated.length - 1] = { role: "assistant", content: `Error: ${(err as Error).message}` };
           return updated;
         });
       }
@@ -144,134 +119,145 @@ export function AISidebar({
     }
   }, [input, loading, messages, ollamaStatus, buildSystemPrompt, scrollToBottom]);
 
-  const handleStop = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
-
-  const handleClear = useCallback(() => {
-    setMessages([]);
-  }, []);
-
-  const activeModel =
-    ollamaStatus.connected
-      ? (ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "—")
-      : "—";
+  const activeModel = ollamaStatus.connected
+    ? (ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "—")
+    : "—";
 
   return (
-    <div className="w-72 flex-shrink-0 border-l border-gray-200 bg-white flex flex-col h-full">
+    <div className="w-72 flex-shrink-0 border-l border-border bg-background flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700">AI Assistant</h2>
-          {ollamaStatus.connected && (
-            <p className="text-xs text-gray-400">{activeModel}</p>
-          )}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <span className={cn(
+            "h-2 w-2 rounded-full flex-shrink-0",
+            ollamaStatus.connected ? "bg-emerald-500" : "bg-muted-foreground"
+          )} />
+          <div>
+            <p className="text-sm font-semibold text-foreground">AI Assistant (Ollama)</p>
+          </div>
         </div>
         <div className="flex items-center gap-1">
-          {messages.length > 0 && (
-            <button
-              onClick={handleClear}
-              title="Clear history"
-              className="text-xs text-gray-400 hover:text-gray-600 px-1"
-            >
-              Clear
-            </button>
-          )}
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 text-lg leading-none"
-          >
-            ×
-          </button>
+          <Button variant="ghost" size="icon" className="h-6 w-6">
+            <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
+            <X className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
         </div>
       </div>
 
       {/* Context selector */}
-      <div className="flex px-3 py-1.5 gap-1 border-b border-gray-100">
-        <span className="text-xs text-gray-400 self-center mr-1">Context:</span>
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-border">
+        <span className="text-xs text-muted-foreground mr-1">Context:</span>
         {(["selection", "page", "manuscript"] as ContextMode[]).map((mode) => (
           <button
             key={mode}
             onClick={() => setContextMode(mode)}
-            className={`text-xs px-2 py-0.5 rounded ${
+            className={cn(
+              "text-xs px-2 py-0.5 rounded-md capitalize transition-colors",
               contextMode === mode
-                ? "bg-blue-500 text-white"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            )}
           >
-            {getContextLabel(mode)}
+            {mode}
           </button>
         ))}
       </div>
 
       {/* Chat history */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.length === 0 && (
-          <p className="text-xs text-gray-400 text-center mt-4">
-            {ollamaStatus.connected
-              ? "Ask anything about your manuscript"
-              : "Start Ollama to use AI features"}
-          </p>
-        )}
-        {messages.map((msg, i) => (
-          <div key={i} className="flex flex-col gap-0.5">
-            <span className="text-xs text-gray-400 px-1">
-              {msg.role === "user" ? "You" : activeModel}
-            </span>
-            <div
-              className={`text-xs rounded-lg px-3 py-2 whitespace-pre-wrap ${
-                msg.role === "user"
-                  ? "bg-blue-50 text-gray-800 border border-blue-100"
-                  : "bg-gray-50 text-gray-800 border border-gray-100"
-              }`}
-            >
-              {msg.content || (
-                <span className="text-gray-300 animate-pulse">▋</span>
+      <ScrollArea className="flex-1">
+        <div className="p-3 space-y-4">
+          {messages.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center mt-8 px-4 leading-relaxed">
+              {ollamaStatus.connected
+                ? "Ask anything about your manuscript"
+                : "Start Ollama to use AI features"}
+            </p>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} className="space-y-1">
+              {msg.role === "user" ? (
+                <div className="flex justify-end">
+                  <div className="max-w-[85%] rounded-2xl rounded-tr-sm bg-background border border-border px-3 py-2 text-xs text-foreground shadow-sm whitespace-pre-wrap">
+                    {msg.content}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-xs text-foreground whitespace-pre-wrap">
+                    {msg.content || <span className="animate-pulse text-muted-foreground">▋</span>}
+                  </div>
+                  {msg.content && (
+                    <div className="flex gap-2 px-1">
+                      <button
+                        onClick={() => navigator.clipboard.writeText(msg.content)}
+                        className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors font-medium"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      </ScrollArea>
 
       {/* Input area */}
-      <div className="border-t border-gray-200 p-2">
-        <div className="flex gap-1">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            rows={2}
-            placeholder={
-              ollamaStatus.connected
-                ? "Ask AI... (Enter to send, Shift+Enter for newline)"
-                : "Ollama not connected..."
+      <div className="border-t border-border p-3 space-y-2">
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
             }
-            disabled={!ollamaStatus.connected}
-            className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 resize-none focus:outline-none focus:border-blue-400 disabled:opacity-50"
-          />
+          }}
+          rows={3}
+          placeholder={ollamaStatus.connected ? "Ask Ollama..." : "Ollama not connected..."}
+          disabled={!ollamaStatus.connected}
+          className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+        />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" disabled>
+              <Paperclip className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" disabled>
+              <Mic className="h-3.5 w-3.5" />
+            </Button>
+          </div>
           {loading ? (
-            <button
-              onClick={handleStop}
-              className="text-xs px-2 py-1 rounded bg-red-500 text-white hover:bg-red-600 self-end"
+            <Button
+              size="icon"
+              variant="destructive"
+              className="h-7 w-7"
+              onClick={() => abortRef.current?.abort()}
             >
-              Stop
-            </button>
+              <StopCircle className="h-3.5 w-3.5" />
+            </Button>
           ) : (
-            <button
+            <Button
+              size="icon"
+              className="h-7 w-7"
               onClick={handleSend}
               disabled={!input.trim() || !ollamaStatus.connected}
-              className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 self-end"
             >
-              Send
-            </button>
+              <Send className="h-3.5 w-3.5" />
+            </Button>
           )}
         </div>
+      </div>
+
+      {/* Footer status */}
+      <div className="px-4 pb-3">
+        <p className="text-[10px] text-muted-foreground text-center">
+          {ollamaStatus.connected ? `Running ${activeModel} • Local Inference` : "Ollama not running"}
+        </p>
       </div>
     </div>
   );

@@ -8,6 +8,9 @@ import type {
   ProjectInfo,
   CitationMetadata,
   SearchResult,
+  FileNode,
+  AppSettings,
+  AppSettingsUpdate,
 } from "../shared/rpc-types";
 
 // Create Electrobun RPC client for webview using defineRPC
@@ -30,6 +33,17 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     resolveDOI: null,
     searchCitations: [],
     searchKnowledgeBase: [],
+    listProjectFiles: [],
+    openFolderDialog: null,
+    getSettings: {
+      projectsRootDir: "",
+      ollamaBaseUrl: "http://localhost:11434",
+      ollamaDefaultModel: "qwen3.5:cloud",
+      ollamaEmbedModel: "nomic-embed-text",
+      kbChunkSize: 512,
+      kbChunkOverlap: 64,
+      kbTopK: 5,
+    },
   };
   return mocks[method] ?? null;
 }
@@ -65,6 +79,14 @@ export const rpc = {
   searchKnowledgeBase: (projectPath: string, query: string) =>
     call<SearchResult[]>("searchKnowledgeBase", { projectPath, query }),
   // Streaming chat - calls Bun which proxies to Ollama
+  openProjectByPath: (projectPath: string) =>
+    call<ProjectInfo>("openProjectByPath", { projectPath }),
+  listProjectFiles: (projectPath: string) =>
+    call<FileNode[]>("listProjectFiles", { projectPath }),
+  openFolderDialog: () => call<string | null>("openFolderDialog"),
+  getSettings: () => call<AppSettings>("getSettings"),
+  saveSettings: (settings: AppSettingsUpdate) =>
+    call<void>("saveSettings", { settings }),
   generateTextStream: (
     model: string,
     messages: Array<{ role: string; content: string }>,

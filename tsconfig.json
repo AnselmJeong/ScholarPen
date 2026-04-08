@@ -10,7 +10,8 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "paths": {
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@/*": ["./src/renderer/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "electrobun.config.ts"],

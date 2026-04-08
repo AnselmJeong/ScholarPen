@@ -73,3 +73,35 @@ export interface OllamaStatus {
   models: string[];
   activeModel: string | null;
 }
+
+export type FileNodeKind =
+  | "manuscript"
+  | "reference"
+  | "figure"
+  | "pdf"
+  | "note"
+  | "export"
+  | "folder"
+  | "unknown";
+
+export interface FileNode {
+  name: string;
+  path: string;
+  kind: FileNodeKind;
+  isDirectory: boolean;
+  children?: FileNode[];
+  lastModified: number;
+  size?: number;
+}
+
+export interface AppSettings {
+  projectsRootDir: string;
+  ollamaBaseUrl: string;
+  ollamaDefaultModel: string;
+  ollamaEmbedModel: string;
+  kbChunkSize: number;
+  kbChunkOverlap: number;
+  kbTopK: number;
+}
+
+export type AppSettingsUpdate = Partial<AppSettings>;

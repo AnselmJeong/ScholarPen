@@ -34,6 +34,8 @@ async function main() {
 
         openProject: ({ name }) => fileSystem.openProject(name),
 
+        openProjectByPath: ({ projectPath }) => fileSystem.openProjectByPath(projectPath),
+
         createProject: ({ name }) => fileSystem.createProject(name),
 
         saveManuscript: ({ projectPath, content }) =>
@@ -55,6 +57,15 @@ async function main() {
           // Phase 4: LanceDB RAG pipeline
           return [];
         },
+
+        listProjectFiles: ({ projectPath }) =>
+          fileSystem.listProjectFiles(projectPath),
+
+        openFolderDialog: () => fileSystem.openFolderDialog(),
+
+        getSettings: () => fileSystem.getSettings(),
+
+        saveSettings: ({ settings }) => fileSystem.saveSettings(settings),
 
         // Proxy Ollama chat request to avoid CORS issues
         generateTextStream: async ({ model, messages }, sendChunk) => {

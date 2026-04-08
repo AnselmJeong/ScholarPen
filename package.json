@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "start": "vite build && electrobun dev",
-    "dev": "electrobun dev --watch",
+    "dev": "vite build && electrobun dev --watch",
     "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
     "hmr": "vite --port 5173",
     "build:release": "vite build && electrobun build --env=release"
@@ -18,13 +18,26 @@
     "@blocknote/react": "^0.47.3",
     "@blocknote/xl-ai": "^0.47.3",
     "@lancedb/lancedb": "latest",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@radix-ui/react-tooltip": "^1.2.8",
     "@types/katex": "^0.16.8",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "electrobun": "^1.16.0",
     "katex": "^0.16.45",
+    "lucide-react": "^1.7.0",
     "ollama": "^0.6.3",
     "ollama-ai-provider": "^1.2.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

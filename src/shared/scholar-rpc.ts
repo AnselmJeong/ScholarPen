@@ -4,6 +4,9 @@ import type {
   ProjectInfo,
   CitationMetadata,
   SearchResult,
+  FileNode,
+  AppSettings,
+  AppSettingsUpdate,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -12,6 +15,7 @@ type BunRequests = RPCSchema<{
     getOllamaStatus: { params: void; response: OllamaStatus };
     listProjects: { params: void; response: ProjectInfo[] };
     openProject: { params: { name: string }; response: ProjectInfo };
+    openProjectByPath: { params: { projectPath: string }; response: ProjectInfo };
     createProject: { params: { name: string }; response: ProjectInfo };
     saveManuscript: { params: { projectPath: string; content: unknown }; response: void };
     loadManuscript: { params: { projectPath: string }; response: unknown };
@@ -27,6 +31,10 @@ type BunRequests = RPCSchema<{
       params: { model: string; messages: Array<{ role: string; content: string }> };
       response: void;
     };
+    listProjectFiles: { params: { projectPath: string }; response: FileNode[] };
+    openFolderDialog: { params: void; response: string | null };
+    getSettings: { params: void; response: AppSettings };
+    saveSettings: { params: { settings: AppSettingsUpdate }; response: void };
   };
   messages: {
     aiChunk: { content: string };
