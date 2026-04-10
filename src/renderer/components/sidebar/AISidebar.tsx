@@ -6,7 +6,6 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type { OllamaStatus, ProjectInfo } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { rpc } from "../../rpc";
 
 interface AISidebarProps {
   project: ProjectInfo | null;
@@ -89,21 +88,54 @@ export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: 
     let accumulated = "";
 
     try {
-      await rpc.generateTextStream(
-        model,
-        [
-          { role: "system", content: systemPrompt },
-          ...newMessages.map((m) => ({ role: m.role, content: m.content })),
-        ],
-        (chunk: string) => {
-          accumulated += chunk;
-          setMessages((prev) => {
-            const updated = [...prev];
-            updated[updated.length - 1] = { role: "assistant", content: accumulated };
-            return updated;
-          });
+      // Call Ollama directly from the webview — Electrobun's streaming RPC
+      // callback pattern is unreliable; direct fetch avoids that entirely.
+      const response = await fetch("http://localhost:11434/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: abortRef.current.signal,
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...newMessages.map((m) => ({ role: m.role, content: m.content })),
+          ],
+          stream: true,
+          think: false, // disable qwen3 chain-of-thought mode
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Ollama error: HTTP ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        for (const line of text.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line) as {
+              message?: { content?: string };
+              done?: boolean;
+            };
+            if (parsed.message?.content) {
+              accumulated += parsed.message.content;
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: "assistant", content: accumulated };
+                return updated;
+              });
+            }
+          } catch {
+            // skip malformed lines
+          }
         }
-      );
+      }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         setMessages((prev) => {

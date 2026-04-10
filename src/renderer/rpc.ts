@@ -13,13 +13,49 @@ import type {
   AppSettingsUpdate,
 } from "../shared/rpc-types";
 
+type MenuActionHandler = (action: string) => void;
+type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
+
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
 const electrobun = new Electroview({
-  rpc: Electroview.defineRPC({
-    handlers: {},
+  rpc: Electroview.defineRPC<ScholarRPC>({
+    maxRequestTime: 30_000,
+    handlers: {
+      requests: {},
+      messages: {
+        menuAction: ({ action }) => {
+          console.log("[RPC] Received menuAction:", action);
+          menuActionListeners.forEach((handler) => handler(action));
+        },
+        importMarkdownContent: ({ content, suggestedFilename }) => {
+          console.log("[RPC] Received importMarkdownContent:", suggestedFilename);
+          importMarkdownListeners.forEach((handler) => handler(content, suggestedFilename));
+        },
+      },
+    },
   }),
 });
+
+// ── Menu action & import listeners ────────────────────────────
+const menuActionListeners: MenuActionHandler[] = [];
+const importMarkdownListeners: ImportMarkdownHandler[] = [];
+
+export function onMenuAction(handler: MenuActionHandler) {
+  menuActionListeners.push(handler);
+  return () => {
+    const idx = menuActionListeners.indexOf(handler);
+    if (idx >= 0) menuActionListeners.splice(idx, 1);
+  };
+}
+
+export function onImportMarkdown(handler: ImportMarkdownHandler) {
+  importMarkdownListeners.push(handler);
+  return () => {
+    const idx = importMarkdownListeners.indexOf(handler);
+    if (idx >= 0) importMarkdownListeners.splice(idx, 1);
+  };
+}
 
 // Fallback mock for browser development
 function mockRpc(method: string, _args: unknown[]): unknown {
@@ -29,12 +65,18 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     listProjects: [],
     createProject: { name: "demo", path: "/demo", files: [], lastModified: Date.now() },
     loadManuscript: [],
+    loadDocument: [],
     loadBibtex: "",
     resolveDOI: null,
     searchCitations: [],
     searchKnowledgeBase: [],
     listProjectFiles: [],
     openFolderDialog: null,
+    createDocument: "new-doc.scholarpen.json",
+    exportFile: "/demo/exports/doc.md",
+    readTextFile: "# Hello\n\nThis is a demo file.",
+    renameFile: "/demo/documents/renamed.scholarpen.json",
+    deleteFile: null,
     getSettings: {
       projectsRootDir: "",
       ollamaBaseUrl: "http://localhost:11434",
@@ -66,27 +108,49 @@ export const rpc = {
   listProjects: () => call<ProjectInfo[]>("listProjects"),
   openProject: (name: string) => call<ProjectInfo>("openProject", { name }),
   createProject: (name: string) => call<ProjectInfo>("createProject", { name }),
+  // ── Document CRUD ─────────────────────────────────────
+  saveDocument: (projectPath: string, filename: string, content: unknown) =>
+    call<void>("saveDocument", { projectPath, filename, content }),
+  loadDocument: (projectPath: string, filename: string) =>
+    call<unknown>("loadDocument", { projectPath, filename }),
+  createDocument: (projectPath: string, filename: string, content?: unknown) =>
+    call<string>("createDocument", { projectPath, filename, content }),
+  // ── Legacy ────────────────────────────────────────────
   saveManuscript: (projectPath: string, content: unknown) =>
     call<void>("saveManuscript", { projectPath, content }),
   loadManuscript: (projectPath: string) =>
     call<unknown>("loadManuscript", { projectPath }),
+  // ── BibTeX ────────────────────────────────────────────
   saveBibtex: (projectPath: string, bibtex: string) =>
     call<void>("saveBibtex", { projectPath, bibtex }),
   loadBibtex: (projectPath: string) => call<string>("loadBibtex", { projectPath }),
+  // ── Citation ──────────────────────────────────────────
   resolveDOI: (doi: string) => call<CitationMetadata>("resolveDOI", { doi }),
   searchCitations: (query: string) =>
     call<CitationMetadata[]>("searchCitations", { query }),
   searchKnowledgeBase: (projectPath: string, query: string) =>
     call<SearchResult[]>("searchKnowledgeBase", { projectPath, query }),
-  // Streaming chat - calls Bun which proxies to Ollama
+  // ── File Tree ─────────────────────────────────────────
   openProjectByPath: (projectPath: string) =>
     call<ProjectInfo>("openProjectByPath", { projectPath }),
   listProjectFiles: (projectPath: string) =>
     call<FileNode[]>("listProjectFiles", { projectPath }),
   openFolderDialog: () => call<string | null>("openFolderDialog"),
+  // ── Export ────────────────────────────────────────────
+  exportFile: (projectPath: string, filename: string, content: string) =>
+    call<string>("exportFile", { projectPath, filename, content }),
+  // ── File Management ───────────────────────────────────
+  readTextFile: (filePath: string) =>
+    call<string>("readTextFile", { filePath }),
+  renameFile: (filePath: string, newName: string) =>
+    call<string>("renameFile", { filePath, newName }),
+  deleteFile: (filePath: string) =>
+    call<void>("deleteFile", { filePath }),
+  // ── Settings ──────────────────────────────────────────
   getSettings: () => call<AppSettings>("getSettings"),
   saveSettings: (settings: AppSettingsUpdate) =>
     call<void>("saveSettings", { settings }),
+  // ── Streaming AI ──────────────────────────────────────
   generateTextStream: (
     model: string,
     messages: Array<{ role: string; content: string }>,

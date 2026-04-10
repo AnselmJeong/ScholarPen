@@ -17,10 +17,17 @@ type BunRequests = RPCSchema<{
     openProject: { params: { name: string }; response: ProjectInfo };
     openProjectByPath: { params: { projectPath: string }; response: ProjectInfo };
     createProject: { params: { name: string }; response: ProjectInfo };
+    // Multi-document support
+    saveDocument: { params: { projectPath: string; filename: string; content: unknown }; response: void };
+    loadDocument: { params: { projectPath: string; filename: string }; response: unknown };
+    createDocument: { params: { projectPath: string; filename: string; content?: unknown }; response: string };
+    // Legacy (backward compat)
     saveManuscript: { params: { projectPath: string; content: unknown }; response: void };
     loadManuscript: { params: { projectPath: string }; response: unknown };
+    // BibTeX
     saveBibtex: { params: { projectPath: string; bibtex: string }; response: void };
     loadBibtex: { params: { projectPath: string }; response: string };
+    // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
     searchCitations: { params: { query: string }; response: CitationMetadata[] };
     searchKnowledgeBase: {
@@ -31,8 +38,16 @@ type BunRequests = RPCSchema<{
       params: { model: string; messages: Array<{ role: string; content: string }> };
       response: void;
     };
+    // File system
     listProjectFiles: { params: { projectPath: string }; response: FileNode[] };
     openFolderDialog: { params: void; response: string | null };
+    // Export
+    exportFile: { params: { projectPath: string; filename: string; content: string }; response: string };
+    // File management
+    readTextFile: { params: { filePath: string }; response: string };
+    renameFile: { params: { filePath: string; newName: string }; response: string };
+    deleteFile: { params: { filePath: string }; response: void };
+    // Settings
     getSettings: { params: void; response: AppSettings };
     saveSettings: { params: { settings: AppSettingsUpdate }; response: void };
   };
@@ -47,6 +62,8 @@ type WebviewRequests = RPCSchema<{
   messages: {
     aiChunk: { content: string; done: boolean };
     projectUpdated: { projectPath: string };
+    menuAction: { action: string };
+    importMarkdownContent: { content: string; suggestedFilename: string };
   };
 }>;
 

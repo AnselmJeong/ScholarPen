@@ -35,20 +35,35 @@ export const rpcHandlers = {
     return fileSystem.createProject(name);
   },
 
-  async saveManuscript(projectPath: string, content: unknown): Promise<void> {
-    await fileSystem.saveManuscript(projectPath, content);
+  // ── Document CRUD (multi-document) ─────────────────────
+  async saveDocument(params: { projectPath: string; filename: string; content: unknown }): Promise<void> {
+    await fileSystem.saveDocument(params.projectPath, params.filename, params.content);
   },
 
-  async loadManuscript(projectPath: string): Promise<unknown> {
-    return fileSystem.loadManuscript(projectPath);
+  async loadDocument(params: { projectPath: string; filename: string }): Promise<unknown> {
+    return fileSystem.loadDocument(params.projectPath, params.filename);
   },
 
-  async saveBibtex(projectPath: string, bibtex: string): Promise<void> {
-    await fileSystem.saveBibtex(projectPath, bibtex);
+  async createDocument(params: { projectPath: string; filename: string; content?: unknown }): Promise<string> {
+    return fileSystem.createDocument(params.projectPath, params.filename, params.content);
   },
 
-  async loadBibtex(projectPath: string): Promise<string> {
-    return fileSystem.loadBibtex(projectPath);
+  // ── Legacy (backward compat) ────────────────────────────
+  async saveManuscript(params: { projectPath: string; content: unknown }): Promise<void> {
+    await fileSystem.saveManuscript(params.projectPath, params.content);
+  },
+
+  async loadManuscript(params: { projectPath: string }): Promise<unknown> {
+    return fileSystem.loadManuscript(params.projectPath);
+  },
+
+  // ── BibTeX ──────────────────────────────────────────────
+  async saveBibtex(params: { projectPath: string; bibtex: string }): Promise<void> {
+    await fileSystem.saveBibtex(params.projectPath, params.bibtex);
+  },
+
+  async loadBibtex(params: { projectPath: string }): Promise<string> {
+    return fileSystem.loadBibtex(params.projectPath);
   },
 
   // ── Citation ────────────────────────────────────────────
@@ -62,10 +77,45 @@ export const rpcHandlers = {
 
   // ── Knowledge Base (placeholder for Phase 4) ────────────
   async searchKnowledgeBase(
-    _projectPath: string,
-    _query: string
+    _params: { projectPath: string; query: string }
   ): Promise<SearchResult[]> {
     return [];
+  },
+
+  // ── File Tree ───────────────────────────────────────────
+  async listProjectFiles(params: { projectPath: string }): Promise<import("../../shared/rpc-types").FileNode[]> {
+    return fileSystem.listProjectFiles(params.projectPath);
+  },
+
+  async openFolderDialog(): Promise<string | null> {
+    return fileSystem.openFolderDialog();
+  },
+
+  // ── Export ───────────────────────────────────────────────
+  async exportFile(params: { projectPath: string; filename: string; content: string }): Promise<string> {
+    return fileSystem.exportFile(params.projectPath, params.filename, params.content);
+  },
+
+  // ── File Management ──────────────────────────────────────
+  async readTextFile(params: { filePath: string }): Promise<string> {
+    return fileSystem.readTextFile(params.filePath);
+  },
+
+  async renameFile(params: { filePath: string; newName: string }): Promise<string> {
+    return fileSystem.renameFile(params.filePath, params.newName);
+  },
+
+  async deleteFile(params: { filePath: string }): Promise<void> {
+    await fileSystem.deleteFile(params.filePath);
+  },
+
+  // ── Settings ────────────────────────────────────────────
+  async getSettings(): Promise<import("../../shared/rpc-types").AppSettings> {
+    return fileSystem.getSettings();
+  },
+
+  async saveSettings(params: { settings: import("../../shared/rpc-types").AppSettingsUpdate }): Promise<void> {
+    await fileSystem.saveSettings(params.settings);
   },
 } as const;
 

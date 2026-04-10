@@ -11,6 +11,25 @@ import { ClientSideTransport } from "@blocknote/xl-ai/server";
  * Note: Ollama needs CORS enabled. Run with:
  *   OLLAMA_ORIGINS="*" ollama serve
  */
+/**
+ * Custom fetch that injects `think: false` into all Ollama chat completions
+ * to disable qwen3's chain-of-thought thinking mode.  Without this, qwen3
+ * models return an empty `content` field while thinking tokens go into
+ * `reasoning_content`, which leaves BlockNote's AI extension with a blank response.
+ */
+function ollamaFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (init?.body && typeof init.body === "string") {
+    try {
+      const body = JSON.parse(init.body);
+      body.think = false;
+      return fetch(input, { ...init, body: JSON.stringify(body) });
+    } catch {
+      // ignore parse errors — fall through to plain fetch
+    }
+  }
+  return fetch(input, init);
+}
+
 export function createOllamaTransport(modelName: string) {
   console.log("[ollama-transport] Creating transport for model:", modelName);
   // Use OpenAI Compatible provider for Ollama
@@ -18,6 +37,7 @@ export function createOllamaTransport(modelName: string) {
     name: "ollama",
     baseURL: "http://localhost:11434/v1",
     apiKey: "ollama", // Ollama doesn't require API key, but provider needs one
+    fetch: ollamaFetch,
   });
   const model = ollama(modelName);
   console.log("[ollama-transport] Model created:", typeof model);

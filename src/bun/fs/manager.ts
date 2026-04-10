@@ -1,5 +1,5 @@
-import { mkdir, readdir, readFile, writeFile, stat } from "fs/promises";
-import { join, extname, basename } from "path";
+import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
+import { join, extname, basename, dirname } from "path";
 import { homedir } from "os";
 import type { ProjectInfo, ProjectFile, FileNode, FileNodeKind, AppSettings, AppSettingsUpdate } from "../../shared/rpc-types";
 
@@ -17,13 +17,17 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 function extToKind(name: string, isDir: boolean): FileNodeKind {
-  if (isDir) return "folder";
+  if (isDir) {
+    if (name === "exports") return "export";
+    if (name === "documents") return "folder";
+    return "folder";
+  }
   const ext = extname(name).toLowerCase();
-  if (ext === ".json" && name.endsWith(".scholarpen.json")) return "manuscript";
+  if (ext === ".json" && name.endsWith(".scholarpen.json")) return "document";
   if (ext === ".bib") return "reference";
   if (ext === ".pdf") return "pdf";
   if ([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"].includes(ext)) return "figure";
-  if ([".md", ".txt"].includes(ext)) return "note";
+  if ([".md", ".qmd", ".txt"].includes(ext)) return "note";
   return "unknown";
 }
 
@@ -42,6 +46,8 @@ class FileSystemManager {
     await mkdir(rootDir, { recursive: true });
   }
 
+  // ── Project Management ──────────────────────────────────────
+
   async listProjects(): Promise<ProjectInfo[]> {
     await this.ensureBaseDir();
     const rootDir = await this.getProjectsRootDir();
@@ -51,8 +57,14 @@ class FileSystemManager {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const projectPath = join(rootDir, entry.name);
+
+      // Migrate legacy projects (manuscript at root → documents/)
+      await this.migrateProject(projectPath);
+
+      // Check for documents/ directory as indicator of a valid project
       try {
-        const info = await stat(join(projectPath, "manuscript.scholarpen.json"));
+        const docsDir = join(projectPath, "documents");
+        const info = await stat(docsDir);
         projects.push({
           name: entry.name,
           path: projectPath,
@@ -60,7 +72,18 @@ class FileSystemManager {
           lastModified: info.mtimeMs,
         });
       } catch {
-        // skip directories without a manuscript
+        // Also accept projects with legacy manuscript at root
+        try {
+          const info = await stat(join(projectPath, "manuscript.scholarpen.json"));
+          projects.push({
+            name: entry.name,
+            path: projectPath,
+            files: [],
+            lastModified: info.mtimeMs,
+          });
+        } catch {
+          // skip directories without any document
+        }
       }
     }
 
@@ -73,6 +96,7 @@ class FileSystemManager {
     const projectPath = join(rootDir, safeName);
 
     await mkdir(projectPath, { recursive: true });
+    await mkdir(join(projectPath, "documents"), { recursive: true });
     await mkdir(join(projectPath, "knowledge-base", "papers"), { recursive: true });
     await mkdir(join(projectPath, "knowledge-base", "notes"), { recursive: true });
     await mkdir(join(projectPath, "figures"), { recursive: true });
@@ -81,7 +105,7 @@ class FileSystemManager {
 
     const emptyManuscript = { content: [], version: 1 };
     await writeFile(
-      join(projectPath, "manuscript.scholarpen.json"),
+      join(projectPath, "documents", `${safeName}.scholarpen.json`),
       JSON.stringify(emptyManuscript, null, 2)
     );
     await writeFile(join(projectPath, "references.bib"), "");
@@ -97,6 +121,7 @@ class FileSystemManager {
   async openProject(name: string): Promise<ProjectInfo> {
     const rootDir = await this.getProjectsRootDir();
     const projectPath = join(rootDir, name);
+    await this.migrateProject(projectPath);
     const info = await stat(projectPath);
     return {
       name,
@@ -107,6 +132,7 @@ class FileSystemManager {
   }
 
   async openProjectByPath(projectPath: string): Promise<ProjectInfo> {
+    await this.migrateProject(projectPath);
     const info = await stat(projectPath);
     const name = basename(projectPath);
     return {
@@ -117,16 +143,46 @@ class FileSystemManager {
     };
   }
 
-  async saveManuscript(projectPath: string, content: unknown): Promise<void> {
-    const filePath = join(projectPath, "manuscript.scholarpen.json");
+  // ── Document CRUD ───────────────────────────────────────────
+
+  async saveDocument(projectPath: string, filename: string, content: unknown): Promise<void> {
+    const docsDir = join(projectPath, "documents");
+    await mkdir(docsDir, { recursive: true });
+    const filePath = join(docsDir, filename);
     await writeFile(filePath, JSON.stringify(content, null, 2));
   }
 
-  async loadManuscript(projectPath: string): Promise<unknown> {
-    const filePath = join(projectPath, "manuscript.scholarpen.json");
+  async loadDocument(projectPath: string, filename: string): Promise<unknown> {
+    const filePath = join(projectPath, "documents", filename);
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw);
   }
+
+  async createDocument(projectPath: string, filename: string, content?: unknown): Promise<string> {
+    const docsDir = join(projectPath, "documents");
+    await mkdir(docsDir, { recursive: true });
+    const safeFilename = filename.endsWith(".scholarpen.json")
+      ? filename
+      : `${filename}.scholarpen.json`;
+    const filePath = join(docsDir, safeFilename);
+    const data = content ?? { content: [], version: 1 };
+    await writeFile(filePath, JSON.stringify(data, null, 2));
+    return safeFilename;
+  }
+
+  // ── Legacy (backward compat) ────────────────────────────────
+
+  async saveManuscript(projectPath: string, content: unknown): Promise<void> {
+    await this.migrateProject(projectPath);
+    await this.saveDocument(projectPath, "manuscript.scholarpen.json", content);
+  }
+
+  async loadManuscript(projectPath: string): Promise<unknown> {
+    await this.migrateProject(projectPath);
+    return this.loadDocument(projectPath, "manuscript.scholarpen.json");
+  }
+
+  // ── BibTeX ──────────────────────────────────────────────────
 
   async saveBibtex(projectPath: string, bibtex: string): Promise<void> {
     await writeFile(join(projectPath, "references.bib"), bibtex);
@@ -140,13 +196,57 @@ class FileSystemManager {
     }
   }
 
+  // ── Export ──────────────────────────────────────────────────
+
+  async exportFile(projectPath: string, filename: string, content: string): Promise<string> {
+    const exportDir = join(projectPath, "exports");
+    await mkdir(exportDir, { recursive: true });
+    const filePath = join(exportDir, filename);
+    await writeFile(filePath, content, "utf-8");
+    return filePath;
+  }
+
+  // ── File Management ────────────────────────────────────────
+
+  async readTextFile(filePath: string): Promise<string> {
+    return readFile(filePath, "utf-8");
+  }
+
+  async renameFile(filePath: string, newName: string): Promise<string> {
+    const dir = dirname(filePath);
+    const oldBasename = basename(filePath);
+
+    // Preserve extension if newName doesn't already include it
+    let finalName = newName;
+    if (oldBasename.endsWith(".scholarpen.json")) {
+      if (!newName.endsWith(".scholarpen.json")) {
+        finalName = `${newName}.scholarpen.json`;
+      }
+    } else {
+      const oldExt = extname(oldBasename);
+      if (oldExt && !newName.endsWith(oldExt)) {
+        finalName = `${newName}${oldExt}`;
+      }
+    }
+
+    const newPath = join(dir, finalName);
+    await rename(filePath, newPath);
+    return newPath;
+  }
+
+  async deleteFile(filePath: string): Promise<void> {
+    await unlink(filePath);
+  }
+
+  // ── File Tree ───────────────────────────────────────────────
+
   async listProjectFiles(projectPath: string, depth = 0): Promise<FileNode[]> {
     if (depth > 3) return [];
     const entries = await readdir(projectPath, { withFileTypes: true });
     const nodes: FileNode[] = [];
 
     // Files/folders generated by Electrobun or other internal tools
-    const IGNORE = new Set(["node_modules", "snapshots", "project.json", "exports"]);
+    const IGNORE = new Set(["node_modules", "snapshots", "project.json"]);
 
     for (const entry of entries) {
       if (entry.name.startsWith(".") || IGNORE.has(entry.name)) continue;
@@ -184,15 +284,18 @@ class FileSystemManager {
   }
 
   async openFolderDialog(): Promise<string | null> {
-    const proc = Bun.spawnSync([
+    const proc = Bun.spawn([
       "osascript",
       "-e",
-      'tell application "System Events" to set folderPath to POSIX path of (choose folder with prompt "Choose a projects folder:")',
+      'POSIX path of (choose folder with prompt "Choose a projects folder:")',
     ]);
-    if (proc.exitCode !== 0) return null;
-    const raw = proc.stdout.toString().trim().replace(/\/$/, "");
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) return null;
+    const raw = (await new Response(proc.stdout).text()).trim().replace(/\/$/, "");
     return raw.length > 0 ? raw : null;
   }
+
+  // ── Settings ────────────────────────────────────────────────
 
   async getSettings(): Promise<AppSettings> {
     await mkdir(SCHOLARPEN_BASE, { recursive: true });
@@ -214,10 +317,31 @@ class FileSystemManager {
     }
   }
 
+  // ── Migration ───────────────────────────────────────────────
+
+  /** Migrate legacy projects: move root manuscript.scholarpen.json → documents/ */
+  private async migrateProject(projectPath: string): Promise<void> {
+    const oldPath = join(projectPath, "manuscript.scholarpen.json");
+    const docsDir = join(projectPath, "documents");
+    const newPath = join(docsDir, "manuscript.scholarpen.json");
+
+    try {
+      await stat(oldPath);
+      // Legacy file exists at root — migrate it
+      await mkdir(docsDir, { recursive: true });
+      const content = await readFile(oldPath, "utf-8");
+      await writeFile(newPath, content);
+      await unlink(oldPath);
+      console.log(`[Migration] Moved ${oldPath} → ${newPath}`);
+    } catch {
+      // No legacy file — already migrated or never existed
+    }
+  }
+
   private buildFileList(projectPath: string): ProjectFile[] {
     return [
-      { name: "manuscript.scholarpen.json", path: join(projectPath, "manuscript.scholarpen.json"), type: "manuscript" },
-      { name: "references.bib", path: join(projectPath, "references.bib"), type: "reference" },
+      { name: "documents", path: join(projectPath, "documents"), type: "manuscript" as const },
+      { name: "references.bib", path: join(projectPath, "references.bib"), type: "reference" as const },
     ];
   }
 }

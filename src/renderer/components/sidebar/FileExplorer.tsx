@@ -15,6 +15,11 @@ import {
   HelpCircle,
   FolderOpen as FolderOpenIcon,
   PenLine,
+  Pencil,
+  Trash2,
+  Download,
+  Upload,
+  FilePlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +45,14 @@ import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { ProjectInfo, FileNode } from "@shared/rpc-types";
 
+// ── Context Menu ──────────────────────────────────────────────
+interface ContextMenuState {
+  x: number;
+  y: number;
+  node: FileNode;
+}
+
+// ── Props ──────────────────────────────────────────────────────
 interface FileExplorerProps {
   projects: ProjectInfo[];
   activeProject: ProjectInfo | null;
@@ -49,8 +62,14 @@ interface FileExplorerProps {
   activeFile: FileNode | null;
   onFileSelect: (file: FileNode) => void;
   onOpenSettings: () => void;
+  onRefreshTree: () => Promise<void>;
+  onExportDocument: () => void;
+  onImportFile: (filePath: string) => Promise<void>;
+  onFileRenamed: (newPath: string, newName: string) => void;
+  onFileDeleted: (filePath: string) => void;
 }
 
+// ── Icons ──────────────────────────────────────────────────────
 function FileIcon({ kind, isDirectory, isOpen }: { kind: FileNode["kind"]; isDirectory: boolean; isOpen?: boolean }) {
   if (isDirectory) {
     return isOpen
@@ -58,31 +77,49 @@ function FileIcon({ kind, isDirectory, isOpen }: { kind: FileNode["kind"]; isDir
       : <Folder className="h-3.5 w-3.5 text-yellow-500 flex-shrink-0" />;
   }
   switch (kind) {
-    case "manuscript": return <FileJson className="h-3.5 w-3.5 text-primary flex-shrink-0" />;
+    case "document": return <FileJson className="h-3.5 w-3.5 text-primary flex-shrink-0" />;
     case "reference": return <BookOpen className="h-3.5 w-3.5 text-emerald-500 flex-shrink-0" />;
     case "figure": return <Image className="h-3.5 w-3.5 text-purple-500 flex-shrink-0" />;
     case "pdf": return <FileText className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />;
     case "note": return <FileText className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />;
+    case "export": return <File className="h-3.5 w-3.5 text-orange-400 flex-shrink-0" />;
     default: return <File className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />;
   }
 }
 
 function displayName(node: FileNode): string {
-  if (node.kind === "manuscript") return node.name.replace(".scholarpen.json", "");
+  if (node.kind === "document") return node.name.replace(".scholarpen.json", "");
   return node.name;
 }
 
+// ── TreeNode ───────────────────────────────────────────────────
 interface TreeNodeProps {
   node: FileNode;
   depth: number;
   activeFile: FileNode | null;
   query: string;
   onFileSelect: (file: FileNode) => void;
+  onContextMenu: (e: React.MouseEvent, node: FileNode) => void;
+  renamingNode: FileNode | null;
+  onRenameSubmit: (node: FileNode, newName: string) => void;
+  onRenameCancel: () => void;
 }
 
-function TreeNode({ node, depth, activeFile, query, onFileSelect }: TreeNodeProps) {
+function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu, renamingNode, onRenameSubmit, onRenameCancel }: TreeNodeProps) {
   const [isOpen, setIsOpen] = useState(depth === 0);
+  const [renameValue, setRenameValue] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const name = displayName(node);
+
+  useEffect(() => {
+    if (renamingNode?.path === node.path) {
+      setRenameValue(displayName(node));
+      setTimeout(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      }, 0);
+    }
+  }, [renamingNode, node.path, node.name]);
 
   if (query && !name.toLowerCase().includes(query.toLowerCase()) && !node.isDirectory) {
     return null;
@@ -100,6 +137,7 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect }: TreeNodeProp
       <div>
         <button
           onClick={() => setIsOpen((v) => !v)}
+          onContextMenu={(e) => onContextMenu(e, node)}
           className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm text-foreground hover:bg-sidebar-accent transition-colors"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
@@ -119,6 +157,10 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect }: TreeNodeProp
                 activeFile={activeFile}
                 query={query}
                 onFileSelect={onFileSelect}
+                onContextMenu={onContextMenu}
+                renamingNode={renamingNode}
+                onRenameSubmit={onRenameSubmit}
+                onRenameCancel={onRenameCancel}
               />
             ))}
           </div>
@@ -127,9 +169,39 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect }: TreeNodeProp
     );
   }
 
+  // Inline rename
+  if (renamingNode?.path === node.path) {
+    return (
+      <div
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1"
+        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+      >
+        <FileIcon kind={node.kind} isDirectory={false} />
+        <input
+          ref={renameInputRef}
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && renameValue.trim()) {
+              onRenameSubmit(node, renameValue.trim());
+            }
+            if (e.key === "Escape") onRenameCancel();
+            e.stopPropagation();
+          }}
+          onBlur={() => {
+            if (renameValue.trim()) onRenameSubmit(node, renameValue.trim());
+            else onRenameCancel();
+          }}
+          className="flex-1 text-xs bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        />
+      </div>
+    );
+  }
+
   return (
     <button
       onClick={() => onFileSelect(node)}
+      onContextMenu={(e) => onContextMenu(e, node)}
       className={cn(
         "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors",
         isActive
@@ -144,6 +216,7 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect }: TreeNodeProp
   );
 }
 
+// ── FileExplorer ──────────────────────────────────────────────
 export function FileExplorer({
   projects,
   activeProject,
@@ -153,18 +226,40 @@ export function FileExplorer({
   activeFile,
   onFileSelect,
   onOpenSettings,
+  onRefreshTree,
+  onExportDocument,
+  onImportFile,
+  onFileRenamed,
+  onFileDeleted,
 }: FileExplorerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+  const [newDocDialogOpen, setNewDocDialogOpen] = useState(false);
+  const [newDocName, setNewDocName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [renamingNode, setRenamingNode] = useState<FileNode | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<FileNode | null>(null);
   const newProjectInputRef = useRef<HTMLInputElement>(null);
+  const newDocInputRef = useRef<HTMLInputElement>(null);
 
+  // Focus inputs when dialogs open
   useEffect(() => {
-    if (newProjectDialogOpen) {
-      setTimeout(() => newProjectInputRef.current?.focus(), 50);
-    }
+    if (newProjectDialogOpen) setTimeout(() => newProjectInputRef.current?.focus(), 50);
   }, [newProjectDialogOpen]);
+  useEffect(() => {
+    if (newDocDialogOpen) setTimeout(() => newDocInputRef.current?.focus(), 50);
+  }, [newDocDialogOpen]);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, [contextMenu]);
 
   const handleCreateProject = useCallback(async () => {
     if (!newProjectName.trim() || creating) return;
@@ -178,6 +273,29 @@ export function FileExplorer({
     }
   }, [newProjectName, creating, onCreateProject]);
 
+  const handleCreateDocument = useCallback(async () => {
+    if (!newDocName.trim() || !activeProject || creating) return;
+    setCreating(true);
+    try {
+      const filename = newDocName.trim().endsWith(".scholarpen.json")
+        ? newDocName.trim()
+        : `${newDocName.trim()}.scholarpen.json`;
+      await rpc.createDocument(activeProject.path, filename);
+      await onRefreshTree();
+      // Select the new document
+      const tree = await rpc.listProjectFiles(activeProject.path);
+      const docsDir = tree.find((n) => n.name === "documents" && n.isDirectory);
+      const newDoc = docsDir?.children?.find((c) => c.name === filename);
+      if (newDoc) onFileSelect(newDoc);
+      setNewDocName("");
+      setNewDocDialogOpen(false);
+    } catch (err) {
+      console.error("Failed to create document:", err);
+    } finally {
+      setCreating(false);
+    }
+  }, [newDocName, activeProject, creating, onRefreshTree, onFileSelect]);
+
   const handleOpenFolder = useCallback(async () => {
     const folderPath = await rpc.openFolderDialog();
     if (!folderPath) return;
@@ -188,6 +306,85 @@ export function FileExplorer({
       console.error("Failed to open project from folder:", err);
     }
   }, [onProjectChange]);
+
+  // ── Context menu actions ─────────────────────────────────
+  const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, node });
+  }, []);
+
+  const handleRename = useCallback((node: FileNode) => {
+    setContextMenu(null);
+    setRenamingNode(node);
+  }, []);
+
+  const handleRenameSubmit = useCallback(async (node: FileNode, newName: string) => {
+    setRenamingNode(null);
+    try {
+      const newPath = await rpc.renameFile(node.path, newName);
+      await onRefreshTree();
+      onFileRenamed(newPath, newName);
+    } catch (err) {
+      console.error("Rename failed:", err);
+    }
+  }, [onRefreshTree, onFileRenamed]);
+
+  const handleDelete = useCallback((node: FileNode) => {
+    setContextMenu(null);
+    setDeleteTarget(node);
+    setDeleteConfirmOpen(true);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleteConfirmOpen(false);
+    try {
+      await rpc.deleteFile(deleteTarget.path);
+      await onRefreshTree();
+      onFileDeleted(deleteTarget.path);
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
+    setDeleteTarget(null);
+  }, [deleteTarget, onRefreshTree, onFileDeleted]);
+
+  const handleImport = useCallback(async (node: FileNode) => {
+    setContextMenu(null);
+    try {
+      await onImportFile(node.path);
+    } catch (err) {
+      console.error("Import failed:", err);
+    }
+  }, [onImportFile]);
+
+  const handleExport = useCallback((node: FileNode) => {
+    setContextMenu(null);
+    onExportDocument();
+  }, [onExportDocument]);
+
+  // ── Context menu items ──────────────────────────────────
+  const getContextMenuItems = (node: FileNode) => {
+    const items: { label: string; icon: React.ReactNode; action: () => void; className?: string }[] = [];
+
+    if (node.kind === "document") {
+      items.push({ label: "Export...", icon: <Download className="h-3.5 w-3.5" />, action: () => handleExport(node) });
+      items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
+      items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
+    } else if (node.kind === "note") {
+      const ext = node.name.slice(node.name.lastIndexOf(".")).toLowerCase();
+      if ([".md", ".qmd", ".markdown"].includes(ext)) {
+        items.push({ label: "Import as Document", icon: <Upload className="h-3.5 w-3.5" />, action: () => handleImport(node) });
+      }
+      items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
+      items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
+    } else {
+      items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
+      items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
+    }
+
+    return items;
+  };
 
   return (
     <TooltipProvider delayDuration={500}>
@@ -247,10 +444,19 @@ export function FileExplorer({
 
         {/* Explorer section */}
         <div className="flex flex-col flex-1 min-h-0 pt-2">
-          <div className="px-3 pb-1.5">
+          <div className="px-3 pb-1.5 flex items-center justify-between">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
               Explorer
             </p>
+            {activeProject && (
+              <button
+                onClick={() => setNewDocDialogOpen(true)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                title="New Document"
+              >
+                <FilePlus className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Search */}
@@ -286,6 +492,10 @@ export function FileExplorer({
                     activeFile={activeFile}
                     query={searchQuery}
                     onFileSelect={onFileSelect}
+                    onContextMenu={handleContextMenu}
+                    renamingNode={renamingNode}
+                    onRenameSubmit={handleRenameSubmit}
+                    onRenameCancel={() => setRenamingNode(null)}
                   />
                 ))}
               </div>
@@ -327,6 +537,29 @@ export function FileExplorer({
         </div>
       </div>
 
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-white border border-gray-200 rounded-md shadow-lg py-1 min-w-[180px] text-sm"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {getContextMenuItems(contextMenu.node).map((item, i) => (
+            <button
+              key={i}
+              onClick={item.action}
+              className={cn(
+                "flex w-full items-center gap-2 px-3 py-1.5 hover:bg-accent transition-colors text-left",
+                item.className
+              )}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* New Project Dialog */}
       <Dialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen}>
         <DialogContent className="max-w-sm">
@@ -355,6 +588,63 @@ export function FileExplorer({
               disabled={!newProjectName.trim() || creating}
             >
               {creating ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Document Dialog */}
+      <Dialog open={newDocDialogOpen} onOpenChange={setNewDocDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>New Document</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              ref={newDocInputRef}
+              placeholder="Document name..."
+              value={newDocName}
+              onChange={(e) => setNewDocName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateDocument();
+                if (e.key === "Escape") setNewDocDialogOpen(false);
+              }}
+            />
+            <p className="text-xs text-muted-foreground mt-2">
+              Will be saved as <span className="font-mono">{newDocName.trim() || "untitled"}.scholarpen.json</span>
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setNewDocDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleCreateDocument}
+              disabled={!newDocName.trim() || creating}
+            >
+              {creating ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete File</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground py-2">
+            Are you sure you want to delete <span className="font-semibold text-foreground">{deleteTarget?.name}</span>?
+            This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={confirmDelete}>
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

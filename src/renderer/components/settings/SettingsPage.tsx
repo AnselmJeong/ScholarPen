@@ -17,6 +17,7 @@ import type { OllamaStatus, AppSettings } from "@shared/rpc-types";
 interface SettingsPageProps {
   ollamaStatus: OllamaStatus;
   onClose: () => void;
+  onSettingsSaved?: () => void;
 }
 
 function SettingSection({ icon: Icon, title, children }: {
@@ -51,7 +52,7 @@ function SettingRow({ label, description, children }: {
   );
 }
 
-export function SettingsPage({ ollamaStatus, onClose }: SettingsPageProps) {
+export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: SettingsPageProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -74,6 +75,7 @@ export function SettingsPage({ ollamaStatus, onClose }: SettingsPageProps) {
     try {
       await rpc.saveSettings(settings);
       setSaved(true);
+      onSettingsSaved?.();
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       console.error("Failed to save settings:", err);

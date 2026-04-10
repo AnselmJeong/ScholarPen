@@ -75,7 +75,7 @@ export interface OllamaStatus {
 }
 
 export type FileNodeKind =
-  | "manuscript"
+  | "document"
   | "reference"
   | "figure"
   | "pdf"

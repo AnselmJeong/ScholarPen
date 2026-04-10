@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   useCreateBlockNote,
   getDefaultReactSlashMenuItems,
@@ -16,6 +16,7 @@ import {
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
+import { Sparkles } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
 import { scholarSchema } from "../../blocks/schema";
@@ -26,12 +27,17 @@ import { en } from "@blocknote/core/locales";
 import { en as aiEn } from "@blocknote/xl-ai/locales";
 import "@blocknote/xl-ai/style.css";
 import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-transport";
+import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
+
+type SaveStatus = "saved" | "saving" | "unsaved";
 
 interface EditorAreaProps {
   project: ProjectInfo | null;
+  documentFilename: string | null;
   ollamaStatus: OllamaStatus;
   onWordCountChange: (count: number) => void;
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
+  onSaveStatusChange: (status: SaveStatus) => void;
 }
 
 function extractText(content: unknown): string {
@@ -45,9 +51,11 @@ function extractText(content: unknown): string {
 
 export function EditorArea({
   project,
+  documentFilename,
   ollamaStatus,
   onWordCountChange,
   onEditorReady,
+  onSaveStatusChange,
 }: EditorAreaProps) {
   const editor = useCreateBlockNote({
     schema: scholarSchema,
@@ -64,6 +72,8 @@ export function EditorArea({
     ],
   });
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
+  const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
 
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
@@ -72,24 +82,8 @@ export function EditorArea({
   }, [editor]);
 
   // Hot-swap the AIExtension transport whenever Ollama status changes.
-  //
-  // useCreateBlockNote is memoized with [] deps, so it always returns the same
-  // editor instance regardless of ollamaStatus.  The AIExtension stores its
-  // options in a TanStack Store (extension.options) — calling setState() on it
-  // updates the transport used by *future* invokeAI calls without recreating
-  // the editor or losing document content.
-  //
-  // We also call closeAIMenu() to reset the cached `chat` object (variable `i`
-  // inside the AIExtension closure).  Once `i` is set with a broken transport
-  // it is reused on every call until the menu is explicitly closed.  Calling
-  // closeAIMenu() when the menu is already closed is a safe no-op for the UI
-  // state; the only side-effect is `.focus()` on the editor, which is fine.
   useEffect(() => {
     const aiExt = editor.getExtension("ai") as any;
-    console.log("[EditorArea] AIExtension initialized:", !!aiExt);
-    console.log("[EditorArea] Ollama connected:", ollamaStatus.connected);
-    console.log("[EditorArea] Ollama models:", ollamaStatus.models);
-
     if (!aiExt?.options?.setState) return;
 
     const transport = ollamaStatus.connected
@@ -98,25 +92,23 @@ export function EditorArea({
         )
       : createNoOpTransport();
 
-    // 1. Update the TanStack Store so the next fresh chat uses this transport.
     aiExt.options.setState((prev: Record<string, unknown>) => ({
       ...prev,
       transport,
     }));
 
-    // 2. Reset the cached chat object (`i`) so the next AI invocation creates
-    //    a fresh Chat with the new transport instead of reusing a stale one.
-    //    Only do this when no AI generation is currently in progress.
     const menuState = aiExt.store?.state?.aiMenuState;
     if (menuState === "closed" || menuState == null) {
       aiExt.closeAIMenu?.();
     }
   }, [editor, ollamaStatus.connected, ollamaStatus.activeModel]);
 
+  // Load document when project or document changes
   useEffect(() => {
     if (!project) return;
+    const filename = documentFilename || "manuscript.scholarpen.json";
     rpc
-      .loadManuscript(project.path)
+      .loadDocument(project.path, filename)
       .then((content) => {
         if (Array.isArray(content) && content.length > 0) {
           editor.replaceBlocks(
@@ -126,7 +118,7 @@ export function EditorArea({
         }
       })
       .catch(console.error);
-  }, [project?.path]);
+  }, [project?.path, documentFilename]);
 
   const countWords = useCallback(() => {
     const text = editor.document.map((b) => extractText(b.content)).join(" ");
@@ -134,14 +126,88 @@ export function EditorArea({
     onWordCountChange(count);
   }, [editor, onWordCountChange]);
 
+  const updateSaveStatus = useCallback((status: SaveStatus) => {
+    setSaveStatus(status);
+    onSaveStatusChange(status);
+  }, [onSaveStatusChange]);
+
+  // Immediate save (for Cmd+S / menu action)
+  const saveNow = useCallback(() => {
+    if (!project) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const filename = documentFilename || "manuscript.scholarpen.json";
+    updateSaveStatus("saving");
+    rpc.saveDocument(project.path, filename, editor.document)
+      .then(() => updateSaveStatus("saved"))
+      .catch((err) => {
+        console.error("Save failed:", err);
+        updateSaveStatus("unsaved");
+      });
+  }, [editor, project, documentFilename, updateSaveStatus]);
+
+  // Expose saveNow for external callers (e.g., menu actions)
+  useEffect(() => {
+    (editor as any).__scholarpenSaveNow = saveNow;
+  }, [editor, saveNow]);
+
+  // ── AI inline edit (selection-scoped) ────────────────────────────────────
+  // Called from the custom AI Edit button in the FormattingToolbar.
+  // We snapshot the ProseMirror positions + viewport coords BEFORE the button
+  // click might shift focus away from the editor.
+  const handleAIEditActivate = useCallback(() => {
+    const view = (editor as any).prosemirrorView;
+    if (!view) return;
+    const { from, to } = view.state.selection;
+    const selectedText = editor.getSelectedText();
+    if (!selectedText.trim()) return;
+
+    // Get screen coordinates of the selection start
+    const coords = view.coordsAtPos(from);
+    const coordsEnd = view.coordsAtPos(to);
+    setAiEditSnapshot({
+      from,
+      to,
+      selectedText,
+      top: coords.top,
+      bottom: coordsEnd.bottom,
+      left: coords.left,
+    });
+  }, [editor]);
+
+  // Called when the user clicks Accept in the AI panel.
+  // Replaces ONLY the saved from..to range — the rest of the block is untouched.
+  const handleAIEditAccept = useCallback(
+    (from: number, to: number, newText: string) => {
+      const view = (editor as any).prosemirrorView;
+      if (!view) return;
+      const { state } = view;
+      const tr = state.tr.replaceWith(from, to, state.schema.text(newText));
+      view.dispatch(tr);
+      view.focus();
+      setAiEditSnapshot(null);
+    },
+    [editor]
+  );
+
   const handleChange = useCallback(() => {
     countWords();
     if (!project) return;
+    updateSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      rpc.saveManuscript(project.path, editor.document).catch(console.error);
+      const filename = documentFilename || "manuscript.scholarpen.json";
+      updateSaveStatus("saving");
+      rpc.saveDocument(project.path, filename, editor.document)
+        .then(() => updateSaveStatus("saved"))
+        .catch((err) => {
+          console.error("Auto-save failed:", err);
+          updateSaveStatus("unsaved");
+        });
     }, 2000);
-  }, [editor, project, countWords]);
+  }, [editor, project, documentFilename, countWords, updateSaveStatus]);
 
   if (!project) {
     return (
@@ -157,7 +223,7 @@ export function EditorArea({
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white">
       <div className="px-6 py-2 border-b border-gray-100 text-sm text-gray-500 font-medium">
-        {project.name}
+        {project.name}{documentFilename ? ` / ${documentFilename.replace(".scholarpen.json", "")}` : ""}
       </div>
       <div className="flex-1 overflow-y-auto px-8 py-6">
         <div className="max-w-3xl mx-auto">
@@ -176,9 +242,7 @@ export function EditorArea({
                 const scholar = getScholarSlashMenuItems(
                   editor as Parameters<typeof getScholarSlashMenuItems>[0]
                 );
-                // Use fixed AI slash menu items that uses string key lookup
                 const aiItems = ollamaStatus.connected ? getAISlashMenuItemsFixed(editor) : [];
-                console.log("[EditorArea] Slash menu - AI items count:", aiItems.length);
                 return [...defaults, ...scholar, ...aiItems].filter(
                   (item) =>
                     item.title.toLowerCase().includes(query.toLowerCase()) ||
@@ -191,7 +255,39 @@ export function EditorArea({
             <FormattingToolbarController
               formattingToolbar={() => (
                 <FormattingToolbar>
+                  {/* Block-level AI (xl-ai) */}
                   {ollamaStatus.connected && <AIToolbarButton key="aiToolbarButton" />}
+
+                  {/* Selection-scoped AI edit button */}
+                  {ollamaStatus.connected && (
+                    <button
+                      key="aiInlineEditButton"
+                      onMouseDown={(e) => {
+                        // Prevent the editor from losing its selection
+                        e.preventDefault();
+                        handleAIEditActivate();
+                      }}
+                      title="Edit selection with AI"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "2px 8px",
+                        fontSize: 12,
+                        fontWeight: 500,
+                        borderRadius: 6,
+                        border: "1px solid hsl(var(--border))",
+                        background: "hsl(var(--background))",
+                        color: "hsl(var(--primary))",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <Sparkles style={{ width: 12, height: 12 }} />
+                      Edit
+                    </button>
+                  )}
+
                   <BlockTypeSelect key="blockTypeSelect" />
                   <BasicTextStyleButton basicTextStyle="bold" key="boldStyleButton" />
                   <BasicTextStyleButton basicTextStyle="italic" key="italicStyleButton" />
@@ -211,6 +307,16 @@ export function EditorArea({
           </BlockNoteView>
         </div>
       </div>
+
+      {/* AI inline edit panel — rendered via portal, independent of toolbar lifecycle */}
+      {aiEditSnapshot && (
+        <AIInlineEditPanel
+          snapshot={aiEditSnapshot}
+          model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:cloud"}
+          onAccept={handleAIEditAccept}
+          onClose={() => setAiEditSnapshot(null)}
+        />
+      )}
     </div>
   );
 }

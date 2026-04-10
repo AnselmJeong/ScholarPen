@@ -1,5 +1,6 @@
 import { Ollama } from "ollama";
 import type { OllamaChatRequest, OllamaStatus } from "../../shared/rpc-types";
+import { fileSystem } from "../fs/manager";
 
 const OLLAMA_BASE_URL = "http://localhost:11434";
 const DEFAULT_MODEL = "qwen3.5:cloud";
@@ -8,22 +9,28 @@ const ollama = new Ollama({ host: OLLAMA_BASE_URL });
 
 class OllamaClient {
   private defaultModel: string;
+  private baseUrl: string;
 
   constructor(defaultModel = DEFAULT_MODEL) {
     this.defaultModel = defaultModel;
+    this.baseUrl = OLLAMA_BASE_URL;
   }
 
   async getStatus(): Promise<OllamaStatus> {
     try {
       console.log("[OllamaClient] Checking status...");
-      const result = await ollama.list();
+      const [result, settings] = await Promise.all([
+        ollama.list(),
+        fileSystem.getSettings().catch(() => null),
+      ]);
       const models = result.models.map((m) => m.name);
       console.log("[OllamaClient] Connected. Models:", models);
-      return {
-        connected: true,
-        models,
-        activeModel: models.find(m => m.includes("qwen")) ?? models[0] ?? null,
-      };
+      const savedModel = settings?.ollamaDefaultModel;
+      const activeModel =
+        savedModel && models.includes(savedModel)
+          ? savedModel
+          : (models.find((m) => m.includes("qwen")) ?? models[0] ?? null);
+      return { connected: true, models, activeModel };
     } catch (err) {
       console.error("[OllamaClient] Status check failed:", err);
       return { connected: false, models: [], activeModel: null };

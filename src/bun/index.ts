@@ -1,4 +1,6 @@
-import { BrowserView, BrowserWindow } from "electrobun/bun";
+import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils } from "electrobun/bun";
+import { readFile } from "fs/promises";
+import { basename, extname } from "path";
 import { ollamaClient } from "./ollama/client";
 import { citationClient } from "./citation/client";
 import { fileSystem } from "./fs/manager";
@@ -23,7 +25,33 @@ async function getMainViewUrl(): Promise<string> {
 async function main() {
   const url = await getMainViewUrl();
 
-  // Define typed RPC for communication between Bun main ↔ Webview
+  // ── Application Menu ───────────────────────────────────────────
+  ApplicationMenu.setApplicationMenu([
+    { label: "ScholarPen", submenu: [{ role: "quit" }] },
+    {
+      label: "File",
+      submenu: [
+        { label: "Save", action: "save", accelerator: "s" },
+        { type: "separator" },
+        { label: "Export as Markdown…", action: "exportMarkdown" },
+        { label: "Import Markdown…", action: "importMarkdown" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+  ]);
+
+  // ── Define typed RPC ──────────────────────────────────────────
   const scholarRpc = BrowserView.defineRPC<ScholarRPC>({
     maxRequestTime: 30_000,
     handlers: {
@@ -38,6 +66,17 @@ async function main() {
 
         createProject: ({ name }) => fileSystem.createProject(name),
 
+        // ── Document CRUD ─────────────────────────────────
+        saveDocument: ({ projectPath, filename, content }) =>
+          fileSystem.saveDocument(projectPath, filename, content),
+
+        loadDocument: ({ projectPath, filename }) =>
+          fileSystem.loadDocument(projectPath, filename),
+
+        createDocument: ({ projectPath, filename, content }) =>
+          fileSystem.createDocument(projectPath, filename, content),
+
+        // ── Legacy ─────────────────────────────────────────
         saveManuscript: ({ projectPath, content }) =>
           fileSystem.saveManuscript(projectPath, content),
 
@@ -53,7 +92,7 @@ async function main() {
 
         searchCitations: ({ query }) => citationClient.searchOpenAlex(query),
 
-        searchKnowledgeBase: async (_params) => {
+        searchKnowledgeBase: async () => {
           // Phase 4: LanceDB RAG pipeline
           return [];
         },
@@ -63,11 +102,23 @@ async function main() {
 
         openFolderDialog: () => fileSystem.openFolderDialog(),
 
+        // ── Export ─────────────────────────────────────────
+        exportFile: ({ projectPath, filename, content }) =>
+          fileSystem.exportFile(projectPath, filename, content),
+
+        // ── File Management ────────────────────────────────
+        readTextFile: ({ filePath }) => fileSystem.readTextFile(filePath),
+        renameFile: ({ filePath, newName }) => fileSystem.renameFile(filePath, newName),
+        deleteFile: ({ filePath }) => fileSystem.deleteFile(filePath),
+
         getSettings: () => fileSystem.getSettings(),
 
         saveSettings: ({ settings }) => fileSystem.saveSettings(settings),
 
         // Proxy Ollama chat request to avoid CORS issues
+        // Note: generateTextStream uses Electrobun's streaming RPC pattern
+        // where the second arg is a sendChunk callback, not a standard request param.
+        // @ts-expect-error — Electrobun streaming RPC has a different call signature
         generateTextStream: async ({ model, messages }, sendChunk) => {
           await ollamaClient.streamChat(
             { model, messages },
@@ -83,7 +134,8 @@ async function main() {
     },
   });
 
-  const _win = new BrowserWindow({
+  // ── Create main window ────────────────────────────────────────
+  const win = new BrowserWindow({
     title: "ScholarPen",
     url,
     rpc: scholarRpc,
@@ -93,6 +145,26 @@ async function main() {
       x: 100,
       y: 100,
     },
+  });
+
+  // ── Menu action events ──────────────────────────────────────
+  Electrobun.events.on("application-menu-clicked", (e) => {
+    const action = e.data.action;
+    if (action === "save" || action === "exportMarkdown" || action === "importMarkdown") {
+      win.webview.rpc?.send.menuAction({ action });
+    }
+  });
+
+  // ── Import Markdown: open file dialog ───────────────────────
+  // This is handled via menuAction message to webview, which then
+  // triggers the import flow. The file picking is done on Bun side
+  // via Utils.openFileDialog when the webview requests it.
+
+  // ── Save before quit ──────────────────────────────────────────
+  Electrobun.events.on("before-quit", async () => {
+    win.webview.rpc?.send.menuAction({ action: "save" });
+    // Give the webview a moment to flush saves
+    await new Promise((resolve) => setTimeout(resolve, 500));
   });
 
   console.log("[ScholarPen] App started");
