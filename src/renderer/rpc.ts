@@ -15,7 +15,7 @@ import type {
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
-type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string) => void;
+type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string, slashCommands?: string[]) => void;
 
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
@@ -33,8 +33,8 @@ const electrobun = new Electroview({
           console.log("[RPC] Received importMarkdownContent:", suggestedFilename);
           importMarkdownListeners.forEach((handler) => handler(content, suggestedFilename));
         },
-        claudeChunk: ({ content, done, sessionId }) => {
-          claudeChunkListeners.forEach((handler) => handler(content, done, sessionId));
+        claudeChunk: ({ content, done, sessionId, slashCommands }) => {
+          claudeChunkListeners.forEach((handler) => handler(content, done, sessionId, slashCommands));
         },
       },
     },
@@ -62,7 +62,7 @@ export function onImportMarkdown(handler: ImportMarkdownHandler) {
   };
 }
 
-export function onClaudeChunk(handler: ClaudeChunkHandler) {
+export function onClaudeChunk(handler: ClaudeChunkHandler): () => void {
   claudeChunkListeners.push(handler);
   return () => {
     const idx = claudeChunkListeners.indexOf(handler);

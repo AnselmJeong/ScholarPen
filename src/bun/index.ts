@@ -24,7 +24,7 @@ async function getMainViewUrl(): Promise<string> {
 }
 
 // Module-level send ref — set after BrowserWindow is created
-let sendClaudeChunk: ((payload: { content: string; done: boolean; sessionId?: string }) => void) | null = null;
+let sendClaudeChunk: ((payload: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] }) => void) | null = null;
 
 async function main() {
   const url = await getMainViewUrl();
@@ -120,14 +120,19 @@ async function main() {
         saveSettings: ({ settings }) => fileSystem.saveSettings(settings),
 
         // ── Claude CLI streaming ───────────────────────────
-        claudeStream: async ({ message, sessionId, projectPath }) => {
-          await claudeClient.streamChat(
-            message,
-            sessionId,
-            projectPath,
-            (text) => sendClaudeChunk?.({ content: text, done: false }),
-            (newSessionId) => sendClaudeChunk?.({ content: "", done: true, sessionId: newSessionId })
-          );
+        // Fire-and-forget: return immediately so Electrobun can process
+        // outbound claudeChunk messages while Claude streams in background.
+        claudeStream: ({ message, sessionId, projectPath }) => {
+          claudeClient.streamChat(message, sessionId, projectPath, {
+            onChunk: (text) => sendClaudeChunk?.({ content: text, done: false }),
+            onDone: (newSessionId) =>
+              sendClaudeChunk?.({ content: "", done: true, sessionId: newSessionId }),
+            onInit: (slashCommands) =>
+              sendClaudeChunk?.({ content: "", done: false, slashCommands }),
+          }).catch((err) => {
+            sendClaudeChunk?.({ content: `\n\n❌ 오류: ${err.message}`, done: false });
+            sendClaudeChunk?.({ content: "", done: true });
+          });
         },
 
         // Proxy Ollama chat request to avoid CORS issues

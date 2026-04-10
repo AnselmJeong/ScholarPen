@@ -66,7 +66,7 @@ type WebviewRequests = RPCSchema<{
   requests: Record<never, { params: unknown; response: unknown }>;
   messages: {
     aiChunk: { content: string; done: boolean };
-    claudeChunk: { content: string; done: boolean; sessionId?: string };
+    claudeChunk: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] };
     projectUpdated: { projectPath: string };
     menuAction: { action: string };
     importMarkdownContent: { content: string; suggestedFilename: string };
