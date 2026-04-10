@@ -1,20 +1,18 @@
-import React, { useState, useRef, useCallback } from "react";
-import { X, RotateCcw, Copy, Settings2, Paperclip, Mic, Send, StopCircle } from "lucide-react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
+import { X, RotateCcw, Copy, Send, StopCircle, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type { OllamaStatus, ProjectInfo } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
+import { rpc, onClaudeChunk } from "../../rpc";
 
 interface AISidebarProps {
   project: ProjectInfo | null;
-  ollamaStatus: OllamaStatus;
+  ollamaStatus: OllamaStatus; // kept for API compat — not used for chat
   editor: BlockNoteEditor<any, any, any> | null;
   onClose: () => void;
 }
-
-type ContextMode = "selection" | "page" | "manuscript";
 
 interface Message {
   role: "user" | "assistant";
@@ -35,142 +33,133 @@ function blocksToText(blocks: unknown[]): string {
   return blocks.map(extract).join("\n\n");
 }
 
-export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: AISidebarProps) {
+export function AISidebar({ project, editor, onClose }: AISidebarProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [contextMode, setContextMode] = useState<ContextMode>("page");
-  const abortRef = useRef<AbortController | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const abortedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   }, []);
 
-  const buildSystemPrompt = useCallback((): string => {
-    if (!editor) return "You are a helpful academic writing assistant.";
-    let context = "";
-    if (contextMode === "selection") {
-      const selection = editor.getSelection();
-      if (selection) context = blocksToText(selection.blocks);
-    } else {
-      context = blocksToText(editor.document);
-    }
-    const label = contextMode === "selection" ? "selection" : contextMode === "page" ? "document" : "manuscript";
-    return `You are a helpful academic writing assistant.` +
-      (context.trim() ? ` The user is working on the following ${label}:\n\n${context}\n\nHelp them with their request.` : "");
-  }, [editor, contextMode]);
+  // Listen for streaming chunks from the Bun process
+  useEffect(() => {
+    return onClaudeChunk((content: string, done: boolean, newSessionId?: string) => {
+      if (abortedRef.current) return;
+
+      if (done) {
+        if (newSessionId) setSessionId(newSessionId);
+        setLoading(false);
+        scrollToBottom();
+      } else if (content) {
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant") {
+            updated[updated.length - 1] = {
+              role: "assistant",
+              content: last.content + content,
+            };
+          }
+          return updated;
+        });
+        scrollToBottom();
+      }
+    });
+  }, [scrollToBottom]);
+
+  const buildContextPrefix = useCallback((): string => {
+    if (!editor) return "";
+    const text = blocksToText(editor.document).trim();
+    if (!text) return "";
+    return `현재 작업 중인 문서 내용:\n\n${text}\n\n---\n\n`;
+  }, [editor]);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || loading) return;
-    if (!ollamaStatus.connected) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "user", content: input.trim() },
-        { role: "assistant", content: "Ollama is not connected. Please start Ollama first." },
-      ]);
-      setInput("");
-      scrollToBottom();
-      return;
-    }
 
-    const userMsg = input.trim();
+    const userMessage = input.trim();
     setInput("");
-    const newMessages: Message[] = [...messages, { role: "user", content: userMsg }];
-    setMessages(newMessages);
-    setLoading(true);
+    abortedRef.current = false;
+
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+    setLoading(true);
     scrollToBottom();
 
-    const model = ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "gemma3";
-    const systemPrompt = buildSystemPrompt();
-    abortRef.current = new AbortController();
-    let accumulated = "";
+    // Include editor context only on first turn (no session yet)
+    const messageToSend = !sessionId
+      ? buildContextPrefix() + userMessage
+      : userMessage;
 
     try {
-      // Call Ollama directly from the webview — Electrobun's streaming RPC
-      // callback pattern is unreliable; direct fetch avoids that entirely.
-      const response = await fetch("http://localhost:11434/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: abortRef.current.signal,
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...newMessages.map((m) => ({ role: m.role, content: m.content })),
-          ],
-          stream: true,
-          think: false, // disable qwen3 chain-of-thought mode
-        }),
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`Ollama error: HTTP ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        for (const line of text.split("\n")) {
-          if (!line.trim()) continue;
-          try {
-            const parsed = JSON.parse(line) as {
-              message?: { content?: string };
-              done?: boolean;
-            };
-            if (parsed.message?.content) {
-              accumulated += parsed.message.content;
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = { role: "assistant", content: accumulated };
-                return updated;
-              });
-            }
-          } catch {
-            // skip malformed lines
-          }
-        }
-      }
+      await rpc.claudeStream(messageToSend, sessionId, project?.path ?? null);
     } catch (err) {
-      if ((err as Error).name !== "AbortError") {
+      if (!abortedRef.current) {
         setMessages((prev) => {
           const updated = [...prev];
-          updated[updated.length - 1] = { role: "assistant", content: `Error: ${(err as Error).message}` };
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: `오류: ${(err as Error).message}`,
+          };
           return updated;
         });
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-      abortRef.current = null;
-      scrollToBottom();
     }
-  }, [input, loading, messages, ollamaStatus, buildSystemPrompt, scrollToBottom]);
+  }, [input, loading, sessionId, project, buildContextPrefix, scrollToBottom]);
 
-  const activeModel = ollamaStatus.connected
-    ? (ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "—")
-    : "—";
+  const handleStop = useCallback(() => {
+    abortedRef.current = true;
+    setLoading(false);
+    // Append a note to the partial message
+    setMessages((prev) => {
+      const updated = [...prev];
+      const last = updated[updated.length - 1];
+      if (last?.role === "assistant") {
+        updated[updated.length - 1] = {
+          role: "assistant",
+          content: last.content + "\n\n*(중단됨)*",
+        };
+      }
+      return updated;
+    });
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setMessages([]);
+    setSessionId(null);
+    setLoading(false);
+    abortedRef.current = false;
+  }, []);
 
   return (
     <div className="w-72 flex-shrink-0 border-l border-border bg-background flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
-          <span className={cn(
-            "h-2 w-2 rounded-full flex-shrink-0",
-            ollamaStatus.connected ? "bg-emerald-500" : "bg-muted-foreground"
-          )} />
+          <Bot className="h-4 w-4 text-primary" />
           <div>
-            <p className="text-sm font-semibold text-foreground">AI Assistant (Ollama)</p>
+            <p className="text-sm font-semibold text-foreground">Claude</p>
+            {sessionId && (
+              <p className="text-[10px] text-muted-foreground truncate w-36">
+                세션 활성
+              </p>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="h-6 w-6">
-            <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={handleReset}
+            title="대화 초기화"
+          >
+            <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
           </Button>
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
             <X className="h-3.5 w-3.5 text-muted-foreground" />
@@ -178,34 +167,29 @@ export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: 
         </div>
       </div>
 
-      {/* Context selector */}
-      <div className="flex items-center gap-1 px-3 py-2 border-b border-border">
-        <span className="text-xs text-muted-foreground mr-1">Context:</span>
-        {(["selection", "page", "manuscript"] as ContextMode[]).map((mode) => (
-          <button
-            key={mode}
-            onClick={() => setContextMode(mode)}
-            className={cn(
-              "text-xs px-2 py-0.5 rounded-md capitalize transition-colors",
-              contextMode === mode
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            )}
-          >
-            {mode}
-          </button>
-        ))}
-      </div>
+      {/* Project context badge */}
+      {project && (
+        <div className="px-3 py-1.5 border-b border-border bg-muted/30">
+          <p className="text-[10px] text-muted-foreground truncate">
+            <span className="font-medium text-foreground">{project.name}</span>
+            {" "}프로젝트 컨텍스트
+          </p>
+        </div>
+      )}
 
       {/* Chat history */}
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-4">
           {messages.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center mt-8 px-4 leading-relaxed">
-              {ollamaStatus.connected
-                ? "Ask anything about your manuscript"
-                : "Start Ollama to use AI features"}
-            </p>
+            <div className="mt-8 px-4 space-y-3 text-center">
+              <Bot className="h-8 w-8 mx-auto text-muted-foreground/40" />
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Claude에게 원고 작성, 편집, 학술 검색 등을 요청하세요.
+              </p>
+              <p className="text-[10px] text-muted-foreground/60">
+                /skill 입력으로 특수 기능 사용 가능
+              </p>
+            </div>
           )}
           {messages.map((msg, i) => (
             <div key={i} className="space-y-1">
@@ -218,14 +202,17 @@ export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: 
               ) : (
                 <div className="space-y-1.5">
                   <div className="rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-xs text-foreground whitespace-pre-wrap">
-                    {msg.content || <span className="animate-pulse text-muted-foreground">▋</span>}
+                    {msg.content || (
+                      <span className="animate-pulse text-muted-foreground">▋</span>
+                    )}
                   </div>
                   {msg.content && (
                     <div className="flex gap-2 px-1">
                       <button
                         onClick={() => navigator.clipboard.writeText(msg.content)}
-                        className="text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors font-medium"
+                        className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors font-medium"
                       >
+                        <Copy className="h-2.5 w-2.5" />
                         Copy
                       </button>
                     </div>
@@ -250,25 +237,18 @@ export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: 
             }
           }}
           rows={3}
-          placeholder={ollamaStatus.connected ? "Ask Ollama..." : "Ollama not connected..."}
-          disabled={!ollamaStatus.connected}
+          placeholder="Claude에게 질문하세요… (Shift+Enter 줄바꿈)"
+          disabled={loading}
           className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
         />
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" disabled>
-              <Paperclip className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" disabled>
-              <Mic className="h-3.5 w-3.5" />
-            </Button>
-          </div>
+        <div className="flex items-center justify-end">
           {loading ? (
             <Button
               size="icon"
               variant="destructive"
               className="h-7 w-7"
-              onClick={() => abortRef.current?.abort()}
+              onClick={handleStop}
+              title="중단"
             >
               <StopCircle className="h-3.5 w-3.5" />
             </Button>
@@ -277,7 +257,7 @@ export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: 
               size="icon"
               className="h-7 w-7"
               onClick={handleSend}
-              disabled={!input.trim() || !ollamaStatus.connected}
+              disabled={!input.trim()}
             >
               <Send className="h-3.5 w-3.5" />
             </Button>
@@ -285,10 +265,10 @@ export function AISidebar({ project: _project, ollamaStatus, editor, onClose }: 
         </div>
       </div>
 
-      {/* Footer status */}
+      {/* Footer */}
       <div className="px-4 pb-3">
         <p className="text-[10px] text-muted-foreground text-center">
-          {ollamaStatus.connected ? `Running ${activeModel} • Local Inference` : "Ollama not running"}
+          {sessionId ? "멀티턴 대화 중 • Claude API" : "Claude Code CLI via subprocess"}
         </p>
       </div>
     </div>

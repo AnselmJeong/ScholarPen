@@ -15,6 +15,7 @@ import type {
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
+type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string) => void;
 
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
@@ -32,14 +33,18 @@ const electrobun = new Electroview({
           console.log("[RPC] Received importMarkdownContent:", suggestedFilename);
           importMarkdownListeners.forEach((handler) => handler(content, suggestedFilename));
         },
+        claudeChunk: ({ content, done, sessionId }) => {
+          claudeChunkListeners.forEach((handler) => handler(content, done, sessionId));
+        },
       },
     },
   }),
 });
 
-// ── Menu action & import listeners ────────────────────────────
+// ── Menu action, import, and Claude chunk listeners ───────────
 const menuActionListeners: MenuActionHandler[] = [];
 const importMarkdownListeners: ImportMarkdownHandler[] = [];
+const claudeChunkListeners: ClaudeChunkHandler[] = [];
 
 export function onMenuAction(handler: MenuActionHandler) {
   menuActionListeners.push(handler);
@@ -54,6 +59,14 @@ export function onImportMarkdown(handler: ImportMarkdownHandler) {
   return () => {
     const idx = importMarkdownListeners.indexOf(handler);
     if (idx >= 0) importMarkdownListeners.splice(idx, 1);
+  };
+}
+
+export function onClaudeChunk(handler: ClaudeChunkHandler) {
+  claudeChunkListeners.push(handler);
+  return () => {
+    const idx = claudeChunkListeners.indexOf(handler);
+    if (idx >= 0) claudeChunkListeners.splice(idx, 1);
   };
 }
 
@@ -150,6 +163,9 @@ export const rpc = {
   getSettings: () => call<AppSettings>("getSettings"),
   saveSettings: (settings: AppSettingsUpdate) =>
     call<void>("saveSettings", { settings }),
+  // ── Claude CLI streaming ──────────────────────────────
+  claudeStream: (message: string, sessionId: string | null, projectPath: string | null) =>
+    call<void>("claudeStream", { message, sessionId, projectPath }),
   // ── Streaming AI ──────────────────────────────────────
   generateTextStream: (
     model: string,

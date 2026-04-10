@@ -2,6 +2,7 @@ import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils } from "
 import { readFile } from "fs/promises";
 import { basename, extname } from "path";
 import { ollamaClient } from "./ollama/client";
+import { claudeClient } from "./claude/client";
 import { citationClient } from "./citation/client";
 import { fileSystem } from "./fs/manager";
 import type { ScholarRPC } from "../shared/scholar-rpc";
@@ -21,6 +22,9 @@ async function getMainViewUrl(): Promise<string> {
   }
   return "views://mainview/index.html";
 }
+
+// Module-level send ref — set after BrowserWindow is created
+let sendClaudeChunk: ((payload: { content: string; done: boolean; sessionId?: string }) => void) | null = null;
 
 async function main() {
   const url = await getMainViewUrl();
@@ -115,6 +119,17 @@ async function main() {
 
         saveSettings: ({ settings }) => fileSystem.saveSettings(settings),
 
+        // ── Claude CLI streaming ───────────────────────────
+        claudeStream: async ({ message, sessionId, projectPath }) => {
+          await claudeClient.streamChat(
+            message,
+            sessionId,
+            projectPath,
+            (text) => sendClaudeChunk?.({ content: text, done: false }),
+            (newSessionId) => sendClaudeChunk?.({ content: "", done: true, sessionId: newSessionId })
+          );
+        },
+
         // Proxy Ollama chat request to avoid CORS issues
         // Note: generateTextStream uses Electrobun's streaming RPC pattern
         // where the second arg is a sendChunk callback, not a standard request param.
@@ -146,6 +161,9 @@ async function main() {
       y: 100,
     },
   });
+
+  // ── Wire up Claude chunk sender ──────────────────────────────
+  sendClaudeChunk = (payload) => win.webview.rpc?.send.claudeChunk(payload);
 
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {

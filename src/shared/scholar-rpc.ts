@@ -50,6 +50,11 @@ type BunRequests = RPCSchema<{
     // Settings
     getSettings: { params: void; response: AppSettings };
     saveSettings: { params: { settings: AppSettingsUpdate }; response: void };
+    // Claude CLI streaming
+    claudeStream: {
+      params: { message: string; sessionId: string | null; projectPath: string | null };
+      response: void;
+    };
   };
   messages: {
     aiChunk: { content: string };
@@ -61,6 +66,7 @@ type WebviewRequests = RPCSchema<{
   requests: Record<never, { params: unknown; response: unknown }>;
   messages: {
     aiChunk: { content: string; done: boolean };
+    claudeChunk: { content: string; done: boolean; sessionId?: string };
     projectUpdated: { projectPath: string };
     menuAction: { action: string };
     importMarkdownContent: { content: string; suggestedFilename: string };
