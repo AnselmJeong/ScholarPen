@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   kbChunkSize: 512,
   kbChunkOverlap: 64,
   kbTopK: 5,
+  openAlexApiKey: "",
 };
 
 function extToKind(name: string, isDir: boolean): FileNodeKind {

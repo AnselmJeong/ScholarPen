@@ -102,6 +102,14 @@ export interface AppSettings {
   kbChunkSize: number;
   kbChunkOverlap: number;
   kbTopK: number;
+  openAlexApiKey: string;
 }
 
 export type AppSettingsUpdate = Partial<AppSettings>;
+
+export interface KBStatus {
+  exists: boolean;
+  kbRoot: string | null;
+  pageCount: number;
+  lastIndexed: number | null;
+}

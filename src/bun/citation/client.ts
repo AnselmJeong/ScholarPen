@@ -33,8 +33,9 @@ class CitationClient {
   }
 
   // OpenAlex → 학술 검색
-  async searchOpenAlex(query: string, limit = 10): Promise<CitationMetadata[]> {
+  async searchOpenAlex(query: string, limit = 10, apiKey?: string): Promise<CitationMetadata[]> {
     const params = new URLSearchParams({ search: query, per_page: String(limit) });
+    if (apiKey) params.set("api_key", apiKey);
     const res = await fetch(`https://api.openalex.org/works?${params}`, {
       headers: { "User-Agent": "ScholarPen/0.1.0" },
     });

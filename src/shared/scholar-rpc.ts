@@ -7,6 +7,7 @@ import type {
   FileNode,
   AppSettings,
   AppSettingsUpdate,
+  KBStatus,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -34,6 +35,8 @@ type BunRequests = RPCSchema<{
       params: { projectPath: string; query: string };
       response: SearchResult[];
     };
+    getKBStatus: { params: { projectPath: string }; response: KBStatus };
+    rebuildKBIndex: { params: { projectPath: string }; response: void };
     generateTextStream: {
       params: { model: string; messages: Array<{ role: string; content: string }> };
       response: void;
@@ -52,9 +55,15 @@ type BunRequests = RPCSchema<{
     saveSettings: { params: { settings: AppSettingsUpdate }; response: void };
     // Claude CLI streaming
     claudeStream: {
-      params: { message: string; sessionId: string | null; projectPath: string | null };
+      params: {
+        message: string;
+        sessionId: string | null;
+        projectPath: string | null;
+        kbEnabled?: boolean;
+      };
       response: void;
     };
+    getClaudeSlashCommands: { params: { projectPath?: string }; response: string[] };
   };
   messages: {
     aiChunk: { content: string };

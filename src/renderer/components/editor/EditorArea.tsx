@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useCreateBlockNote,
   getDefaultReactSlashMenuItems,
@@ -20,7 +20,12 @@ import { Sparkles } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
 import { scholarSchema } from "../../blocks/schema";
-import { getScholarSlashMenuItems, getAISlashMenuItemsFixed } from "../../blocks/slash-menu-items";
+import {
+  getScholarSlashMenuItems,
+  getCustomHeadingSlashMenuItems,
+  filterDefaultSlashMenuItems,
+  getAISlashMenuItemsFixed,
+} from "../../blocks/slash-menu-items";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { AIExtension } from "@blocknote/xl-ai"; // Used for type reference in extensions array
 import { en } from "@blocknote/core/locales";
@@ -28,8 +33,20 @@ import { en as aiEn } from "@blocknote/xl-ai/locales";
 import "@blocknote/xl-ai/style.css";
 import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-transport";
 import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
+import { DOIInputDialog } from "./DOIInputDialog";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
+
+// Extract @type{citekey, ...} keys from a BibTeX string
+function parseCitekeys(bibtex: string): string[] {
+  const keys: string[] = [];
+  const re = /@\w+\{([^,\s]+)\s*,/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(bibtex)) !== null) {
+    keys.push(m[1]);
+  }
+  return keys;
+}
 
 interface EditorAreaProps {
   project: ProjectInfo | null;
@@ -38,6 +55,7 @@ interface EditorAreaProps {
   onWordCountChange: (count: number) => void;
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
+  reloadTrigger?: number;
 }
 
 function extractText(content: unknown): string {
@@ -56,6 +74,7 @@ export function EditorArea({
   onWordCountChange,
   onEditorReady,
   onSaveStatusChange,
+  reloadTrigger,
 }: EditorAreaProps) {
   const editor = useCreateBlockNote({
     schema: scholarSchema,
@@ -74,6 +93,10 @@ export function EditorArea({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
+  const [citekeys, setCitekeys] = useState<string[]>([]);
+  const [doiDialogOpen, setDoiDialogOpen] = useState(false);
+  const [doiLoading, setDoiLoading] = useState(false);
+  const [doiError, setDoiError] = useState<string | null>(null);
 
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
@@ -103,6 +126,14 @@ export function EditorArea({
     }
   }, [editor, ollamaStatus.connected, ollamaStatus.activeModel]);
 
+  // Load citekeys from references.bib when project changes
+  useEffect(() => {
+    if (!project) { setCitekeys([]); return; }
+    rpc.loadBibtex(project.path)
+      .then((bibtex) => setCitekeys(parseCitekeys(bibtex ?? "")))
+      .catch(() => setCitekeys([]));
+  }, [project?.path]);
+
   // Load document when project or document changes
   useEffect(() => {
     if (!project) return;
@@ -118,7 +149,7 @@ export function EditorArea({
         }
       })
       .catch(console.error);
-  }, [project?.path, documentFilename]);
+  }, [project?.path, documentFilename, reloadTrigger]);
 
   const countWords = useCallback(() => {
     const text = editor.document.map((b) => extractText(b.content)).join(" ");
@@ -152,6 +183,41 @@ export function EditorArea({
   useEffect(() => {
     (editor as any).__scholarpenSaveNow = saveNow;
   }, [editor, saveNow]);
+
+  // ── DOI resolution & insertion ───────────────────────────────────────────
+  const handleDOISubmit = useCallback(async (doi: string) => {
+    if (!project) return;
+    setDoiLoading(true);
+    setDoiError(null);
+    try {
+      const meta = await rpc.resolveDOI(doi);
+
+      // Only fetch and update bibtex if the key isn't already loaded
+      if (!citekeys.includes(meta.citekey)) {
+        const existing = await rpc.loadBibtex(project.path);
+        const updated = existing ? `${existing.trimEnd()}\n\n${meta.bibtex}` : meta.bibtex;
+        await rpc.saveBibtex(project.path, updated);
+        setCitekeys((prev) =>
+          prev.includes(meta.citekey) ? prev : [...prev, meta.citekey]
+        );
+      }
+
+      // Close dialog first, then restore editor focus before inserting
+      setDoiDialogOpen(false);
+      requestAnimationFrame(() => {
+        editor.focus();
+        editor.insertInlineContent([
+          { type: "citation", props: { citekey: meta.citekey, locator: "" } },
+        ]);
+      });
+    } catch (err) {
+      setDoiError(
+        err instanceof Error ? err.message : "Failed to resolve DOI. Check the value and try again."
+      );
+    } finally {
+      setDoiLoading(false);
+    }
+  }, [editor, project]);
 
   // ── AI inline edit (selection-scoped) ────────────────────────────────────
   // Called from the custom AI Edit button in the FormattingToolbar.
@@ -209,6 +275,21 @@ export function EditorArea({
     }, 2000);
   }, [editor, project, documentFilename, countWords, updateSaveStatus]);
 
+  // Build slash menu items once; only rebuild when editor, AI, or citekeys change.
+  // Kept out of getItems to avoid reconstructing all block-type arrays on every keystroke.
+  const slashMenuItems = useMemo(() => {
+    const scholar = getScholarSlashMenuItems(
+      editor as Parameters<typeof getScholarSlashMenuItems>[0],
+      () => setDoiDialogOpen(true),
+    );
+    const headings = getCustomHeadingSlashMenuItems(
+      editor as Parameters<typeof getCustomHeadingSlashMenuItems>[0]
+    );
+    const defaults = filterDefaultSlashMenuItems(getDefaultReactSlashMenuItems(editor));
+    const aiItems = ollamaStatus.connected ? getAISlashMenuItemsFixed(editor) : [];
+    return [...scholar, ...headings, ...defaults, ...aiItems];
+  }, [editor, ollamaStatus.connected]);
+
   if (!project) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
@@ -236,14 +317,48 @@ export function EditorArea({
           >
             <AIMenuController />
             <SuggestionMenuController
+              triggerCharacter="$"
+              getItems={async () => [
+                {
+                  title: "Inline Equation",
+                  subtext: "Insert inline LaTeX equation",
+                  onItemClick: () =>
+                    editor.insertInlineContent([
+                      { type: "inlineMath", props: { formula: "" } },
+                    ]),
+                },
+              ]}
+            />
+            {/* @ → citation picker from references.bib */}
+            <SuggestionMenuController
+              triggerCharacter="@"
+              getItems={async (query) => {
+                const filtered = citekeys.filter((k) =>
+                  k.toLowerCase().includes(query.toLowerCase())
+                );
+                if (filtered.length === 0) return [];
+                return filtered.map((key) => ({
+                  title: key,
+                  group: "Citations",
+                  icon: (
+                    <span className="text-xs font-mono font-bold leading-none">
+                      [@]
+                    </span>
+                  ),
+                  subtext: "Insert inline citation",
+                  onItemClick: () =>
+                    editor.insertInlineContent([
+                      { type: "citation", props: { citekey: key, locator: "" } },
+                    ]),
+                }));
+              }}
+            />
+            {/* / → main slash menu: Scholar → Headings → other defaults → AI */}
+            <SuggestionMenuController
               triggerCharacter="/"
               getItems={async (query) => {
-                const defaults = getDefaultReactSlashMenuItems(editor);
-                const scholar = getScholarSlashMenuItems(
-                  editor as Parameters<typeof getScholarSlashMenuItems>[0]
-                );
-                const aiItems = ollamaStatus.connected ? getAISlashMenuItemsFixed(editor) : [];
-                return [...defaults, ...scholar, ...aiItems].filter(
+                if (!query) return slashMenuItems;
+                return slashMenuItems.filter(
                   (item) =>
                     item.title.toLowerCase().includes(query.toLowerCase()) ||
                     (item.aliases ?? []).some((a) =>
@@ -307,6 +422,15 @@ export function EditorArea({
           </BlockNoteView>
         </div>
       </div>
+
+      {/* DOI input dialog */}
+      <DOIInputDialog
+        isOpen={doiDialogOpen}
+        isLoading={doiLoading}
+        error={doiError}
+        onClose={() => { setDoiDialogOpen(false); setDoiError(null); }}
+        onSubmit={handleDOISubmit}
+      />
 
       {/* AI inline edit panel — rendered via portal, independent of toolbar lifecycle */}
       {aiEditSnapshot && (

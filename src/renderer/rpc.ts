@@ -11,11 +11,13 @@ import type {
   FileNode,
   AppSettings,
   AppSettingsUpdate,
+  KBStatus,
 } from "../shared/rpc-types";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
 type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string, slashCommands?: string[]) => void;
+type ProjectUpdatedHandler = (projectPath: string) => void;
 
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
@@ -36,15 +38,19 @@ const electrobun = new Electroview({
         claudeChunk: ({ content, done, sessionId, slashCommands }) => {
           claudeChunkListeners.forEach((handler) => handler(content, done, sessionId, slashCommands));
         },
+        projectUpdated: ({ projectPath }) => {
+          projectUpdatedListeners.forEach((handler) => handler(projectPath));
+        },
       },
     },
   }),
 });
 
-// ── Menu action, import, and Claude chunk listeners ───────────
+// ── Menu action, import, Claude chunk, and project update listeners ──
 const menuActionListeners: MenuActionHandler[] = [];
 const importMarkdownListeners: ImportMarkdownHandler[] = [];
 const claudeChunkListeners: ClaudeChunkHandler[] = [];
+const projectUpdatedListeners: ProjectUpdatedHandler[] = [];
 
 export function onMenuAction(handler: MenuActionHandler) {
   menuActionListeners.push(handler);
@@ -67,6 +73,14 @@ export function onClaudeChunk(handler: ClaudeChunkHandler): () => void {
   return () => {
     const idx = claudeChunkListeners.indexOf(handler);
     if (idx >= 0) claudeChunkListeners.splice(idx, 1);
+  };
+}
+
+export function onProjectUpdated(handler: ProjectUpdatedHandler): () => void {
+  projectUpdatedListeners.push(handler);
+  return () => {
+    const idx = projectUpdatedListeners.indexOf(handler);
+    if (idx >= 0) projectUpdatedListeners.splice(idx, 1);
   };
 }
 
@@ -163,9 +177,19 @@ export const rpc = {
   getSettings: () => call<AppSettings>("getSettings"),
   saveSettings: (settings: AppSettingsUpdate) =>
     call<void>("saveSettings", { settings }),
+  // ── Knowledge Base ────────────────────────────────────
+  getKBStatus: (projectPath: string) =>
+    call<KBStatus>("getKBStatus", { projectPath }),
+  rebuildKBIndex: (projectPath: string) =>
+    call<void>("rebuildKBIndex", { projectPath }),
   // ── Claude CLI streaming ──────────────────────────────
-  claudeStream: (message: string, sessionId: string | null, projectPath: string | null) =>
-    call<void>("claudeStream", { message, sessionId, projectPath }),
+  getClaudeSlashCommands: (projectPath?: string) => call<string[]>("getClaudeSlashCommands", { projectPath }),
+  claudeStream: (
+    message: string,
+    sessionId: string | null,
+    projectPath: string | null,
+    kbEnabled?: boolean
+  ) => call<void>("claudeStream", { message, sessionId, projectPath, kbEnabled }),
   // ── Streaming AI ──────────────────────────────────────
   generateTextStream: (
     model: string,

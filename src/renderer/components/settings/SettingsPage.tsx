@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ArrowLeft, Server, Folder, Database, Bot } from "lucide-react";
+import { ArrowLeft, Folder, Bot, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -197,47 +197,18 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
           <Separator />
 
-          {/* Knowledge Base */}
-          <SettingSection icon={Database} title="Knowledge Base (RAG)">
+          {/* Citations */}
+          <SettingSection icon={BookOpen} title="Citations">
             <SettingRow
-              label="Chunk Size"
-              description="Token size per indexed chunk"
+              label="OpenAlex API Key"
+              description="Optional — increases rate limits. Get yours at openalex.org/account"
             >
               <Input
-                type="number"
-                min={128}
-                max={2048}
-                value={settings.kbChunkSize}
-                onChange={(e) => updateSetting("kbChunkSize", Number(e.target.value))}
-                className="text-xs"
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Chunk Overlap"
-              description="Overlap tokens between chunks"
-            >
-              <Input
-                type="number"
-                min={0}
-                max={512}
-                value={settings.kbChunkOverlap}
-                onChange={(e) => updateSetting("kbChunkOverlap", Number(e.target.value))}
-                className="text-xs"
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Top K Results"
-              description="Max results per semantic search"
-            >
-              <Input
-                type="number"
-                min={1}
-                max={20}
-                value={settings.kbTopK}
-                onChange={(e) => updateSetting("kbTopK", Number(e.target.value))}
-                className="text-xs"
+                type="password"
+                value={settings.openAlexApiKey}
+                onChange={(e) => updateSetting("openAlexApiKey", e.target.value)}
+                placeholder="Enter API key…"
+                className="font-mono text-xs"
               />
             </SettingRow>
           </SettingSection>

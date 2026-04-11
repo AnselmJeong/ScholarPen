@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Share2, MoreHorizontal, History, PenLine, Save, Download, Upload } from "lucide-react";
+import { History, PenLine } from "lucide-react";
 import { FileExplorer } from "./components/sidebar/FileExplorer";
-import { EditorArea } from "./components/editor/EditorArea";
-import { FileViewer } from "./components/editor/FileViewer";
+import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { AISidebar } from "./components/sidebar/AISidebar";
 import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog } from "./components/editor/ExportDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { Button } from "./components/ui/button";
-import { rpc, onMenuAction, onImportMarkdown } from "./rpc";
+import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import type { OllamaStatus, ProjectInfo, FileNode } from "../shared/rpc-types";
@@ -33,7 +32,12 @@ export function App() {
   const [wordCount, setWordCount] = useState(0);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [aiSidebarWidth, setAiSidebarWidth] = useState(576);
+  const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const editorRef = useRef<BlockNoteEditor<any, any, any> | null>(null);
+  const editorGroupRef = useRef<EditorPaneGroupHandle | null>(null);
+  const isResizingRef = useRef(false);
+  const resizeStartRef = useRef({ x: 0, width: 0 });
 
   // Poll Ollama status every 10s
   useEffect(() => {
@@ -107,12 +111,7 @@ export function App() {
 
   const handleFileSelect = useCallback((file: FileNode) => {
     if (file.isDirectory) return;
-    setActiveFile(file);
-    if (file.kind === "document") {
-      setActiveDocumentFilename(file.name);
-    } else {
-      setActiveDocumentFilename(null);
-    }
+    editorGroupRef.current?.openFile(file);
     setCurrentView("editor");
   }, []);
 
@@ -128,8 +127,7 @@ export function App() {
     const unsubscribe = onMenuAction((action) => {
       switch (action) {
         case "save": {
-          const saveNow = (editorRef.current as any)?.__scholarpenSaveNow;
-          if (saveNow) saveNow();
+          editorGroupRef.current?.saveActiveEditor();
           break;
         }
         case "exportMarkdown":
@@ -240,36 +238,45 @@ export function App() {
   }, [activeProject, refreshFileTree]);
 
   // ── File renamed callback ──────────────────────────────────────
-  const handleFileRenamed = useCallback((newPath: string, newName: string) => {
-    if (newName.endsWith(".scholarpen.json")) {
-      setActiveDocumentFilename(newName);
-    }
+  // Note: tabs still hold the old FileNode — close & reopen is the safest approach.
+  // The sidebar will show the new name after refreshFileTree().
+  const handleFileRenamed = useCallback((_newPath: string, _newName: string) => {
+    // No-op: tab will reflect stale name until user reopens; refreshFileTree updates sidebar.
   }, []);
 
   // ── File deleted callback ─────────────────────────────────────
   const handleFileDeleted = useCallback(async (filePath: string) => {
-    // If the deleted file was the active document, switch to another
-    if (activeDocumentFilename && filePath.endsWith(activeDocumentFilename)) {
-      setActiveDocumentFilename(null);
-      setActiveFile(null);
-      // Try to select the first remaining document
-      if (activeProject) {
-        try {
-          const tree = await rpc.listProjectFiles(activeProject.path);
-          const docsDir = tree.find((n) => n.name === "documents" && n.isDirectory);
-          const firstDoc = docsDir?.children?.find((c) => c.kind === "document" && !c.isDirectory);
-          if (firstDoc) {
-            setActiveFile(firstDoc);
-            setActiveDocumentFilename(firstDoc.name);
-          }
-        } catch {}
-      }
-    } else if (activeFile?.path === filePath) {
-      setActiveFile(null);
-    }
-  }, [activeDocumentFilename, activeFile, activeProject]);
+    editorGroupRef.current?.closeFileByPath(filePath);
+    await refreshFileTree();
+  }, [refreshFileTree]);
 
-  const editorProject = activeProject;
+  // ── AI sidebar resize ─────────────────────────────────────────
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    resizeStartRef.current = { x: e.clientX, width: aiSidebarWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const delta = resizeStartRef.current.x - ev.clientX;
+      setAiSidebarWidth(Math.max(220, Math.min(640, resizeStartRef.current.width + delta)));
+    };
+    const onUp = () => {
+      isResizingRef.current = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [aiSidebarWidth]);
+
+  // ── Auto-reload editor when Claude modifies files ─────────────
+  useEffect(() => {
+    return onProjectUpdated((updatedPath) => {
+      if (activeProject && updatedPath === activeProject.path) {
+        setEditorReloadTrigger((n) => n + 1);
+      }
+    });
+  }, [activeProject]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
@@ -284,54 +291,7 @@ export function App() {
         </div>
 
         {/* Right actions */}
-        <div className="flex items-center gap-1">
-          {/* Save */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1.5"
-            onClick={() => {
-              const saveNow = (editorRef.current as any)?.__scholarpenSaveNow;
-              if (saveNow) saveNow();
-            }}
-            disabled={!activeProject}
-          >
-            <Save className="h-3.5 w-3.5" />
-            Save
-          </Button>
-
-          {/* Export */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1.5"
-            onClick={() => setExportDialogOpen(true)}
-            disabled={!activeProject || !activeDocumentFilename}
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export
-          </Button>
-
-          {/* Import */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1.5"
-            onClick={handleImportMarkdown}
-            disabled={!activeProject}
-          >
-            <Upload className="h-3.5 w-3.5" />
-            Import
-          </Button>
-
-          <div className="w-px h-4 bg-border mx-1" />
-          <Button variant="ghost" size="icon" className="h-7 w-7">
-            <Share2 className="h-3.5 w-3.5" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7">
-            <MoreHorizontal className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <div className="flex items-center gap-1" />
       </header>
 
       {/* 3-pane layout */}
@@ -353,34 +313,44 @@ export function App() {
           onFileDeleted={handleFileDeleted}
         />
 
-        {/* Center: Editor, FileViewer, or Settings */}
+        {/* Center: Settings or multi-pane editor */}
         {currentView === "settings" ? (
           <SettingsPage
             ollamaStatus={ollamaStatus}
             onClose={() => setCurrentView("editor")}
             onSettingsSaved={refreshProjects}
           />
-        ) : activeFile && activeFile.kind !== "document" ? (
-          <FileViewer file={activeFile} />
         ) : (
-          <EditorArea
-            project={editorProject}
-            documentFilename={activeDocumentFilename}
+          <EditorPaneGroup
+            ref={editorGroupRef}
+            project={activeProject}
             ollamaStatus={ollamaStatus}
+            reloadTrigger={editorReloadTrigger}
+            onActiveFileChange={(file, docFilename) => {
+              setActiveFile(file);
+              setActiveDocumentFilename(docFilename);
+            }}
+            onActiveEditorChange={handleEditorReady}
             onWordCountChange={setWordCount}
-            onEditorReady={handleEditorReady}
             onSaveStatusChange={setSaveStatus}
           />
         )}
 
-        {/* Right: AI Sidebar (toggle) */}
+        {/* Right: AI Sidebar (toggle) with resize handle */}
         {aiSidebarOpen && (
-          <AISidebar
-            project={activeProject}
-            ollamaStatus={ollamaStatus}
-            editor={editorRef.current}
-            onClose={() => setAiSidebarOpen(false)}
-          />
+          <>
+            <div
+              className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors"
+              onMouseDown={handleResizeMouseDown}
+            />
+            <AISidebar
+              project={activeProject}
+              ollamaStatus={ollamaStatus}
+              editor={editorRef.current}
+              onClose={() => setAiSidebarOpen(false)}
+              width={aiSidebarWidth}
+            />
+          </>
         )}
       </div>
 

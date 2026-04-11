@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes kb-bounce {
+  0%, 60%, 100% { transform: translateY(0);   opacity: 0.4; }
+  30%            { transform: translateY(-5px); opacity: 1;   }
+}
+
 :root {
   --background: 0 0% 100%;
   --foreground: 224 15% 13%;

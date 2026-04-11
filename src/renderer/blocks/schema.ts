@@ -7,6 +7,7 @@ import { mathBlock } from "./math-block";
 import { figureBlock } from "./figure-block";
 import { abstractBlock } from "./abstract-block";
 import { citationInline, footnoteInline } from "./citation-inline";
+import { inlineMath } from "./inline-math";
 
 // ── Scholar BlockNote Schema ────────────────────────────────────────────────
 // Extends the default schema with scholar-specific block and inline types.
@@ -22,6 +23,7 @@ export const scholarSchema = BlockNoteSchema.create({
     ...defaultInlineContentSpecs,
     citation: citationInline,
     footnote: footnoteInline,
+    inlineMath: inlineMath,
   },
 });
 

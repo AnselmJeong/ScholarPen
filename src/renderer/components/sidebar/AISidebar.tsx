@@ -7,19 +7,25 @@ import React, {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import { X, RotateCcw, Copy, Send, StopCircle, Bot, ChevronRight } from "lucide-react";
+import { X, RotateCcw, Copy, Send, StopCircle, Bot, ChevronRight, Clipboard, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { OllamaStatus, ProjectInfo, FileNode } from "@shared/rpc-types";
+import type { OllamaStatus, ProjectInfo, FileNode, KBStatus } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { rpc, onClaudeChunk } from "../../rpc";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 interface AISidebarProps {
   project: ProjectInfo | null;
   ollamaStatus: OllamaStatus; // kept for API compat (editor AI status)
   editor: BlockNoteEditor<any, any, any> | null;
   onClose: () => void;
+  width?: number;
 }
 
 interface Message {
@@ -69,7 +75,7 @@ function analyzeInput(value: string): { mode: DropdownMode; query: string } {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export function AISidebar({ project, editor, onClose }: AISidebarProps) {
+export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -77,6 +83,8 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
   const [slashCommands, setSlashCommands] = useState<string[]>([]);
   const [fileList, setFileList] = useState<FileNode[]>([]);
   const [dropdownIndex, setDropdownIndex] = useState(0);
+  const [kbStatus, setKbStatus] = useState<KBStatus | null>(null);
+  const [kbEnabled, setKbEnabled] = useState(true);
 
   const abortedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -126,6 +134,25 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
     });
   }, [scrollToBottom]);
 
+  // ── Pre-fetch slash commands and KB status whenever the project changes ─────
+  useEffect(() => {
+    rpc.getClaudeSlashCommands(project?.path ?? undefined)
+      .then((cmds) => { if (cmds.length > 0) setSlashCommands(cmds); })
+      .catch(console.error);
+
+    if (project?.path) {
+      rpc.getKBStatus(project.path)
+        .then((status) => {
+          setKbStatus(status);
+          // Auto-enable KB when it exists
+          if (status.exists) setKbEnabled(true);
+        })
+        .catch(console.error);
+    } else {
+      setKbStatus(null);
+    }
+  }, [project?.path]);
+
   // ── Dropdown computation ────────────────────────────────────────────────────
   const { mode: dropdownMode, query: dropdownQuery } = useMemo(
     () => analyzeInput(input),
@@ -134,10 +161,10 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
 
   const dropdownItems = useMemo(() => {
     if (dropdownMode === "slash") {
-      if (!dropdownQuery) return slashCommands.slice(0, 12);
+      if (!dropdownQuery) return slashCommands.slice(0, 20);
       return slashCommands
         .filter((cmd) => cmd.toLowerCase().includes(dropdownQuery))
-        .slice(0, 12);
+        .slice(0, 30);
     }
     if (dropdownMode === "file") {
       const flat = flattenFiles(fileList);
@@ -197,7 +224,12 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
     scrollToBottom();
 
     try {
-      await rpc.claudeStream(userMessage, sessionId, project?.path ?? null);
+      await rpc.claudeStream(
+        userMessage,
+        sessionId,
+        project?.path ?? null,
+        kbStatus?.exists ? kbEnabled : false
+      );
     } catch (err) {
       if (!abortedRef.current) {
         setMessages((prev) => {
@@ -211,7 +243,7 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
         setLoading(false);
       }
     }
-  }, [input, loading, sessionId, project, scrollToBottom]);
+  }, [input, loading, sessionId, project, scrollToBottom, kbStatus, kbEnabled]);
 
   const handleStop = useCallback(() => {
     abortedRef.current = true;
@@ -227,6 +259,21 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
       }
       return updated;
     });
+  }, []);
+
+  const handlePasteSelection = useCallback(() => {
+    const selected = window.getSelection()?.toString().trim();
+    if (!selected) return;
+    setInput((prev) => {
+      const base = prev.trim() ? selected + "\n\n" + prev : selected + "\n\n";
+      return base;
+    });
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }, 0);
   }, []);
 
   const handleReset = useCallback(() => {
@@ -282,7 +329,10 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="w-72 flex-shrink-0 border-l border-border bg-background flex flex-col h-full relative">
+    <div
+      className="flex-shrink-0 border-l border-border bg-background flex flex-col h-full relative"
+      style={{ width: width ?? 576 }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
@@ -290,7 +340,7 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
           <div>
             <p className="text-sm font-semibold text-foreground">Claude</p>
             {sessionId && (
-              <p className="text-[10px] text-emerald-500">세션 활성</p>
+              <p className="text-xs text-emerald-500">세션 활성</p>
             )}
           </div>
         </div>
@@ -310,19 +360,37 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
         </div>
       </div>
 
-      {/* Project context badge */}
+      {/* Project context badge + KB toggle */}
       {project && (
-        <div className="px-3 py-1.5 border-b border-border bg-muted/30">
-          <p className="text-[10px] text-muted-foreground truncate">
+        <div className="px-3 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between gap-2">
+          <p className="text-xs text-muted-foreground truncate">
             <span className="font-medium text-foreground/80">{project.name}</span>
-            {" "}· --cwd
           </p>
+          {kbStatus?.exists && (
+            <button
+              onClick={() => setKbEnabled((v) => !v)}
+              title={
+                kbEnabled
+                  ? `KB 활성 (${kbStatus.pageCount}개 페이지) — 클릭하여 비활성화`
+                  : "KB 비활성 — 클릭하여 활성화"
+              }
+              className={cn(
+                "flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+                kbEnabled
+                  ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              )}
+            >
+              <BookOpen className="h-2.5 w-2.5" />
+              KB {kbEnabled ? "ON" : "OFF"}
+            </button>
+          )}
         </div>
       )}
 
       {/* Chat history */}
-      <ScrollArea className="flex-1">
-        <div className="p-3 space-y-4">
+      <ScrollArea className="flex-1 overflow-hidden">
+        <div className="p-3 space-y-4 w-full overflow-hidden">
           {messages.length === 0 && (
             <div className="mt-6 px-2 space-y-3">
               <div className="text-center">
@@ -332,20 +400,20 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
                 </p>
               </div>
               <div className="space-y-1.5">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide px-1">사용법</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">사용법</p>
                 {[
                   { prefix: "/", label: "skill 실행  (/ + Tab으로 선택)" },
                   { prefix: "@", label: "파일 멘션  (@ + 파일명)" },
                   { prefix: "↵", label: "전송 · Shift+↵ 줄바꿈" },
                 ].map(({ prefix, label }) => (
                   <div key={prefix} className="flex items-center gap-2 px-1 py-0.5">
-                    <span className="text-[10px] font-mono bg-muted rounded px-1 text-primary w-5 text-center">{prefix}</span>
-                    <span className="text-[10px] text-muted-foreground">{label}</span>
+                    <span className="text-xs font-mono bg-muted rounded px-1 text-primary w-5 text-center">{prefix}</span>
+                    <span className="text-xs text-muted-foreground">{label}</span>
                   </div>
                 ))}
               </div>
               {slashCommands.length > 0 && (
-                <p className="text-[10px] text-muted-foreground/60 text-center">
+                <p className="text-xs text-muted-foreground/60 text-center">
                   {slashCommands.length}개 skill 로드됨
                 </p>
               )}
@@ -353,24 +421,48 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
           )}
 
           {messages.map((msg, i) => (
-            <div key={i} className="space-y-1">
+            <div key={i} className="space-y-1 w-full min-w-0 overflow-hidden">
               {msg.role === "user" ? (
-                <div className="flex justify-end">
-                  <div className="max-w-[88%] rounded-2xl rounded-tr-sm bg-primary/10 border border-primary/20 px-3 py-2 text-xs text-foreground shadow-sm whitespace-pre-wrap">
+                <div className="flex justify-end w-full overflow-hidden">
+                  <div className="max-w-[88%] min-w-0 rounded-2xl rounded-tr-sm bg-primary/10 border border-primary/20 px-3 py-2 text-sm text-foreground shadow-sm whitespace-pre-wrap break-all overflow-hidden">
                     {msg.content}
                   </div>
                 </div>
               ) : (
-                <div className="space-y-1.5">
-                  <div className="rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-xs text-foreground whitespace-pre-wrap leading-relaxed">
-                    {msg.content || (
-                      <span className="animate-pulse text-muted-foreground">▋</span>
+                <div className="space-y-1.5 w-full min-w-0 overflow-hidden">
+                  <div className="w-full min-w-0 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none
+                    [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
+                    [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
+                    [&_code]:text-xs [&_code]:bg-background/60 [&_code]:px-1 [&_code]:rounded
+                    [&_pre]:text-xs [&_pre]:bg-background/60 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto
+                    [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-2 [&_blockquote]:italic
+                    [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5">
+                    {msg.content ? (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                      >
+                        {msg.content}
+                      </ReactMarkdown>
+                    ) : (
+                      <span className="flex items-center gap-1 py-1">
+                        {[0, 1, 2].map((i) => (
+                          <span
+                            key={i}
+                            className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
+                            style={{
+                              animation: "kb-bounce 1.2s ease-in-out infinite",
+                              animationDelay: `${i * 0.2}s`,
+                            }}
+                          />
+                        ))}
+                      </span>
                     )}
                   </div>
                   {msg.content && (
                     <button
                       onClick={() => navigator.clipboard.writeText(msg.content)}
-                      className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors px-1"
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
                     >
                       <Copy className="h-2.5 w-2.5" />
                       복사
@@ -401,7 +493,7 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
                   )}
                 >
                   <ChevronRight className="h-3 w-3 text-primary flex-shrink-0" />
-                  <span className="text-xs font-mono text-primary font-medium">/{cmd}</span>
+                  <span className="text-sm font-mono text-primary font-medium">/{cmd}</span>
                 </button>
               ))}
 
@@ -416,14 +508,14 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
                     idx === dropdownIndex && "bg-accent"
                   )}
                 >
-                  <span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">@</span>
-                  <span className="text-xs text-foreground truncate">{file.name}</span>
+                  <span className="text-sm font-mono text-muted-foreground flex-shrink-0">@</span>
+                  <span className="text-sm text-foreground truncate">{file.name}</span>
                 </button>
               ))}
 
             {/* Hint */}
             <div className="px-3 py-1.5 border-t border-border bg-muted/30">
-              <p className="text-[9px] text-muted-foreground">
+              <p className="text-[11px] text-muted-foreground">
                 ↑↓ 탐색 · Enter/Tab 선택 · Esc 닫기
               </p>
             </div>
@@ -438,12 +530,22 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
           rows={3}
           placeholder={loading ? "응답 수신 중…" : "Claude에게 질문 · / skill · @ 파일"}
           disabled={loading}
-          className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
         />
         <div className="flex items-center justify-between">
-          <div className="flex gap-1 text-[10px] text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-6 w-6"
+              onClick={handlePasteSelection}
+              title="선택한 텍스트 붙여넣기"
+              disabled={loading}
+            >
+              <Clipboard className="h-3 w-3 text-muted-foreground" />
+            </Button>
             {dropdownMode === "slash" && slashCommands.length > 0 && (
-              <span>{slashCommands.length} skills</span>
+              <span className="text-xs text-muted-foreground">{slashCommands.length} skills</span>
             )}
           </div>
           {loading ? (
@@ -463,14 +565,6 @@ export function AISidebar({ project, editor, onClose }: AISidebarProps) {
         </div>
       </div>
 
-      {/* Footer */}
-      <div className="px-4 pb-2">
-        <p className="text-[9px] text-muted-foreground text-center">
-          {sessionId
-            ? "멀티턴 · claude -p --resume"
-            : "claude -p --output-format stream-json"}
-        </p>
-      </div>
     </div>
   );
 }

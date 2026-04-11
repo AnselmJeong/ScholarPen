@@ -9,23 +9,89 @@ interface FileViewerProps {
   file: FileNode;
 }
 
-/** Simple syntax highlighting for BibTeX */
+// Token types for single-pass BibTeX highlighting
+type TokenType = "entry" | "field" | "value" | "year" | "plain";
+interface Token { type: TokenType; text: string }
+
+/** Tokenize a single BibTeX line in one pass (no regex overlap) */
+function tokenizeBibtexLine(line: string): Token[] {
+  const tokens: Token[] = [];
+  let pos = 0;
+
+  // 1. Entry type: @word{
+  const entryMatch = line.match(/^(@\w+)\{/);
+  if (entryMatch) {
+    tokens.push({ type: "entry", text: entryMatch[1] });
+    tokens.push({ type: "plain", text: "{" });
+    pos = entryMatch[0].length;
+  }
+
+  // 2. Scan the rest character-by-character for field=/value/"year"
+  while (pos < line.length) {
+    // Field name followed by =
+    const fieldMatch = line.slice(pos).match(/^(\w+)\s*=/);
+    if (fieldMatch) {
+      tokens.push({ type: "field", text: fieldMatch[1] });
+      tokens.push({ type: "plain", text: line.slice(pos + fieldMatch[1].length, pos + fieldMatch[0].length) });
+      pos += fieldMatch[0].length;
+      continue;
+    }
+
+    // Quoted string value
+    const quoteMatch = line.slice(pos).match(/^("[^"]*")/);
+    if (quoteMatch) {
+      tokens.push({ type: "value", text: quoteMatch[1] });
+      pos += quoteMatch[0].length;
+      continue;
+    }
+
+    // 4-digit year (standalone, not inside quotes — those are already consumed)
+    const yearMatch = line.slice(pos).match(/^(\d{4})/);
+    if (yearMatch) {
+      tokens.push({ type: "year", text: yearMatch[1] });
+      pos += yearMatch[0].length;
+      continue;
+    }
+
+    // Plain character
+    const lastPlain = tokens[tokens.length - 1];
+    const ch = line[pos];
+    if (lastPlain?.type === "plain") {
+      lastPlain.text += ch;
+    } else {
+      tokens.push({ type: "plain", text: ch });
+    }
+    pos++;
+  }
+
+  return tokens;
+}
+
+const TOKEN_CLASS: Record<TokenType, string> = {
+  entry:  "text-purple-600 font-semibold",
+  field:  "text-blue-600",
+  value:  "text-green-700",
+  year:   "text-orange-600",
+  plain:  "",
+};
+
+/** Syntax-highlighted BibTeX rendering using JSX (no dangerouslySetInnerHTML) */
 function highlightBibtex(code: string): React.ReactNode[] {
   const lines = code.split("\n");
   return lines.map((line, i) => {
-    // Highlight @type{key,
-    const highlighted = line
-      .replace(/(@\w+)\{/g, '<span class="text-purple-600 font-semibold">$1</span>{')
-      .replace(/(\w+)\s*=/g, '<span class="text-blue-600">$1</span> =')
-      .replace(/("[^"]*")/g, '<span class="text-green-700">$1</span>')
-      .replace(/(\d{4})/g, '<span class="text-orange-600">$1</span>');
+    const tokens = tokenizeBibtexLine(line);
     return (
       <div key={i} className="flex">
         <span className="w-10 text-right pr-3 text-gray-400 select-none text-xs leading-5">{i + 1}</span>
-        <span
-          className="flex-1 text-xs leading-5 font-mono whitespace-pre"
-          dangerouslySetInnerHTML={{ __html: highlighted }}
-        />
+        <span className="flex-1 text-xs leading-5 font-mono whitespace-pre">
+          {tokens.map((t, j) =>
+            TOKEN_CLASS[t.type] ? (
+              <span key={j} className={TOKEN_CLASS[t.type]}>{t.text}</span>
+            ) : (
+              <span key={j}>{t.text}</span>
+            )
+          )}
+        </span>
       </div>
     );
   });
