@@ -353,7 +353,7 @@ class FileSystemManager {
     await mkdir(join(projectPath, "exports"), { recursive: true });
     await mkdir(join(projectPath, ".lance"), { recursive: true });
 
-    const emptyManuscript = { content: [], version: 1 };
+    const emptyManuscript: unknown[] = [];
     await writeFile(
       join(projectPath, "documents", `${safeName}.scholarpen.json`),
       JSON.stringify(emptyManuscript, null, 2)
@@ -415,7 +415,7 @@ class FileSystemManager {
       ? filename
       : `${filename}.scholarpen.json`;
     const filePath = join(docsDir, safeFilename);
-    const data = content ?? { content: [], version: 1 };
+    const data = content ?? [];
     await writeFile(filePath, JSON.stringify(data, null, 2));
     return safeFilename;
   }
@@ -462,6 +462,11 @@ class FileSystemManager {
     return readFile(filePath, "utf-8");
   }
 
+  async readBinaryFile(filePath: string): Promise<string> {
+    const buf = await readFile(filePath);
+    return buf.toString("base64");
+  }
+
   async renameFile(filePath: string, newName: string): Promise<string> {
     const dir = dirname(filePath);
     const oldBasename = basename(filePath);
@@ -491,7 +496,7 @@ class FileSystemManager {
   // ── File Tree ───────────────────────────────────────────────
 
   async listProjectFiles(projectPath: string, depth = 0): Promise<FileNode[]> {
-    if (depth > 3) return [];
+    if (depth > 5) return [];
     const entries = await readdir(projectPath, { withFileTypes: true });
     const nodes: FileNode[] = [];
 

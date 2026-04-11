@@ -102,6 +102,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     createDocument: "new-doc.scholarpen.json",
     exportFile: "/demo/exports/doc.md",
     readTextFile: "# Hello\n\nThis is a demo file.",
+    readBinaryFile: "",
     renameFile: "/demo/documents/renamed.scholarpen.json",
     deleteFile: null,
     getSettings: {
@@ -169,6 +170,8 @@ export const rpc = {
   // ── File Management ───────────────────────────────────
   readTextFile: (filePath: string) =>
     call<string>("readTextFile", { filePath }),
+  readBinaryFile: (filePath: string) =>
+    call<string>("readBinaryFile", { filePath }),
   renameFile: (filePath: string, newName: string) =>
     call<string>("renameFile", { filePath, newName }),
   deleteFile: (filePath: string) =>

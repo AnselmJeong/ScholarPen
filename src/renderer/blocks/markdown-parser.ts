@@ -2,44 +2,43 @@
 // Converts Markdown/Quarto content to BlockNote PartialBlock arrays.
 // Handles custom block patterns: $$...$$, ::: abstract, ![caption](url){#fig-N}, [@citekey]
 
-import type { BlockNoteEditor } from "@blocknote/core";
+import { BlockNoteEditor } from "@blocknote/core";
+import { scholarSchema, type ScholarEditor } from "./schema";
+import { stripFrontmatter } from "../utils/frontmatter";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyBlock = Record<string, any>;
 
 /**
- * Strip YAML frontmatter from Quarto (.qmd) files.
+ * Create a headless BlockNoteEditor for parsing markdown
+ * without requiring a mounted React component.
  */
-function stripFrontmatter(md: string): string {
-  if (!md.startsWith("---")) return md;
-  const endIndex = md.indexOf("---", 3);
-  if (endIndex === -1) return md;
-  return md.slice(endIndex + 3).trimStart();
-}
-
-/**
- * Check if content is a Quarto file (starts with YAML frontmatter).
- */
-function isQuartoFile(content: string): boolean {
-  return content.trimStart().startsWith("---");
+function createHeadlessEditor(): ScholarEditor {
+  return BlockNoteEditor.create({ schema: scholarSchema }) as ScholarEditor;
 }
 
 /**
  * Parse Markdown/Quarto content into ScholarPen BlockNote blocks.
  *
+ * @param md - The markdown/quarto content to parse
+ * @param editor - Optional BlockNoteEditor instance. If not provided,
+ *                 a headless editor is created for parsing.
+ *
  * Strategy:
- * 1. Strip YAML frontmatter (if .qmd)
+ * 1. Strip YAML frontmatter (if present)
  * 2. Pre-process: convert custom patterns into markdown that BlockNote can parse,
  *    annotating them for post-processing
  * 3. Use BlockNote's built-in parser for standard blocks
  * 4. Post-process: convert annotated blocks back to custom block types
  */
 export async function markdownToScholarBlocks(
-  editor: BlockNoteEditor,
-  md: string
+  md: string,
+  editor?: ScholarEditor
 ): Promise<AnyBlock[]> {
-  // Strip frontmatter for Quarto files
-  const processedMd = isQuartoFile(md) ? stripFrontmatter(md) : md;
+  const parseEditor = editor ?? createHeadlessEditor();
+
+  // Strip frontmatter for Quarto files (or any file with YAML header)
+  const processedMd = md.trimStart().startsWith("---") ? stripFrontmatter(md) : md;
 
   // Pre-process: replace custom patterns with annotated markdown
   const annotated = annotateCustomBlocks(processedMd);
@@ -47,9 +46,9 @@ export async function markdownToScholarBlocks(
   // Parse using BlockNote's built-in converter
   let blocks: AnyBlock[];
   try {
-    blocks = await editor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
+    blocks = await parseEditor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
   } catch {
-    blocks = (await editor.tryParseMarkdownToBlocks(processedMd) || []) as AnyBlock[];
+    blocks = (await parseEditor.tryParseMarkdownToBlocks(processedMd) || []) as AnyBlock[];
   }
 
   // Post-process: convert annotated blocks to custom types

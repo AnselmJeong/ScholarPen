@@ -146,10 +146,10 @@ export function App() {
   // ── Import markdown content handler ──────────────────────────
   useEffect(() => {
     const unsubscribe = onImportMarkdown(async (content, suggestedFilename) => {
-      if (!activeProject || !editorRef.current) return;
+      if (!activeProject) return;
       try {
-        // Convert markdown to BlockNote blocks
-        const blocks = await markdownToScholarBlocks(editorRef.current, content);
+        // Convert markdown to BlockNote blocks (uses headless parser if no editor)
+        const blocks = await markdownToScholarBlocks(content);
 
         // Create a new document file
         const safeFilename = suggestedFilename.endsWith(".scholarpen.json")
@@ -175,7 +175,7 @@ export function App() {
 
   // ── Import markdown (fallback for browser dev) ────────────────
   const handleImportMarkdown = useCallback(async () => {
-    if (!activeProject || !editorRef.current) return;
+    if (!activeProject) return;
 
     // Use a file input as fallback when Electrobun RPC is unavailable
     const input = document.createElement("input");
@@ -187,7 +187,7 @@ export function App() {
       const content = await file.text();
       const suggestedFilename = file.name.replace(/\.[^.]+$/, "") + ".scholarpen.json";
       try {
-        const blocks = await markdownToScholarBlocks(editorRef.current!, content);
+        const blocks = await markdownToScholarBlocks(content);
         const createdFilename = await rpc.createDocument(
           activeProject!.path,
           suggestedFilename,
@@ -218,10 +218,10 @@ export function App() {
 
   // ── Import from file (context menu) ────────────────────────────
   const handleImportFromFile = useCallback(async (filePath: string) => {
-    if (!activeProject || !editorRef.current) return;
+    if (!activeProject) return;
     try {
       const content = await rpc.readTextFile(filePath);
-      const blocks = await markdownToScholarBlocks(editorRef.current, content);
+      const blocks = await markdownToScholarBlocks(content);
       const baseName = filePath.replace(/.*\//, "").replace(/\.[^.]+$/, "");
       const createdFilename = await rpc.createDocument(
         activeProject.path,

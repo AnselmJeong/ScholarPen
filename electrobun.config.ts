@@ -4,7 +4,7 @@ export default {
   app: {
     name: "ScholarPen",
     identifier: "dev.scholarpen.app",
-    version: "0.1.0",
+    version: "0.2.0",
   },
   build: {
     // Vite builds to dist/, Electrobun copies to views/
@@ -16,6 +16,8 @@ export default {
     watchIgnore: ["dist/**"],
     mac: {
       bundleCEF: false,
+      icons: "build/icon.iconset",
+      createDmg: true,
     },
     linux: {
       bundleCEF: false,

@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileJson, FileText, BookOpen, Image as ImageIcon, File } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
+import { parseFrontmatter } from "../../utils/frontmatter";
+import { FrontmatterCard } from "./FrontmatterCard";
+import { PdfViewer } from "./PdfViewer";
 
 interface FileViewerProps {
   file: FileNode;
@@ -139,10 +142,24 @@ export function FileViewer({ file }: FileViewerProps) {
     return () => { cancelled = true; };
   }, [file.path]);
 
+  const ext = getExt(file.name).toLowerCase();
+  const isMarkdown = [".md", ".qmd", ".markdown"].includes(ext);
+  const isBibtex = ext === ".bib";
+  const isCode = [".txt", ".json", ".yaml", ".yml", ".toml", ".tex", ".cls", ".sty", ".bst"].includes(ext);
+
+  // Parse YAML frontmatter from markdown content — must be before any early returns
+  const { frontmatter: parsedFrontmatter, body: markdownBody } = useMemo(
+    () => isMarkdown && content ? parseFrontmatter(content) : { frontmatter: null, body: content ?? "" },
+    [content, isMarkdown]
+  );
+
+  // PDF viewer — binary file, handled separately
+  if (file.kind === "pdf" || ext === ".pdf") {
+    return <PdfViewer file={file} />;
+  }
+
   // Image viewer — use data URL directly
   if (file.kind === "figure") {
-    const isDataUrl = file.path.startsWith("data:");
-    const ext = getExt(file.name).toLowerCase();
     const isImage = [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"].includes(ext);
 
     if (isImage) {
@@ -176,11 +193,6 @@ export function FileViewer({ file }: FileViewerProps) {
     );
   }
 
-  const ext = getExt(file.name).toLowerCase();
-  const isMarkdown = [".md", ".qmd", ".markdown"].includes(ext);
-  const isBibtex = ext === ".bib";
-  const isCode = [".txt", ".json", ".yaml", ".yml", ".toml", ".tex", ".cls", ".sty", ".bst"].includes(ext);
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-white">
       {/* Header */}
@@ -194,10 +206,13 @@ export function FileViewer({ file }: FileViewerProps) {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         {isMarkdown && (
-          <div className="max-w-3xl mx-auto px-8 py-6 prose prose-sm prose-gray">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {content}
-            </ReactMarkdown>
+          <div className="max-w-3xl mx-auto px-8 py-6">
+            {parsedFrontmatter && <FrontmatterCard frontmatter={parsedFrontmatter} />}
+            <div className="prose prose-sm prose-gray">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {markdownBody}
+              </ReactMarkdown>
+            </div>
           </div>
         )}
 

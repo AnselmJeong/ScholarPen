@@ -48,6 +48,7 @@ type BunRequests = RPCSchema<{
     exportFile: { params: { projectPath: string; filename: string; content: string }; response: string };
     // File management
     readTextFile: { params: { filePath: string }; response: string };
+    readBinaryFile: { params: { filePath: string }; response: string };
     renameFile: { params: { filePath: string; newName: string }; response: string };
     deleteFile: { params: { filePath: string }; response: void };
     // Settings

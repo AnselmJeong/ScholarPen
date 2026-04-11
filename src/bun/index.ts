@@ -230,6 +230,7 @@ async function main() {
 
         // ── File Management ────────────────────────────────
         readTextFile: ({ filePath }) => fileSystem.readTextFile(filePath),
+        readBinaryFile: ({ filePath }) => fileSystem.readBinaryFile(filePath),
         renameFile: ({ filePath, newName }) => fileSystem.renameFile(filePath, newName),
         deleteFile: ({ filePath }) => fileSystem.deleteFile(filePath),
 
