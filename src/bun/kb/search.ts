@@ -14,6 +14,8 @@ export interface KBSearchResult {
   filePath: string;
   excerpt: string;
   score: number;
+  authors: string[];
+  year: number | undefined;
 }
 
 export interface KBStatus {
@@ -24,21 +26,35 @@ export interface KBStatus {
 }
 
 // Bump this whenever cleanBody or indexing logic changes to force a rebuild.
-const INDEX_VERSION = "2";
+const INDEX_VERSION = "3";
 
 // Wiki subdirectories to index (schema.md page types)
 const WIKI_SUBDIRS = [
   "sources", "concepts", "entities", "synthesis",
-  "findings", "thesis", "queries", "methodology", "comparisons",
+  "findings", "thesis", "queries", "methodology", "comparisons", "reports",
 ];
+
+// Singular form lookup for subdirectory names that don't follow simple plural rules
+const DIR_TO_TYPE: Record<string, string> = {
+  sources: "source",
+  concepts: "concept",
+  entities: "entity",
+  synthesis: "synthesis",
+  findings: "finding",
+  thesis: "thesis",
+  queries: "query",
+  methodology: "methodology",
+  comparisons: "comparison",
+  reports: "report",
+};
 
 // ── KB root detection ──────────────────────────────────────────────────────────
 
 export async function findKBRoot(projectPath: string): Promise<string | null> {
   const candidates = [
-    join(projectPath, "knowledge-base"),
-    join(projectPath, "Knowledge_base"),
     join(projectPath, "Knowledge_Base"),
+    join(projectPath, "Knowledge_base"),
+    join(projectPath, "knowledge-base"),
   ];
   for (const candidate of candidates) {
     // Primary marker: schema.md (present in all new-format KBs)
@@ -50,19 +66,28 @@ export async function findKBRoot(projectPath: string): Promise<string | null> {
 }
 
 // ── Frontmatter parser ─────────────────────────────────────────────────────────
-// Minimal — only extracts `type` and `title` reliably.
 
-function parseMd(content: string): { type: string; title: string; body: string } {
+interface ParsedMd {
+  type: string;
+  title: string;
+  body: string;
+  authors: string[];
+  year: number | undefined;
+}
+
+function parseMd(content: string): ParsedMd {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) {
     const h1 = content.match(/^#\s+(.+)$/m);
-    return { type: "unknown", title: h1?.[1]?.trim() ?? "", body: content };
+    return { type: "unknown", title: h1?.[1]?.trim() ?? "", body: content, authors: [], year: undefined };
   }
 
   const yaml = match[1];
   const body = match[2];
   let type = "unknown";
   let title = "";
+  let authors: string[] = [];
+  let year: number | undefined = undefined;
 
   for (const line of yaml.split("\n")) {
     if (!type || type === "unknown") {
@@ -73,6 +98,19 @@ function parseMd(content: string): { type: string; title: string; body: string }
       const m = line.match(/^title:\s*(.+)$/);
       if (m) title = m[1].trim().replace(/^["']|["']$/g, "");
     }
+    // Parse YAML list: authors: [Author1, Author2] or multiline
+    if (line.match(/^authors:\s*\[/)) {
+      const items = line.match(/\[(.+)\]/);
+      if (items) authors = items[1].split(",").map(a => a.trim().replace(/^["']|["']$/g, ""));
+    } else if (line.match(/^\s+-\s+/) && authors.length === 0 && yaml.includes("authors:")) {
+      // Multi-line YAML list item after "authors:" key
+      const item = line.replace(/^\s+-\s+/, "").trim().replace(/^["']|["']$/g, "");
+      if (item) authors.push(item);
+    }
+    if (year === null) {
+      const m = line.match(/^year:\s*(\d{4})/);
+      if (m) year = parseInt(m[1], 10);
+    }
   }
 
   // Fallback: first h1 in body
@@ -81,7 +119,7 @@ function parseMd(content: string): { type: string; title: string; body: string }
     title = h1?.[1]?.trim() ?? "";
   }
 
-  return { type, title, body };
+  return { type, title, body, authors, year };
 }
 
 // Convert markdown to plain text suitable for FTS5 indexing.
@@ -117,6 +155,180 @@ function safeFtsQuery(text: string): string {
   return words.join(" ");
 }
 
+// ── YAML index loader ──────────────────────────────────────────────────────────
+
+interface PaperEntry {
+  id: string;
+  title: string;
+  authors: string[];
+  year: number;
+  wiki_slug: string;
+  one_line_finding?: string;
+  study_type?: string;
+  llm_keywords: string[];
+}
+
+interface MasterIndex {
+  papers: PaperEntry[];
+  last_updated: string;
+}
+
+interface KeywordEntry {
+  count: number;
+  papers: string[];
+}
+
+type KeywordRegistry = Record<string, KeywordEntry>;
+
+/** Load and parse wiki/index/master_index.yaml for enriched metadata */
+async function loadMasterIndex(kbRoot: string): Promise<MasterIndex | null> {
+  const indexPath = join(kbRoot, "wiki", "index", "master_index.yaml");
+  if (!existsSync(indexPath)) return null;
+  try {
+    const raw = await readFile(indexPath, "utf8");
+    // Minimal YAML parser for the flat structure we expect
+    // The file has: papers: [...] and last_updated: '...'
+    const data = parseYaml(raw) as Record<string, unknown>;
+    if (data && Array.isArray(data.papers)) {
+      return {
+        papers: data.papers as PaperEntry[],
+        last_updated: (data.last_updated as string) ?? "",
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn("[KB] Could not load master_index.yaml:", err);
+    return null;
+  }
+}
+
+/** Load and parse wiki/index/keyword_registry.yaml */
+async function loadKeywordRegistry(kbRoot: string): Promise<KeywordRegistry | null> {
+  const kwPath = join(kbRoot, "wiki", "index", "keyword_registry.yaml");
+  if (!existsSync(kwPath)) return null;
+  try {
+    const raw = await readFile(kwPath, "utf8");
+    const data = parseYaml(raw) as Record<string, unknown>;
+    return data as unknown as KeywordRegistry;
+  } catch (err) {
+    console.warn("[KB] Could not load keyword_registry.yaml:", err);
+    return null;
+  }
+}
+
+/** Very small YAML parser — handles scalars, lists of scalars, and simple mappings.
+ *  Sufficient for master_index.yaml and keyword_registry.yaml formats. */
+function parseYaml(raw: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  let currentKey = "";
+  let currentList: unknown[] | null = null;
+  let currentMap: Record<string, unknown> | null = null;
+  let listDepth = 0;
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trimEnd();
+
+    // Skip comments and empty lines
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+
+    // Top-level key: value
+    const topMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+    if (topMatch && !line.startsWith(" ") && !line.startsWith("-")) {
+      // Save previous list/map
+      if (currentKey && currentList !== null && listDepth === 0) {
+        result[currentKey] = currentList;
+        currentList = null;
+      } else if (currentKey && currentMap !== null) {
+        if (listDepth === 0) {
+          result[currentKey] = currentMap;
+          currentMap = null;
+        }
+      }
+
+      currentKey = topMatch[1];
+      const val = topMatch[2].trim();
+      if (val === "" || val === "|" || val === ">") {
+        // Value is a list or map on following lines
+        currentList = null;
+        currentMap = null;
+      } else if (val.startsWith("[") && val.endsWith("]")) {
+        // Inline list
+        const items = val.slice(1, -1).split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
+        result[currentKey] = items;
+        currentList = null;
+      } else if (val.startsWith("'") && val.endsWith("'")) {
+        result[currentKey] = val.slice(1, -1);
+      } else if (val.startsWith('"') && val.endsWith('"')) {
+        result[currentKey] = val.slice(1, -1);
+      } else if (/^\d+$/.test(val)) {
+        result[currentKey] = parseInt(val, 10);
+      } else {
+        result[currentKey] = val;
+      }
+      continue;
+    }
+
+    // List item at top level (starts with "- ")
+    if (trimmed.startsWith("- ") && listDepth === 0 && currentKey) {
+      if (currentList === null) currentList = [];
+      const item = trimmed.slice(2).trim();
+      // Check if it's a map-style list item like "id: ..."
+      if (item.includes(": ")) {
+        if (currentMap === null) currentMap = {};
+        const [k, ...v] = item.split(": ");
+        (currentMap as Record<string, unknown>)[k.trim()] = v.join(": ").trim().replace(/^["']|["']$/g, "");
+      } else {
+        currentList.push(item.replace(/^["']|["']$/g, ""));
+      }
+      continue;
+    }
+
+    // Nested key inside a list item (indented property)
+    if (line.startsWith("    ") || line.startsWith("\t\t")) {
+      const nestedMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_() -]*):\s*(.*)$/);
+      if (nestedMatch && currentMap) {
+        const nk = nestedMatch[1].trim();
+        const nv = nestedMatch[2].trim();
+        if (nv.startsWith("[") && nv.endsWith("]")) {
+          (currentMap as Record<string, unknown>)[nk] = nv.slice(1, -1).split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
+        } else if (nv) {
+          (currentMap as Record<string, unknown>)[nk] = nv.replace(/^["']|["']$/g, "");
+        }
+      }
+      continue;
+    }
+
+    // Sub-list item (indented "- ")
+    if (trimmed.startsWith("- ") && (line.startsWith("      ") || line.match(/^\s{6,}/))) {
+      const item = trimmed.slice(2).trim().replace(/^["']|["']$/g, "");
+      // Find the last array property in currentMap
+      if (currentMap) {
+        for (const key of Object.keys(currentMap).reverse()) {
+          if (Array.isArray(currentMap[key])) {
+            (currentMap[key] as unknown[]).push(item);
+            break;
+          }
+        }
+      }
+      continue;
+    }
+  }
+
+  // Flush final list/map
+  if (currentKey && currentList !== null && listDepth === 0) {
+    result[currentKey] = currentList;
+  } else if (currentKey && currentMap !== null) {
+    // Wrap single map in array if top-level expects an array
+    if (result[currentKey] === undefined) {
+      result[currentKey] = [currentMap];
+    } else if (Array.isArray(result[currentKey])) {
+      (result[currentKey] as unknown[]).push(currentMap);
+    }
+  }
+
+  return result;
+}
+
 // ── Engine singleton cache ─────────────────────────────────────────────────────
 
 const engineCache = new Map<string, KBSearchEngine>();
@@ -135,6 +347,8 @@ export class KBSearchEngine {
   private kbRoot: string;
   private indexed = false;
   private indexingPromise: Promise<void> | null = null;
+  private masterIndex: MasterIndex | null = null;
+  private keywordRegistry: KeywordRegistry | null = null;
 
   constructor(kbRoot: string) {
     this.kbRoot = kbRoot;
@@ -170,7 +384,9 @@ export class KBSearchEngine {
         doc_id   TEXT PRIMARY KEY,
         file_path TEXT NOT NULL,
         doc_type  TEXT,
-        title     TEXT
+        title     TEXT,
+        authors   TEXT,
+        year      INTEGER
       )
     `);
     this.db.run(`
@@ -203,8 +419,20 @@ export class KBSearchEngine {
       "INSERT INTO docs(doc_id, doc_type, title, content) VALUES (?, ?, ?, ?)"
     );
     const insertMeta = this.db.prepare(
-      "INSERT OR REPLACE INTO doc_meta(doc_id, file_path, doc_type, title) VALUES (?, ?, ?, ?)"
+      "INSERT OR REPLACE INTO doc_meta(doc_id, file_path, doc_type, title, authors, year) VALUES (?, ?, ?, ?, ?, ?)"
     );
+
+    // Load YAML index files for enriched metadata
+    this.masterIndex = await loadMasterIndex(this.kbRoot);
+    this.keywordRegistry = await loadKeywordRegistry(this.kbRoot);
+
+    // Build a lookup from wiki_slug → PaperEntry for matching source files
+    const slugToPaper = new Map<string, PaperEntry>();
+    if (this.masterIndex?.papers) {
+      for (const paper of this.masterIndex.papers) {
+        slugToPaper.set(paper.wiki_slug, paper);
+      }
+    }
 
     let count = 0;
     const wikiDir = join(this.kbRoot, "wiki");
@@ -219,11 +447,22 @@ export class KBSearchEngine {
           if (!file.endsWith(".md")) continue;
           const filePath = join(dir, file);
           const raw = await readFile(filePath, "utf8");
-          const { type, title, body } = parseMd(raw);
-          const docId = `${subdir}/${file.slice(0, -3)}`; // strip .md
-          const docType = type !== "unknown" ? type : subdir.replace(/s$/, ""); // "sources"→"source"
+          const { type, title, body, authors, year } = parseMd(raw);
+          const slug = file.slice(0, -3); // strip .md
+          const docId = `${subdir}/${slug}`;
+          const docType = type !== "unknown" ? type : (DIR_TO_TYPE[subdir] ?? subdir);
+
+          // Enrich source metadata from master_index.yaml if available
+          let enrichedAuthors = authors;
+          let enrichedYear = year;
+          if (subdir === "sources" && slugToPaper.has(slug)) {
+            const paper = slugToPaper.get(slug)!;
+            if (enrichedAuthors.length === 0) enrichedAuthors = paper.authors;
+            if (enrichedYear === null) enrichedYear = paper.year;
+          }
+
           insertDoc.run(docId, docType, title, cleanBody(body));
-          insertMeta.run(docId, filePath, docType, title);
+          insertMeta.run(docId, filePath, docType, title, JSON.stringify(enrichedAuthors), enrichedYear ?? 0);
           count++;
         }
       } catch (err) {
@@ -237,7 +476,17 @@ export class KBSearchEngine {
       const raw = await readFile(overviewPath, "utf8");
       const { type, title, body } = parseMd(raw);
       insertDoc.run("overview", type || "overview", title || "Project Overview", cleanBody(body));
-      insertMeta.run("overview", overviewPath, "overview", title || "Project Overview");
+      insertMeta.run("overview", overviewPath, "overview", title || "Project Overview", "[]", 0);
+      count++;
+    }
+
+    // Also index wiki/log.md for research activity context
+    const logPath = join(wikiDir, "log.md");
+    if (existsSync(logPath)) {
+      const raw = await readFile(logPath, "utf8");
+      const { type, title, body } = parseMd(raw);
+      insertDoc.run("log", type || "log", title || "Research Log", cleanBody(body));
+      insertMeta.run("log", logPath, "log", title || "Research Log", "[]", 0);
       count++;
     }
 
@@ -255,7 +504,7 @@ export class KBSearchEngine {
     );
 
     this.indexed = true;
-    console.log(`[KB] Indexed ${count} pages`);
+    console.log(`[KB] Indexed ${count} pages (master_index: ${this.masterIndex ? this.masterIndex.papers.length + ' papers' : 'not found'})`);
   }
 
   search(query: string, limit = 5): KBSearchResult[] {
@@ -263,24 +512,56 @@ export class KBSearchEngine {
     const ftsQuery = safeFtsQuery(query);
     if (ftsQuery === '""') return [];
     try {
-      return this.db.query(`
+      const rows = this.db.query(`
         SELECT
-          m.doc_id   AS docId,
-          m.doc_type AS docType,
-          m.title    AS title,
+          m.doc_id    AS docId,
+          m.doc_type  AS docType,
+          m.title     AS title,
           m.file_path AS filePath,
           snippet(docs, 3, '', '', '…', 30) AS excerpt,
-          bm25(docs) AS score
+          bm25(docs)  AS score,
+          m.authors   AS authorsJson,
+          m.year      AS year
         FROM docs
         JOIN doc_meta m ON docs.doc_id = m.doc_id
         WHERE docs MATCH ?
         ORDER BY bm25(docs)
         LIMIT ?
-      `).all(ftsQuery, limit) as KBSearchResult[];
+      `).all(ftsQuery, limit) as Array<{ docId: string; docType: string; title: string; filePath: string; excerpt: string; score: number; authorsJson: string; year: number }>;
+
+      return rows.map(row => ({
+        docId: row.docId,
+        docType: row.docType,
+        title: row.title,
+        filePath: row.filePath,
+        excerpt: row.excerpt,
+        score: Math.abs(row.score),
+        authors: safeJsonParse(row.authorsJson),
+        year: row.year || undefined,
+      }));
     } catch (err) {
       console.warn("[KB] FTS5 search error:", err);
       return [];
     }
+  }
+
+  /** Keyword search: given a keyword, return matching paper slugs from the keyword registry */
+  searchByKeyword(keyword: string): string[] {
+    if (!this.keywordRegistry) return [];
+    const entry = this.keywordRegistry[keyword];
+    if (entry) return entry.papers;
+    // Case-insensitive fallback
+    const lower = keyword.toLowerCase();
+    for (const [kw, data] of Object.entries(this.keywordRegistry)) {
+      if (kw.toLowerCase() === lower) return data.papers;
+    }
+    return [];
+  }
+
+  /** Get enriched metadata for a source by its wiki slug */
+  getSourceMeta(slug: string): PaperEntry | null {
+    if (!this.masterIndex) return null;
+    return this.masterIndex.papers.find(p => p.wiki_slug === slug) ?? null;
   }
 
   getStatus(): { pageCount: number; lastIndexed: number | null } {
@@ -301,5 +582,14 @@ export class KBSearchEngine {
     this.indexed = false;
     this.indexingPromise = null;
     await this.buildIndex();
+  }
+}
+
+function safeJsonParse(val: string): string[] {
+  try {
+    const parsed = JSON.parse(val);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }

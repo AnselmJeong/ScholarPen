@@ -186,10 +186,11 @@ async function main() {
           return results.map((r) => ({
             id: r.docId,
             text: r.excerpt,
-            score: Math.abs(r.score),
+            score: r.score,
             metadata: {
               title: r.title,
-              authors: [],
+              authors: r.authors,
+              year: r.year,
               sourceFile: r.filePath,
               chunkIndex: 0,
               section: r.docType,

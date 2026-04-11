@@ -32,6 +32,240 @@ function extToKind(name: string, isDir: boolean): FileNodeKind {
   return "unknown";
 }
 
+// ── Knowledge Base Templates ────────────────────────────────────────────────────
+
+const SCHEMA_TEMPLATE = `# Wiki Schema — Research Deep-Dive
+
+## Page Types
+
+| Type | Directory | Purpose |
+|------|-----------|---------|
+| entity | wiki/entities/ | Named things (people, tools, organizations, datasets) |
+| concept | wiki/concepts/ | Ideas, techniques, phenomena, frameworks |
+| source | wiki/sources/ | Papers, articles, talks, books, blog posts |
+| query | wiki/queries/ | Open questions under active investigation |
+| comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
+| synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
+| overview | wiki/ | High-level project summary (one per project) |
+| thesis | wiki/thesis/ | Working hypothesis and its evolution over time |
+| methodology | wiki/methodology/ | Research methods, protocols, and study designs |
+| finding | wiki/findings/ | Individual empirical results or observations |
+| report | wiki/reports/ | Generated reports and analysis outputs |
+
+## Naming Conventions
+
+- Files: \`kebab-case.md\`
+- Entities: match official name where possible (e.g., \`openai.md\`, \`gpt-4.md\`)
+- Concepts: descriptive noun phrases (e.g., \`chain-of-thought.md\`)
+- Sources: \`author-year-slug.md\` (e.g., \`wei-2022-cot.md\`)
+- Queries: question as slug (e.g., \`does-scale-improve-reasoning.md\`)
+- Theses: hypothesis as slug (e.g., \`scaling-improves-reasoning.md\`)
+- Methodologies: method name (e.g., \`systematic-review.md\`, \`ablation-study.md\`)
+- Findings: descriptive slug (e.g., \`larger-models-better-few-shot.md\`)
+
+## Frontmatter
+
+All pages must include YAML frontmatter:
+
+\`\`\`yaml
+---
+type: entity | concept | source | query | comparison | synthesis | overview | report
+title: Human-readable title
+tags: []
+related: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+---
+\`\`\`
+
+Source pages also include:
+\`\`\`yaml
+authors: []
+year: YYYY
+url: ""
+venue: ""
+\`\`\`
+
+Thesis pages also include:
+\`\`\`yaml
+confidence: low | medium | high
+status: speculative | supported | refuted | settled
+\`\`\`
+
+Finding pages also include:
+\`\`\`yaml
+source: "[[source-slug]]"
+confidence: low | medium | high
+replicated: true | false | null
+\`\`\`
+
+## Index Format
+
+\`wiki/index.md\` lists all pages grouped by type. Each entry:
+\`\`\`
+- [[page-slug]] — one-line description
+\`\`\`
+
+## Log Format
+
+\`wiki/log.md\` records activity in reverse chronological order:
+\`\`\`
+## YYYY-MM-DD
+
+- Action taken / finding noted
+\`\`\`
+
+## Cross-referencing Rules
+
+- Use \`[[page-slug]]\` syntax to link between wiki pages
+- Every entity and concept should appear in \`wiki/index.md\`
+- Queries link to the sources and concepts they draw on
+- Synthesis pages cite all contributing sources via \`related:\`
+- Findings link back to their source via the \`source:\` frontmatter field
+- Thesis pages reference supporting and refuting findings via \`related:\`
+- Methodology pages are cited by the findings that used them
+
+## Contradiction Handling
+
+When sources contradict each other:
+1. Note the contradiction in the relevant concept or entity page
+2. Create or update a query page to track the open question
+3. Link both sources from the query page
+4. Resolve in a synthesis page once sufficient evidence exists
+
+## Research-Specific Conventions
+
+- Keep the thesis pages updated as evidence accumulates — they are living documents
+- Every finding should assess replication status when known
+- Methodology pages explain the *why* (rationale) not just the *how*
+- Distinguish between direct evidence and inference in finding pages
+`;
+
+const PURPOSE_TEMPLATE = `# Project Purpose — Research Deep-Dive
+
+## Research Question
+
+<!-- State the central question this research aims to answer. Be specific and falsifiable. -->
+
+>
+
+## Hypothesis / Working Thesis
+
+<!-- Your current best guess. This will evolve - update it as evidence accumulates. -->
+
+>
+
+## Background
+
+<!-- What prior work or context motivates this research? What gap does it fill? -->
+
+## Sub-questions
+
+<!-- Break down the main question into tractable sub-questions. -->
+
+1.
+2.
+3.
+4.
+
+## Scope
+
+**In scope:**
+-
+
+**Out of scope:**
+-
+
+## Methodology
+
+<!-- How will you investigate this? What types of sources or experiments are relevant? -->
+
+-
+
+## Success Criteria
+
+<!-- How will you know when you have a satisfying answer? -->
+
+-
+
+## Current Status
+
+> Not started - update this section as research progresses.
+`;
+
+const INDEX_TEMPLATE = `# Wiki Index
+
+## Entities
+
+- (None yet)
+
+## Concepts
+
+- (None yet)
+
+## Sources
+
+- (None yet)
+
+## Queries
+
+- (None yet)
+
+## Comparisons
+
+- (None yet)
+
+## Findings
+
+- (None yet)
+
+## Methodology
+
+- (None yet)
+
+## Synthesis
+
+- (None yet)
+
+## Thesis
+
+- (None yet)
+
+## Reports
+
+- (None yet)
+`;
+
+const OVERVIEW_TEMPLATE = `---
+type: overview
+title: Project Overview
+tags: []
+related: []
+created: ${new Date().toISOString().split("T")[0]}
+updated: ${new Date().toISOString().split("T")[0]}
+---
+
+# Project Overview
+
+<!-- Provide a high-level summary of the research project, its goals, and current state. -->
+`;
+
+const LOG_TEMPLATE = `# Research Log
+
+## ${new Date().toISOString().split("T")[0]}
+
+- Project created.
+`;
+
+const SCHOLARWIKI_TEMPLATE = `raw_dir: ./raw/sources
+summaries_dir: ./wiki/sources
+wiki_dir: ./wiki
+llm:
+  provider: ollama
+  model: nemotron-3-super:cloud
+concept_threshold: 3
+`;
+
 class FileSystemManager {
   private async getProjectsRootDir(): Promise<string> {
     try {
@@ -98,8 +332,23 @@ class FileSystemManager {
 
     await mkdir(projectPath, { recursive: true });
     await mkdir(join(projectPath, "documents"), { recursive: true });
-    await mkdir(join(projectPath, "knowledge-base", "papers"), { recursive: true });
-    await mkdir(join(projectPath, "knowledge-base", "notes"), { recursive: true });
+    // Knowledge Base structure (matches Knowledge_Base schema)
+    const kbDir = join(projectPath, "Knowledge_Base");
+    const wikiDir = join(kbDir, "wiki");
+    const wikiSubdirs = [
+      "sources", "concepts", "entities", "synthesis",
+      "findings", "thesis", "queries", "methodology", "comparisons", "reports", "index",
+    ];
+    for (const sub of wikiSubdirs) {
+      await mkdir(join(wikiDir, sub), { recursive: true });
+    }
+    await mkdir(join(kbDir, "raw", "sources"), { recursive: true });
+    await writeFile(join(kbDir, "schema.md"), SCHEMA_TEMPLATE);
+    await writeFile(join(kbDir, "purpose.md"), PURPOSE_TEMPLATE);
+    await writeFile(join(kbDir, "scholarwiki.yaml"), SCHOLARWIKI_TEMPLATE);
+    await writeFile(join(wikiDir, "index.md"), INDEX_TEMPLATE);
+    await writeFile(join(wikiDir, "overview.md"), OVERVIEW_TEMPLATE);
+    await writeFile(join(wikiDir, "log.md"), LOG_TEMPLATE);
     await mkdir(join(projectPath, "figures"), { recursive: true });
     await mkdir(join(projectPath, "exports"), { recursive: true });
     await mkdir(join(projectPath, ".lance"), { recursive: true });
