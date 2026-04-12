@@ -113,3 +113,21 @@ export interface KBStatus {
   pageCount: number;
   lastIndexed: number | null;
 }
+
+export interface KBGraphNode {
+  id: string;       // filename stem (e.g. "precision-weighting")
+  title: string;    // frontmatter title
+  type: "concept" | "entity" | "source" | "overview" | "other";
+  filePath: string; // absolute path to .md file
+  degree: number;   // number of edges
+}
+
+export interface KBGraphEdge {
+  source: string; // node id
+  target: string; // node id
+}
+
+export interface KBGraph {
+  nodes: KBGraphNode[];
+  edges: KBGraphEdge[];
+}

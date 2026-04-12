@@ -1,7 +1,7 @@
 {
   "name": "scholarpen",
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.2.5",
   "description": "AI-Assisted Academic Article Writer for macOS",
   "private": true,
   "scripts": {
@@ -30,6 +30,7 @@
     "@types/katex": "^0.16.8",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "d3": "^7.9.0",
     "electrobun": "^1.16.0",
     "katex": "^0.16.45",
     "lucide-react": "^1.7.0",
@@ -47,6 +48,7 @@
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "@types/bun": "latest",
+    "@types/d3": "^7.4.3",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@types/three": "^0.183.1",

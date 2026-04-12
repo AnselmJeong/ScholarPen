@@ -12,6 +12,7 @@ import type {
   AppSettings,
   AppSettingsUpdate,
   KBStatus,
+  KBGraph,
 } from "../shared/rpc-types";
 
 type MenuActionHandler = (action: string) => void;
@@ -114,6 +115,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       kbChunkOverlap: 64,
       kbTopK: 5,
     },
+    getKBGraph: { nodes: [], edges: [] },
   };
   return mocks[method] ?? null;
 }
@@ -185,6 +187,8 @@ export const rpc = {
     call<KBStatus>("getKBStatus", { projectPath }),
   rebuildKBIndex: (projectPath: string) =>
     call<void>("rebuildKBIndex", { projectPath }),
+  getKBGraph: (projectPath: string) =>
+    call<KBGraph>("getKBGraph", { projectPath }),
   // ── Claude CLI streaming ──────────────────────────────
   getClaudeSlashCommands: (projectPath?: string) => call<string[]>("getClaudeSlashCommands", { projectPath }),
   claudeStream: (

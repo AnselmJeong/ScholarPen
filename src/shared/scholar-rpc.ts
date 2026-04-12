@@ -8,6 +8,7 @@ import type {
   AppSettings,
   AppSettingsUpdate,
   KBStatus,
+  KBGraph,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -37,6 +38,7 @@ type BunRequests = RPCSchema<{
     };
     getKBStatus: { params: { projectPath: string }; response: KBStatus };
     rebuildKBIndex: { params: { projectPath: string }; response: void };
+    getKBGraph: { params: { projectPath: string }; response: KBGraph };
     generateTextStream: {
       params: { model: string; messages: Array<{ role: string; content: string }> };
       response: void;

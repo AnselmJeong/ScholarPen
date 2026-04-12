@@ -7,6 +7,7 @@ import { claudeClient } from "./claude/client";
 import { citationClient } from "./citation/client";
 import { fileSystem } from "./fs/manager";
 import { findKBRoot, getKBEngine, type KBSearchResult } from "./kb/search";
+import { buildKBGraph } from "./kb/graph";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 
 // Build KB context string to prepend to the user's message.
@@ -218,6 +219,8 @@ async function main() {
           const engine = getKBEngine(kbRoot);
           await engine.rebuild();
         },
+
+        getKBGraph: ({ projectPath }) => buildKBGraph(projectPath),
 
         listProjectFiles: ({ projectPath }) =>
           fileSystem.listProjectFiles(projectPath),
