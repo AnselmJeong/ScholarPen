@@ -5,31 +5,42 @@ type SaveStatus = "saved" | "saving" | "unsaved";
 
 interface StatusBarProps {
   ollamaStatus: OllamaStatus;
+  aiBackend?: "ollama" | "claude";
+  claudeModel?: string;
   wordCount: number;
   onToggleAI: () => void;
   saveStatus?: SaveStatus;
 }
 
-export function StatusBar({ ollamaStatus, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
+export function StatusBar({ ollamaStatus, aiBackend = "ollama", claudeModel, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
+  const isClaude = aiBackend === "claude";
+
+  // For claude backend: always show as connected (auth errors surface in chat)
+  const connected = isClaude ? true : ollamaStatus.connected;
+  const label = isClaude ? "Claude" : "Ollama";
+  const modelLabel = isClaude
+    ? (claudeModel ?? "claude-sonnet-4-6")
+    : ollamaStatus.activeModel;
+
   return (
     <div className="flex items-center justify-between px-4 py-1 bg-gray-800 text-gray-300 text-xs border-t border-gray-700 select-none">
       <div className="flex items-center gap-4">
-        {/* Ollama status */}
+        {/* AI backend status */}
         <div className="flex items-center gap-1.5">
           <span
             className={`w-2 h-2 rounded-full ${
-              ollamaStatus.connected ? "bg-green-400" : "bg-red-400"
+              connected ? "bg-green-400" : "bg-red-400"
             }`}
           />
           <span>
-            Ollama {ollamaStatus.connected ? "connected" : "disconnected"}
+            {label} {connected ? "connected" : "disconnected"}
           </span>
         </div>
 
         {/* Active model */}
-        {ollamaStatus.activeModel && (
+        {modelLabel && (
           <span className="text-gray-400">
-            Model: {ollamaStatus.activeModel}
+            Model: {modelLabel}
           </span>
         )}
       </div>

@@ -3,12 +3,13 @@ import { readFile } from "fs/promises";
 import { watch, type FSWatcher } from "fs";
 import { basename, extname } from "path";
 import { ollamaClient } from "./ollama/client";
-import { claudeClient } from "./claude/client";
+import { claudeClient, buildSubprocessEnv } from "./claude/client";
 import { citationClient } from "./citation/client";
 import { fileSystem } from "./fs/manager";
 import { findKBRoot, getKBEngine, type KBSearchResult } from "./kb/search";
 import { buildKBGraph } from "./kb/graph";
 import type { ScholarRPC } from "../shared/scholar-rpc";
+
 
 // Build KB context string to prepend to the user's message.
 // Uses XML-style tags — Claude understands these well and they
@@ -89,10 +90,11 @@ async function main() {
 
   // ── Application Menu ───────────────────────────────────────────
   ApplicationMenu.setApplicationMenu([
-    { label: "ScholarPen", submenu: [{ role: "quit" }] },
+    { label: "ScholarPen", submenu: [{ label: "Quit ScholarPen", action: "quit", accelerator: "q" }] },
     {
       label: "File",
       submenu: [
+        { label: "New Document", action: "newDocument", accelerator: "n" },
         { label: "Save", action: "save", accelerator: "s" },
         { type: "separator" },
         { label: "Export as Markdown…", action: "exportMarkdown" },
@@ -241,6 +243,23 @@ async function main() {
 
         saveSettings: ({ settings }) => fileSystem.saveSettings(settings),
 
+        // ── Ollama model list ──────────────────────────────
+        getOllamaModels: async () => {
+          try {
+            const proc = Bun.spawn(["ollama", "list"], { stdout: "pipe", stderr: "pipe", env: buildSubprocessEnv() });
+            const text = await new Response(proc.stdout).text();
+            await proc.exited;
+            // Parse: skip header line, extract first column (NAME)
+            return text
+              .split("\n")
+              .slice(1)
+              .map((line) => line.split(/\s+/)[0])
+              .filter(Boolean);
+          } catch {
+            return [];
+          }
+        },
+
         // ── Claude CLI streaming ───────────────────────────
         getClaudeSlashCommands: ({ projectPath }) => claudeClient.getSlashCommands(projectPath),
 
@@ -248,7 +267,10 @@ async function main() {
         // outbound claudeChunk messages while Claude streams in background.
         claudeStream: async ({ message, sessionId, projectPath, kbEnabled }) => {
           const settings = await fileSystem.getSettings();
-          const model = settings.ollamaDefaultModel || "qwen3.5:cloud";
+          const backend = settings.aiBackend ?? "ollama";
+          const model = backend === "claude"
+            ? (settings.claudeModel || "claude-sonnet-4-6")
+            : (settings.ollamaDefaultModel || "qwen3.5:cloud");
 
           let enrichedMessage = message;
           let kbResults: import("./kb/search").KBSearchResult[] = [];
@@ -280,7 +302,6 @@ async function main() {
           claudeClient.streamChat(enrichedMessage, sessionId, projectPath, model, {
             onChunk: (text) => sendClaudeChunk?.({ content: text, done: false }),
             onDone: (newSessionId) => {
-              // Append formatted reference list when KB was used
               if (usingKB) {
                 sendClaudeChunk?.({ content: buildReferenceList(kbResults), done: false });
               }
@@ -288,7 +309,7 @@ async function main() {
             },
             onInit: (slashCommands) =>
               sendClaudeChunk?.({ content: "", done: false, slashCommands }),
-          }).catch((err) => {
+          }, backend).catch((err) => {
             sendClaudeChunk?.({ content: `\n\n❌ 오류: ${err.message}`, done: false });
             sendClaudeChunk?.({ content: "", done: true });
           });
@@ -333,21 +354,13 @@ async function main() {
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {
     const action = e.data.action;
-    if (action === "save" || action === "exportMarkdown" || action === "importMarkdown") {
+    if (action === "save" || action === "newDocument" || action === "exportMarkdown" || action === "importMarkdown") {
       win.webview.rpc?.send.menuAction({ action });
+    } else if (action === "quit") {
+      // Save first, then quit after a brief flush window
+      win.webview.rpc?.send.menuAction({ action: "save" });
+      setTimeout(() => Utils.quit(), 400);
     }
-  });
-
-  // ── Import Markdown: open file dialog ───────────────────────
-  // This is handled via menuAction message to webview, which then
-  // triggers the import flow. The file picking is done on Bun side
-  // via Utils.openFileDialog when the webview requests it.
-
-  // ── Save before quit ──────────────────────────────────────────
-  Electrobun.events.on("before-quit", async () => {
-    win.webview.rpc?.send.menuAction({ action: "save" });
-    // Give the webview a moment to flush saves
-    await new Promise((resolve) => setTimeout(resolve, 500));
   });
 
   console.log("[ScholarPen] App started");

@@ -420,58 +420,77 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <div key={i} className="space-y-1 w-full min-w-0 overflow-hidden">
-              {msg.role === "user" ? (
-                <div className="flex justify-end w-full overflow-hidden">
-                  <div className="max-w-[88%] min-w-0 rounded-2xl rounded-tr-sm bg-primary/10 border border-primary/20 px-3 py-2 text-sm text-foreground shadow-sm whitespace-pre-wrap break-all overflow-hidden">
-                    {msg.content}
+          {messages.map((msg, i) => {
+            const isStreaming = loading && i === messages.length - 1 && msg.role === "assistant";
+            return (
+              <div key={i} className="space-y-1 w-full min-w-0 overflow-hidden">
+                {msg.role === "user" ? (
+                  <div className="flex justify-end w-full overflow-hidden">
+                    <div className="max-w-[88%] min-w-0 rounded-2xl rounded-tr-sm bg-primary/10 border border-primary/20 px-3 py-2 text-sm text-foreground shadow-sm whitespace-pre-wrap break-all overflow-hidden">
+                      {msg.content}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-1.5 w-full min-w-0 overflow-hidden">
-                  <div className="w-full min-w-0 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none
-                    [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
-                    [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
-                    [&_code]:text-xs [&_code]:bg-background/60 [&_code]:px-1 [&_code]:rounded
-                    [&_pre]:text-xs [&_pre]:bg-background/60 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto
-                    [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-2 [&_blockquote]:italic
-                    [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5">
-                    {msg.content ? (
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm, remarkMath]}
-                        rehypePlugins={[rehypeKatex]}
+                ) : (
+                  <div className="space-y-1.5 w-full min-w-0 overflow-hidden">
+                    <div className="w-full min-w-0 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none
+                      [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
+                      [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
+                      [&_code]:text-xs [&_code]:bg-gray-200 [&_code]:dark:bg-gray-700 [&_code]:text-gray-800 [&_code]:dark:text-gray-200 [&_code]:px-1 [&_code]:rounded
+                      [&_pre]:text-xs [&_pre]:bg-gray-200 [&_pre]:dark:bg-gray-700 [&_pre]:text-gray-800 [&_pre]:dark:text-gray-200 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto
+                      [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-2 [&_blockquote]:italic
+                      [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5">
+                      {msg.content ? (
+                        <>
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                          {isStreaming && (
+                            <span className="flex items-center gap-1 mt-2">
+                              {[0, 1, 2].map((j) => (
+                                <span
+                                  key={j}
+                                  className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
+                                  style={{
+                                    animation: "kb-bounce 1.2s ease-in-out infinite",
+                                    animationDelay: `${j * 0.2}s`,
+                                  }}
+                                />
+                              ))}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="flex items-center gap-1 py-1">
+                          {[0, 1, 2].map((j) => (
+                            <span
+                              key={j}
+                              className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
+                              style={{
+                                animation: "kb-bounce 1.2s ease-in-out infinite",
+                                animationDelay: `${j * 0.2}s`,
+                              }}
+                            />
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                    {msg.content && !isStreaming && (
+                      <button
+                        onClick={() => navigator.clipboard.writeText(msg.content)}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
                       >
-                        {msg.content}
-                      </ReactMarkdown>
-                    ) : (
-                      <span className="flex items-center gap-1 py-1">
-                        {[0, 1, 2].map((i) => (
-                          <span
-                            key={i}
-                            className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
-                            style={{
-                              animation: "kb-bounce 1.2s ease-in-out infinite",
-                              animationDelay: `${i * 0.2}s`,
-                            }}
-                          />
-                        ))}
-                      </span>
+                        <Copy className="h-2.5 w-2.5" />
+                        복사
+                      </button>
                     )}
                   </div>
-                  {msg.content && (
-                    <button
-                      onClick={() => navigator.clipboard.writeText(msg.content)}
-                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
-                    >
-                      <Copy className="h-2.5 w-2.5" />
-                      복사
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       </ScrollArea>

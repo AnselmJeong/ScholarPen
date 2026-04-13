@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { ArrowLeft, Folder, Bot, BookOpen } from "lucide-react";
+import { ArrowLeft, Folder, Bot, BookOpen, RefreshCw, Sun } from "lucide-react";
+import { applyTheme } from "../../main";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,14 +12,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, AppSettings } from "@shared/rpc-types";
 
 interface SettingsPageProps {
   ollamaStatus: OllamaStatus;
   onClose: () => void;
-  onSettingsSaved?: () => void;
+  onSettingsSaved?: (saved: AppSettings) => void;
 }
+
+const CLAUDE_MODELS = [
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+];
 
 function SettingSection({ icon: Icon, title, children }: {
   icon: React.ElementType;
@@ -56,10 +64,29 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
 
   useEffect(() => {
     rpc.getSettings().then(setSettings).catch(console.error);
   }, []);
+
+  const fetchOllamaModels = useCallback(async () => {
+    setLoadingModels(true);
+    try {
+      const models = await rpc.getOllamaModels();
+      setOllamaModels(models);
+    } finally {
+      setLoadingModels(false);
+    }
+  }, []);
+
+  // Fetch ollama model list on mount (or when switching to ollama)
+  useEffect(() => {
+    if (settings?.aiBackend !== "claude") {
+      fetchOllamaModels();
+    }
+  }, [settings?.aiBackend]);
 
   const updateSetting = useCallback(<K extends keyof AppSettings>(
     key: K,
@@ -74,15 +101,16 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
     setSaving(true);
     try {
       await rpc.saveSettings(settings);
+      applyTheme(settings.theme ?? "system");
       setSaved(true);
-      onSettingsSaved?.();
+      onSettingsSaved?.(settings);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       console.error("Failed to save settings:", err);
     } finally {
       setSaving(false);
     }
-  }, [settings]);
+  }, [settings, onSettingsSaved]);
 
   const handleBrowseProjectsDir = useCallback(async () => {
     const path = await rpc.openFolderDialog();
@@ -96,6 +124,8 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
       </div>
     );
   }
+
+  const backend = settings.aiBackend ?? "ollama";
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background">
@@ -111,61 +141,98 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-8 py-8 space-y-8">
 
-          {/* AI / Ollama */}
-          <SettingSection icon={Bot} title="AI (Ollama)">
-            <SettingRow
-              label="Base URL"
-              description="Ollama server address"
-            >
-              <Input
-                value={settings.ollamaBaseUrl}
-                onChange={(e) => updateSetting("ollamaBaseUrl", e.target.value)}
-                placeholder="http://localhost:11434"
-                className="font-mono text-xs"
-              />
+          {/* AI section */}
+          <SettingSection icon={Bot} title="AI">
+
+            {/* Backend toggle */}
+            <SettingRow label="Backend" description="AI 응답 방식">
+              <div className="flex rounded-lg border border-border overflow-hidden">
+                {(["ollama", "claude"] as const).map((b) => (
+                  <button
+                    key={b}
+                    onClick={() => updateSetting("aiBackend", b)}
+                    className={cn(
+                      "flex-1 py-1.5 text-xs font-medium transition-colors",
+                      backend === b
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background text-muted-foreground hover:bg-muted"
+                    )}
+                  >
+                    {b === "ollama" ? "Ollama" : "Claude (직접)"}
+                  </button>
+                ))}
+              </div>
             </SettingRow>
 
-            <SettingRow
-              label="Default Model"
-              description="Used for writing assistance"
-            >
-              {ollamaStatus.connected && ollamaStatus.models.length > 0 ? (
+            {/* Ollama model */}
+            {backend === "ollama" && (
+              <SettingRow
+                label="Ollama Model"
+                description="ollama launch claude 로 실행할 모델"
+              >
+                <div className="space-y-1.5">
+                  {ollamaModels.length > 0 ? (
+                    <Select
+                      value={settings.ollamaDefaultModel}
+                      onValueChange={(v) => updateSetting("ollamaDefaultModel", v)}
+                    >
+                      <SelectTrigger className="text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ollamaModels.map((m) => (
+                          <SelectItem key={m} value={m} className="text-xs font-mono">
+                            {m}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      value={settings.ollamaDefaultModel}
+                      onChange={(e) => updateSetting("ollamaDefaultModel", e.target.value)}
+                      placeholder="glm-5.1:cloud"
+                      className="font-mono text-xs"
+                    />
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs text-muted-foreground"
+                    onClick={fetchOllamaModels}
+                    disabled={loadingModels}
+                  >
+                    <RefreshCw className={cn("h-3 w-3 mr-1", loadingModels && "animate-spin")} />
+                    목록 새로고침
+                  </Button>
+                </div>
+              </SettingRow>
+            )}
+
+            {/* Claude direct model */}
+            {backend === "claude" && (
+              <SettingRow
+                label="Claude Model"
+                description="Anthropic API를 통해 직접 실행"
+              >
                 <Select
-                  value={settings.ollamaDefaultModel}
-                  onValueChange={(v) => updateSetting("ollamaDefaultModel", v)}
+                  value={settings.claudeModel ?? "claude-sonnet-4-6"}
+                  onValueChange={(v) => updateSetting("claudeModel", v)}
                 >
                   <SelectTrigger className="text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ollamaStatus.models.map((m) => (
-                      <SelectItem key={m} value={m} className="text-xs font-mono">
-                        {m}
+                    {CLAUDE_MODELS.map(({ value, label }) => (
+                      <SelectItem key={value} value={value} className="text-xs">
+                        {label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              ) : (
-                <Input
-                  value={settings.ollamaDefaultModel}
-                  onChange={(e) => updateSetting("ollamaDefaultModel", e.target.value)}
-                  placeholder="qwen3.5:cloud"
-                  className="font-mono text-xs"
-                />
-              )}
-            </SettingRow>
+              </SettingRow>
+            )}
 
-            <SettingRow
-              label="Embed Model"
-              description="Used for knowledge base indexing"
-            >
-              <Input
-                value={settings.ollamaEmbedModel}
-                onChange={(e) => updateSetting("ollamaEmbedModel", e.target.value)}
-                placeholder="nomic-embed-text"
-                className="font-mono text-xs"
-              />
-            </SettingRow>
           </SettingSection>
 
           <Separator />
@@ -197,6 +264,30 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
           <Separator />
 
+          {/* Appearance */}
+          <SettingSection icon={Sun} title="Appearance">
+            <SettingRow label="Theme" description="앱 색상 테마">
+              <div className="flex rounded-lg border border-border overflow-hidden">
+                {(["light", "dark", "system"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => updateSetting("theme", t)}
+                    className={cn(
+                      "flex-1 py-1.5 text-xs font-medium transition-colors capitalize",
+                      (settings.theme ?? "system") === t
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background text-muted-foreground hover:bg-muted"
+                    )}
+                  >
+                    {t === "light" ? "Light" : t === "dark" ? "Dark" : "System"}
+                  </button>
+                ))}
+              </div>
+            </SettingRow>
+          </SettingSection>
+
+          <Separator />
+
           {/* Citations */}
           <SettingSection icon={BookOpen} title="Citations">
             <SettingRow
@@ -217,11 +308,9 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
       {/* Footer */}
       <div className="border-t border-border px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`text-xs transition-opacity ${saved ? "opacity-100 text-emerald-600" : "opacity-0"}`}>
-            Settings saved
-          </span>
-        </div>
+        <span className={`text-xs transition-opacity ${saved ? "opacity-100 text-emerald-600" : "opacity-0"}`}>
+          Settings saved
+        </span>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>
             Cancel

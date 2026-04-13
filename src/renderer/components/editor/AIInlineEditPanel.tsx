@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import ReactDOM from "react-dom";
-import { Sparkles, X, Check, RefreshCw, StopCircle } from "lucide-react";
+import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -29,11 +29,20 @@ const PANEL_WIDTH = 440;
 const PANEL_HEIGHT_EST = 290; // used only for flip-above logic
 
 const QUICK_ACTIONS = [
-  { label: "Improve", prompt: "Improve the writing quality and clarity of" },
-  { label: "Shorten", prompt: "Shorten and make more concise" },
+  { label: "Improve",   prompt: "Improve the writing quality and clarity of" },
+  { label: "Shorten",   prompt: "Shorten and make more concise" },
   { label: "Formalize", prompt: "Make more formal and academic" },
-  { label: "Simplify", prompt: "Simplify the language of" },
-  { label: "Translate KO", prompt: "Translate to Korean" },
+  { label: "Simplify",  prompt: "Simplify the language of" },
+];
+
+const TRANSLATE_LANGS = [
+  { label: "Korean",   prompt: "Translate to Korean" },
+  { label: "English",  prompt: "Translate to English" },
+  { label: "Japanese", prompt: "Translate to Japanese" },
+  { label: "Chinese",  prompt: "Translate to Chinese" },
+  { label: "Spanish",  prompt: "Translate to Spanish" },
+  { label: "French",   prompt: "Translate to French" },
+  { label: "German",   prompt: "Translate to German" },
 ];
 
 const SYSTEM_PROMPT =
@@ -54,8 +63,20 @@ export function AIInlineEditPanel({
   const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [translateOpen, setTranslateOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const translateRef = useRef<HTMLDivElement>(null);
+
+  // Close translate dropdown on outside click
+  useEffect(() => {
+    if (!translateOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!translateRef.current?.contains(e.target as Node)) setTranslateOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [translateOpen]);
 
   // Auto-focus the input when the panel opens
   useEffect(() => {
@@ -175,26 +196,26 @@ export function AIInlineEditPanel({
         width: PANEL_WIDTH,
         zIndex: 9999,
       }}
-      className="bg-white border border-gray-200 rounded-xl shadow-2xl p-4 flex flex-col gap-3"
+      className="bg-popover text-popover-foreground border border-border rounded-xl shadow-2xl p-4 flex flex-col gap-3"
       // Prevent the underlying editor from handling these mouse events
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           <Sparkles className="h-3.5 w-3.5 text-primary" />
           Edit with AI
         </div>
         <button
           onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 transition-colors"
+          className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {/* Selected text preview */}
-      <div className="text-xs text-gray-500 bg-gray-50 rounded-md px-2.5 py-1.5 line-clamp-2 italic border border-gray-100 leading-relaxed">
+      <div className="text-xs text-muted-foreground bg-muted rounded-md px-2.5 py-1.5 line-clamp-2 italic border border-border leading-relaxed">
         &ldquo;{snapshot.selectedText}&rdquo;
       </div>
 
@@ -206,15 +227,40 @@ export function AIInlineEditPanel({
             {QUICK_ACTIONS.map((a) => (
               <button
                 key={a.label}
-                onClick={() => {
-                  setPrompt(a.prompt);
-                  run(a.prompt);
-                }}
+                onClick={() => { setPrompt(a.prompt); run(a.prompt); }}
                 className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
               >
                 {a.label}
               </button>
             ))}
+
+            {/* Translate dropdown */}
+            <div ref={translateRef} className="relative">
+              <button
+                onClick={() => setTranslateOpen((v) => !v)}
+                className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium flex items-center gap-1"
+              >
+                Translate
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {translateOpen && (
+                <div className="absolute left-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden z-50 min-w-[120px]">
+                  {TRANSLATE_LANGS.map((lang) => (
+                    <button
+                      key={lang.label}
+                      onClick={() => {
+                        setTranslateOpen(false);
+                        setPrompt(lang.prompt);
+                        run(lang.prompt);
+                      }}
+                      className="w-full text-left text-xs px-3 py-1.5 hover:bg-accent text-foreground transition-colors"
+                    >
+                      {lang.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Free-form input */}
@@ -231,7 +277,7 @@ export function AIInlineEditPanel({
               }}
               placeholder="Custom instruction, e.g. 'translate to Japanese'…"
               rows={2}
-              className="flex-1 text-sm border border-input rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
+              className="flex-1 text-sm bg-background text-foreground border border-input rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
             />
             <Button
               size="sm"
@@ -252,7 +298,7 @@ export function AIInlineEditPanel({
       {/* ── Streaming phase ── */}
       {phase === "streaming" && (
         <>
-          <div className="text-sm text-gray-800 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 min-h-[72px] whitespace-pre-wrap leading-relaxed">
+          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[72px] whitespace-pre-wrap leading-relaxed">
             {result}
             <span className="animate-pulse text-primary ml-0.5">▋</span>
           </div>
@@ -276,7 +322,7 @@ export function AIInlineEditPanel({
       {/* ── Result phase ── */}
       {phase === "result" && (
         <>
-          <div className="text-sm text-gray-800 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 min-h-[60px] whitespace-pre-wrap leading-relaxed">
+          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[60px] whitespace-pre-wrap leading-relaxed">
             {result}
           </div>
           <div className="flex items-center justify-between">

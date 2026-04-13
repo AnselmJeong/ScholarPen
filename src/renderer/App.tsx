@@ -10,7 +10,7 @@ import { KnowledgeGraphPanel } from "./components/graph/KnowledgeGraphPanel";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
-import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode } from "../shared/rpc-types";
+import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
 
 type AppView = "editor" | "settings";
@@ -34,6 +34,10 @@ export function App() {
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
+  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel">>({
+    aiBackend: "ollama",
+    claudeModel: "claude-sonnet-4-6",
+  });
 
   // ── KB Graph state ────────────────────────────────────────────────────────
   const [graphMode, setGraphMode]                 = useState(false);
@@ -76,6 +80,13 @@ export function App() {
   }, []);
 
   useEffect(() => { refreshProjects(); }, []);
+
+  // Load AI backend setting once on mount
+  useEffect(() => {
+    rpc.getSettings()
+      .then((s) => setAppSettings({ aiBackend: s.aiBackend ?? "ollama", claudeModel: s.claudeModel ?? "claude-sonnet-4-6" }))
+      .catch(console.error);
+  }, []);
 
   const refreshFileTree = useCallback(async () => {
     if (!activeProject) return;
@@ -204,6 +215,19 @@ export function App() {
   useEffect(() => {
     const unsub = onMenuAction((action) => {
       switch (action) {
+        case "newDocument":
+          if (activeProject) {
+            const ts = new Date().toISOString().slice(0, 10);
+            rpc.createDocument(activeProject.path, `Untitled-${ts}.scholarpen.json`)
+              .then(async (created) => {
+                await refreshFileTree();
+                setActiveDocumentFilename(created);
+                setActiveFile(null);
+                setCurrentView("editor");
+              })
+              .catch(console.error);
+          }
+          break;
         case "save":
           editorGroupRef.current?.saveActiveEditor();
           break;
@@ -386,7 +410,10 @@ export function App() {
           <SettingsPage
             ollamaStatus={ollamaStatus}
             onClose={() => setCurrentView("editor")}
-            onSettingsSaved={refreshProjects}
+            onSettingsSaved={(saved) => {
+              refreshProjects();
+              setAppSettings({ aiBackend: saved.aiBackend ?? "ollama", claudeModel: saved.claudeModel ?? "claude-sonnet-4-6" });
+            }}
           />
         ) : (
           <div className="flex flex-1 overflow-hidden">
@@ -450,6 +477,8 @@ export function App() {
       {/* Bottom: Status Bar */}
       <StatusBar
         ollamaStatus={ollamaStatus}
+        aiBackend={appSettings.aiBackend}
+        claudeModel={appSettings.claudeModel}
         wordCount={wordCount}
         onToggleAI={() => setAiSidebarOpen(v => !v)}
         saveStatus={saveStatus}

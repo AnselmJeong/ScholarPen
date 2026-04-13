@@ -1,33 +1,67 @@
 // Claude CLI subprocess client
-// Finds `claude` binary via Bun.which() or common paths, spawns with
-// stream-json output, captures stdout/stderr, tracks session IDs.
+// Supports two launch modes:
+//   ollama: `ollama launch claude --model <model> -- <flags>`
+//   claude: `claude -p <msg> --model <model> <flags>` (direct, PATH-resolved)
 
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";
 
 function findOllamaBinary(): string {
-  // Try Bun.which first (searches current PATH)
   const found = Bun.which("ollama");
   if (found) return found;
-
-  // Fallback: common macOS install locations
-  const home = process.env.HOME ?? "";
-  const candidates = [
-    `/usr/local/bin/ollama`,
-    `/opt/homebrew/bin/ollama`,
-    `${home}/.local/bin/ollama`,
-    `/usr/bin/ollama`,
-  ];
-  for (const p of candidates) {
-    try {
-      if (existsSync(p)) return p;
-    } catch {}
+  for (const p of [`/usr/local/bin/ollama`, `/opt/homebrew/bin/ollama`, `/usr/bin/ollama`]) {
+    try { if (existsSync(p)) return p; } catch {}
   }
-  return "ollama"; // last resort — OS will report error if not found
+  return "ollama";
+}
+
+function findClaudeBinary(): string {
+  const found = Bun.which("claude");
+  if (found) return found;
+  const home = process.env.HOME ?? "";
+  for (const p of [
+    `${home}/.local/bin/claude`,
+    `${home}/.npm-global/bin/claude`,
+    `/usr/local/bin/claude`,
+    `/opt/homebrew/bin/claude`,
+  ]) {
+    try { if (existsSync(p)) return p; } catch {}
+  }
+  return "claude";
+}
+
+/**
+ * Builds an augmented environment for subprocesses launched from a packaged
+ * macOS app. The app bundle starts with a minimal PATH (/usr/bin:/bin:…)
+ * which omits ~/.local/bin, /usr/local/bin, Homebrew, etc.  Claude CLI and
+ * Ollama live in those directories, so we prepend common locations to PATH
+ * before spawning any child process.
+ */
+export function buildSubprocessEnv(): Record<string, string> {
+  const home = process.env.HOME ?? "";
+  const extraPaths = [
+    `${home}/.local/bin`,
+    `${home}/.npm-global/bin`,
+    `/usr/local/bin`,
+    `/opt/homebrew/bin`,
+    `/opt/homebrew/sbin`,
+    `/usr/local/sbin`,
+  ].filter(Boolean);
+
+  const currentPath = process.env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin";
+  const merged = [...new Set([...extraPaths, ...currentPath.split(":")])].join(":");
+
+  return {
+    ...(process.env as Record<string, string>),
+    PATH: merged,
+    // Ensure HOME is always set — some claude config lookups require it.
+    ...(home ? { HOME: home } : {}),
+  };
 }
 
 const OLLAMA_BIN = findOllamaBinary();
-console.log(`[Claude] Ollama binary resolved to: ${OLLAMA_BIN}`);
+const CLAUDE_BIN = findClaudeBinary();
+console.log(`[Claude] ollama: ${OLLAMA_BIN}  claude: ${CLAUDE_BIN}`);
 
 export interface ClaudeCallbacks {
   onChunk: (text: string) => void;
@@ -75,33 +109,40 @@ export class ClaudeClient {
     projectPath: string | null,
     model: string,
     callbacks: ClaudeCallbacks,
+    backend: "ollama" | "claude" = "ollama",
   ): Promise<void> {
     const { onChunk, onDone, onInit } = callbacks;
 
-    const args = [
-      OLLAMA_BIN,
-      "launch", "--model", model, "claude", "--",
-      "-p", message,
-      "--output-format", "stream-json",
-      "--dangerously-skip-permissions",
-      "--allowed-tools",
-      "Bash",
-      "Read",
-      "Edit",
-      "Glob",
-      "Grep",
-      "Write",
-      "WebSearch",
-      "WebFetch",
-      "AskUserQuestion",
-      "TaskCreate",
-      "TaskUpdate",
-      "TaskList",
-      "TaskGet",
-    ];
-    if (sessionId) args.push("--resume", sessionId);
+    const ALLOWED_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,WebSearch,WebFetch,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
 
-    console.log(`[Claude] Spawning: ${OLLAMA_BIN} launch --model ${model} claude -- -p <msg(${message.length}chars)> --output-format stream-json${projectPath ? ` (cwd: ${projectPath})` : ""}${sessionId ? ` --resume ${sessionId}` : ""}`);
+    let args: string[];
+    if (backend === "claude") {
+      // Direct: claude -p <msg> --model <model> --output-format stream-json ...
+      args = [
+        CLAUDE_BIN,
+        "-p", message,
+        "--output-format", "stream-json",
+        "--dangerously-skip-permissions",
+        "--allowed-tools", ALLOWED_TOOLS,
+      ];
+      if (model) args.push("--model", model);
+      if (sessionId) args.push("--resume", sessionId);
+      console.log(`[Claude] Direct: ${CLAUDE_BIN} -p <msg(${message.length}chars)>${model ? ` --model ${model}` : ""}${sessionId ? ` --resume ${sessionId}` : ""}`);
+    } else {
+      // Ollama: ollama launch claude --model <model> -y -- -p <msg> ...
+      const ollamaArgs = [OLLAMA_BIN, "launch", "claude"];
+      if (model) ollamaArgs.push("--model", model);
+      ollamaArgs.push("-y", "--");
+      const claudeArgs = [
+        "-p", message,
+        "--output-format", "stream-json",
+        "--dangerously-skip-permissions",
+        "--allowed-tools", ALLOWED_TOOLS,
+      ];
+      if (sessionId) claudeArgs.push("--resume", sessionId);
+      args = [...ollamaArgs, ...claudeArgs];
+      console.log(`[Claude] Ollama: ${OLLAMA_BIN} launch claude${model ? ` --model ${model}` : ""} -- -p <msg(${message.length}chars)>${sessionId ? ` --resume ${sessionId}` : ""}`);
+    }
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
@@ -110,10 +151,14 @@ export class ClaudeClient {
         stderr: "pipe",
         stdin: "ignore",
         ...(projectPath ? { cwd: projectPath } : {}),
-        env: process.env as Record<string, string>,
+        env: buildSubprocessEnv(),
       });
     } catch (err) {
-      onChunk(`❌ ollama launch 실행 실패\n\n\`${OLLAMA_BIN}\`을 찾을 수 없습니다. 설치 여부 확인:\n\`\`\`\nbrew install ollama\n\`\`\``);
+      const bin = backend === "claude" ? CLAUDE_BIN : OLLAMA_BIN;
+      const hint = backend === "claude"
+        ? "npm install -g @anthropic-ai/claude-code"
+        : "brew install ollama";
+      onChunk(`❌ 실행 실패\n\n\`${bin}\`을 찾을 수 없습니다:\n\`\`\`\n${hint}\n\`\`\``);
       onDone("");
       return;
     }
@@ -142,10 +187,26 @@ export class ClaudeClient {
     let gotAssistantContent = false; // true once we see text from an assistant event
     let gotResult = false;
 
+    // Kill the process if it produces no output for IDLE_TIMEOUT_MS.
+    // Covers commands like /usage that output a response but then hang
+    // without ever closing stdout or exiting.
+    const IDLE_TIMEOUT_MS = 15_000;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let idleKilled = false;
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleKilled = true;
+        try { proc.kill(); } catch {}
+      }, IDLE_TIMEOUT_MS);
+    };
+    resetIdleTimer();
+
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        resetIdleTimer();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -192,8 +253,11 @@ export class ClaudeClient {
               const errMsg =
                 (typeof event.result === "string" && event.result) ||
                 (typeof event.error === "string" && event.error) ||
+                (event.result && typeof event.result === "object" ? JSON.stringify(event.result) : "") ||
                 "";
-              const displayMsg = errMsg || "알 수 없는 오류로 응답에 실패했습니다.";
+              const displayMsg = errMsg
+                ? errMsg
+                : `알 수 없는 오류 (event dump: \`${JSON.stringify(event).slice(0, 300)}\`)`;
               onChunk(`\n\n⚠️ **오류 발생**\n\n${displayMsg}`);
             } else {
               console.log(`[Claude] Result OK — session: ${finalSessionId}`);
@@ -203,6 +267,7 @@ export class ClaudeClient {
       }
     } finally {
       reader.releaseLock();
+      if (idleTimer) clearTimeout(idleTimer);
     }
 
     // Check exit code — CLI may exit non-zero without a result event
@@ -214,7 +279,14 @@ export class ClaudeClient {
       console.error("[Claude] stderr:\n" + stderrText);
     }
 
-    if (!gotResult && exitCode !== 0) {
+    if (idleKilled) {
+      // Process was killed because it stopped producing output — likely an
+      // interactive command (/usage, /cost, etc.) that hangs in -p mode.
+      if (!gotAssistantContent) {
+        onChunk(`⚠️ 응답이 없어 프로세스를 종료했습니다.\n\n\`/usage\`, \`/cost\` 등 대화형 명령은 지원되지 않습니다.`);
+      }
+      // If we already showed content, silently close — the response was complete.
+    } else if (!gotResult && exitCode !== 0) {
       // No result event + non-zero exit → unexpected failure
       const detail = stderrText ? `\n\n\`\`\`\n${stderrText}\n\`\`\`` : "";
       onChunk(`\n\n⚠️ **claude CLI 오류** (exit ${exitCode})${detail}`);

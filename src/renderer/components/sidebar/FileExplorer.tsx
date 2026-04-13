@@ -121,6 +121,14 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
     }
   }, [renamingNode, node.path, node.name]);
 
+  // Hide web asset files that are not directly useful in the editor
+  const HIDDEN_EXTS = new Set([".html", ".htm", ".css", ".js", ".map", ".gz"]);
+  if (!node.isDirectory) {
+    const dot = node.name.lastIndexOf(".");
+    const ext = dot >= 0 ? node.name.slice(dot).toLowerCase() : "";
+    if (HIDDEN_EXTS.has(ext)) return null;
+  }
+
   if (query && !name.toLowerCase().includes(query.toLowerCase()) && !node.isDirectory) {
     return null;
   }
@@ -192,7 +200,7 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
             if (renameValue.trim()) onRenameSubmit(node, renameValue.trim());
             else onRenameCancel();
           }}
-          className="flex-1 text-xs bg-white border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="flex-1 text-xs bg-background text-foreground border border-blue-400 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
         />
       </div>
     );
@@ -403,7 +411,7 @@ export function FileExplorer({
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-52 bg-white">
+            <DropdownMenuContent align="start" className="w-52">
               {projects.length > 0 && (
                 <>
                   <DropdownMenuLabel>Projects</DropdownMenuLabel>
@@ -540,7 +548,7 @@ export function FileExplorer({
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-white border border-gray-200 rounded-md shadow-lg py-1 min-w-[180px] text-sm"
+          className="fixed z-50 bg-popover border border-border text-popover-foreground rounded-md shadow-lg py-1 min-w-[180px] text-sm"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >

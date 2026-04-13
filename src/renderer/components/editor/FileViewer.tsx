@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileJson, FileText, BookOpen, Image as ImageIcon, File } from "lucide-react";
+import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
 import { parseFrontmatter } from "../../utils/frontmatter";
@@ -85,7 +85,7 @@ function highlightBibtex(code: string): React.ReactNode[] {
     const tokens = tokenizeBibtexLine(line);
     return (
       <div key={i} className="flex">
-        <span className="w-10 text-right pr-3 text-gray-400 select-none text-xs leading-5">{i + 1}</span>
+        <span className="w-10 text-right pr-3 text-muted-foreground/50 select-none text-xs leading-5">{i + 1}</span>
         <span className="flex-1 text-xs leading-5 font-mono whitespace-pre">
           {tokens.map((t, j) =>
             TOKEN_CLASS[t.type] ? (
@@ -99,6 +99,7 @@ function highlightBibtex(code: string): React.ReactNode[] {
     );
   });
 }
+
 
 function getFileIcon(kind: FileNode["kind"]) {
   switch (kind) {
@@ -115,10 +116,21 @@ function getExt(name: string): string {
   return dot >= 0 ? name.slice(dot) : "";
 }
 
+const FONT_SIZES = [13, 15, 17, 19, 22] as const;
+const FONT_SIZE_KEY = "fileviewer-font-size";
+
 export function FileViewer({ file }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fontSizeIdx, setFontSizeIdx] = useState<number>(() => {
+    const saved = localStorage.getItem(FONT_SIZE_KEY);
+    return saved ? Math.min(Math.max(Number(saved), 0), FONT_SIZES.length - 1) : 1;
+  });
+
+  const fontSize = FONT_SIZES[fontSizeIdx];
+  const zoomIn  = useCallback(() => setFontSizeIdx((i) => { const n = Math.min(i + 1, FONT_SIZES.length - 1); localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
+  const zoomOut = useCallback(() => setFontSizeIdx((i) => { const n = Math.max(i - 1, 0);                    localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -166,10 +178,10 @@ export function FileViewer({ file }: FileViewerProps) {
       // For project-local images, we can't load them via file:// in webview,
       // so we show a placeholder with the path
       return (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-white">
-          <ImageIcon className="h-16 w-16 text-gray-300 mb-4" />
-          <p className="text-sm text-gray-500 mb-1">{file.name}</p>
-          <p className="text-xs text-gray-400">{file.path}</p>
+        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-background">
+          <ImageIcon className="h-16 w-16 text-muted-foreground/30 mb-4" />
+          <p className="text-sm text-muted-foreground mb-1">{file.name}</p>
+          <p className="text-xs text-muted-foreground/60">{file.path}</p>
         </div>
       );
     }
@@ -177,30 +189,51 @@ export function FileViewer({ file }: FileViewerProps) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-white">
-        <p className="text-gray-400">Loading {file.name}...</p>
+      <div className="flex-1 flex items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading {file.name}...</p>
       </div>
     );
   }
 
   if (error || content === null) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-white">
+      <div className="flex-1 flex flex-col items-center justify-center bg-background">
         {getFileIcon(file.kind)}
-        <p className="mt-2 text-sm text-gray-700">{file.name}</p>
+        <p className="mt-2 text-sm text-foreground">{file.name}</p>
         <p className="text-xs text-red-400 mt-1">{error || "Could not read file"}</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white">
+    <div className="flex-1 flex flex-col overflow-hidden bg-background">
       {/* Header */}
-      <div className="px-6 py-2 border-b border-gray-100 text-sm text-gray-500 font-medium flex items-center gap-2">
+      <div className="px-6 py-2 border-b border-border text-sm text-muted-foreground font-medium flex items-center gap-2">
         {getFileIcon(file.kind)}
         <span>{file.name}</span>
-        {isBibtex && <span className="text-xs text-gray-400 ml-2">BibTeX</span>}
-        {isMarkdown && <span className="text-xs text-gray-400 ml-2">Markdown</span>}
+        {isBibtex && <span className="text-xs text-muted-foreground/60 ml-2">BibTeX</span>}
+        {isMarkdown && <span className="text-xs text-muted-foreground/60 ml-2">Markdown</span>}
+        {isMarkdown && (
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={zoomOut}
+              disabled={fontSizeIdx === 0}
+              className="p-1 rounded hover:bg-accent disabled:opacity-30 transition-colors"
+              title="글자 작게"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-xs w-7 text-center">{fontSize}px</span>
+            <button
+              onClick={zoomIn}
+              disabled={fontSizeIdx === FONT_SIZES.length - 1}
+              className="p-1 rounded hover:bg-accent disabled:opacity-30 transition-colors"
+              title="글자 크게"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -208,7 +241,7 @@ export function FileViewer({ file }: FileViewerProps) {
         {isMarkdown && (
           <div className="max-w-3xl mx-auto px-8 py-6">
             {parsedFrontmatter && <FrontmatterCard frontmatter={parsedFrontmatter} />}
-            <div className="prose prose-sm prose-gray">
+            <div className="prose prose-gray dark:prose-invert" style={{ fontSize }}>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {markdownBody}
               </ReactMarkdown>
@@ -217,7 +250,7 @@ export function FileViewer({ file }: FileViewerProps) {
         )}
 
         {isBibtex && (
-          <div className="max-w-4xl mx-auto px-4 py-4 bg-gray-50 border border-gray-200 rounded-lg m-4">
+          <div className="max-w-4xl mx-auto px-4 py-4 bg-muted/50 border border-border rounded-lg m-4">
             <div className="overflow-x-auto">
               {highlightBibtex(content)}
             </div>
@@ -225,17 +258,17 @@ export function FileViewer({ file }: FileViewerProps) {
         )}
 
         {isCode && (
-          <div className="max-w-4xl mx-auto px-4 py-4 bg-gray-50 border border-gray-200 rounded-lg m-4">
+          <div className="max-w-4xl mx-auto px-4 py-4 bg-muted/50 border border-border rounded-lg m-4">
             <div className="overflow-x-auto">
-              <pre className="text-xs font-mono whitespace-pre text-gray-800">{content}</pre>
+              <pre className="text-xs font-mono whitespace-pre text-foreground">{content}</pre>
             </div>
           </div>
         )}
 
         {!isMarkdown && !isBibtex && !isCode && (
-          <div className="max-w-4xl mx-auto px-4 py-4 bg-gray-50 border border-gray-200 rounded-lg m-4">
+          <div className="max-w-4xl mx-auto px-4 py-4 bg-muted/50 border border-border rounded-lg m-4">
             <div className="overflow-x-auto">
-              <pre className="text-xs font-mono whitespace-pre text-gray-800">{content}</pre>
+              <pre className="text-xs font-mono whitespace-pre text-foreground">{content}</pre>
             </div>
           </div>
         )}

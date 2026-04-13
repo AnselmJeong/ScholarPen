@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { X } from "lucide-react";
 import type { EditorTab } from "./EditorPaneGroup";
 
@@ -22,13 +22,24 @@ export function TabBar({
   onTabMouseDown,
   onPaneFocus,
 }: TabBarProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const activeTabRef = useRef<HTMLDivElement>(null);
+
+  // Scroll active tab into view whenever it changes
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTabId]);
+
   return (
     <div
+      ref={scrollRef}
       className={`
-        flex items-end h-9 bg-gray-50 overflow-x-auto flex-shrink-0
+        flex items-end h-9 bg-muted/40 overflow-x-auto flex-shrink-0
         border-b transition-colors
-        ${isFocused ? "border-blue-300" : "border-gray-200"}
+        [&::-webkit-scrollbar]:hidden
+        ${isFocused ? "border-blue-400" : "border-border"}
       `}
+      style={{ scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}
       onClick={onPaneFocus}
     >
       {tabs.map((tab) => {
@@ -38,6 +49,7 @@ export function TabBar({
         return (
           <div
             key={tab.id}
+            ref={isActive ? activeTabRef : undefined}
             onClick={(e) => { e.stopPropagation(); onTabClick(tab.id); }}
             onMouseDown={(e) => {
               if (e.button !== 0) return;
@@ -50,10 +62,10 @@ export function TabBar({
             className={`
               group relative flex items-center gap-1.5 px-3 h-8 text-xs
               whitespace-nowrap select-none flex-shrink-0 cursor-pointer
-              border-r border-gray-200 transition-colors
+              border-r border-border transition-colors
               ${isActive
-                ? "bg-white text-gray-800 font-medium shadow-[inset_0_-2px_0_0] shadow-blue-500"
-                : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                ? "bg-background text-foreground font-medium shadow-[inset_0_-2px_0_0] shadow-blue-500"
+                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
               }
             `}
           >
@@ -65,8 +77,8 @@ export function TabBar({
                 flex-shrink-0 flex items-center justify-center w-4 h-4 rounded
                 transition-opacity
                 ${isActive
-                  ? "opacity-40 hover:opacity-100 hover:bg-gray-200"
-                  : "opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:bg-gray-200"
+                  ? "opacity-40 hover:opacity-100 hover:bg-accent"
+                  : "opacity-0 group-hover:opacity-40 hover:!opacity-100 hover:bg-accent"
                 }
               `}
             >

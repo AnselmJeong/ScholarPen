@@ -61,12 +61,64 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Dark mode variables */
+.dark {
+  --background: 224 18% 9%;
+  --foreground: 220 14% 90%;
+  --card: 224 18% 11%;
+  --card-foreground: 220 14% 90%;
+  --popover: 224 18% 10%;
+  --popover-foreground: 220 14% 90%;
+  --primary: 230 88% 65%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 18%;
+  --secondary-foreground: 220 9% 70%;
+  --muted: 220 14% 15%;
+  --muted-foreground: 220 9% 55%;
+  --accent: 230 60% 20%;
+  --accent-foreground: 230 70% 75%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 20%;
+  --input: 220 13% 20%;
+  --ring: 230 88% 65%;
+  --sidebar: 224 20% 7%;
+  --sidebar-foreground: 220 14% 85%;
+  --sidebar-accent: 230 60% 18%;
+  --sidebar-accent-foreground: 230 70% 75%;
+  --sidebar-border: 220 13% 18%;
+}
+
 /* BlockNote overrides */
 .bn-editor {
-  background: white;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   min-height: 100%;
 }
 
 .bn-container {
   height: 100%;
+  background: hsl(var(--background));
 }
+
+/* Dark theme: unify BlockNote background with surrounding area */
+[data-color-scheme="dark"] .bn-editor,
+[data-color-scheme="dark"] .bn-container,
+[data-color-scheme="dark"] .bn-editor .bn-block-group,
+[data-color-scheme="dark"] .ProseMirror {
+  background: hsl(var(--background)) !important;
+}
+
+/* Editor typography — readable body text */
+.bn-editor .bn-block-content,
+.bn-editor p,
+.bn-editor li,
+.bn-editor td,
+.bn-editor th {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.bn-editor h1 { font-size: 1.9em; line-height: 1.3; }
+.bn-editor h2 { font-size: 1.5em; line-height: 1.35; }
+.bn-editor h3 { font-size: 1.25em; line-height: 1.4; }

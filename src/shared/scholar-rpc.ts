@@ -67,6 +67,7 @@ type BunRequests = RPCSchema<{
       response: void;
     };
     getClaudeSlashCommands: { params: { projectPath?: string }; response: string[] };
+    getOllamaModels: { params: void; response: string[] };
   };
   messages: {
     aiChunk: { content: string };
