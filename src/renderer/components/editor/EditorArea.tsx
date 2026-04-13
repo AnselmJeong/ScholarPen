@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useIsDark } from "../../main";
 import {
   useCreateBlockNote,
   getDefaultReactSlashMenuItems,
@@ -76,6 +77,7 @@ export function EditorArea({
   onSaveStatusChange,
   reloadTrigger,
 }: EditorAreaProps) {
+  const isDark = useIsDark();
   const editor = useCreateBlockNote({
     schema: scholarSchema,
     dictionary: {
@@ -292,8 +294,8 @@ export function EditorArea({
 
   if (!project) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-white">
-        <div className="text-center text-gray-400">
+      <div className="flex-1 flex items-center justify-center bg-background">
+        <div className="text-center text-muted-foreground">
           <p className="text-lg mb-2">No project open</p>
           <p className="text-sm">Create or open a project from the sidebar</p>
         </div>
@@ -302,8 +304,8 @@ export function EditorArea({
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-white">
-      <div className="px-6 py-2 border-b border-gray-100 text-sm text-gray-500 font-medium">
+    <div className="flex-1 flex flex-col overflow-hidden bg-background">
+      <div className="px-6 py-2 border-b border-border text-sm text-muted-foreground font-medium">
         {project.name}{documentFilename ? ` / ${documentFilename.replace(".scholarpen.json", "")}` : ""}
       </div>
       <div className="flex-1 overflow-y-auto px-8 py-6">
@@ -311,7 +313,7 @@ export function EditorArea({
           <BlockNoteView
             editor={editor}
             onChange={handleChange}
-            theme="light"
+            theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
           >

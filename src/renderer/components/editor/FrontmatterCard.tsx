@@ -13,10 +13,10 @@ export function FrontmatterCard({ frontmatter }: FrontmatterCardProps) {
   const type = frontmatter.type as string | undefined;
 
   return (
-    <div className="mb-6 bg-gray-50 border border-gray-200 rounded-lg overflow-hidden text-sm">
+    <div className="mb-6 bg-muted/50 border border-border rounded-lg overflow-hidden text-sm">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-b border-gray-200">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wider">Metadata</span>
+      <div className="flex items-center justify-between px-4 py-2 bg-muted border-b border-border">
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Metadata</span>
         {type && (
           <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
             {type}
@@ -30,8 +30,8 @@ export function FrontmatterCard({ frontmatter }: FrontmatterCardProps) {
           <dl className="grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: "auto 1fr" }}>
             {entries.map(([key, value]) => (
               <React.Fragment key={key}>
-                <dt className="text-gray-500 font-medium text-xs py-0.5">{key}</dt>
-                <dd className="text-gray-800 text-xs py-0.5">{renderValue(value)}</dd>
+                <dt className="text-muted-foreground font-medium text-xs py-0.5">{key}</dt>
+                <dd className="text-foreground text-xs py-0.5">{renderValue(value)}</dd>
               </React.Fragment>
             ))}
           </dl>
@@ -46,19 +46,19 @@ export function FrontmatterCard({ frontmatter }: FrontmatterCardProps) {
  */
 function renderValue(value: unknown): React.ReactNode {
   if (value === null || value === undefined) {
-    return <span className="text-gray-400 italic">—</span>;
+    return <span className="text-muted-foreground italic">—</span>;
   }
 
   if (Array.isArray(value)) {
     if (value.length === 0) {
-      return <span className="text-gray-400 italic">empty</span>;
+      return <span className="text-muted-foreground italic">empty</span>;
     }
     return (
       <span className="flex flex-wrap gap-1">
         {value.map((item, i) => (
           <span
             key={i}
-            className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-200 text-gray-700"
+            className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-secondary text-secondary-foreground"
           >
             {String(item)}
           </span>

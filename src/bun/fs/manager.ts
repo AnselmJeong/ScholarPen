@@ -15,6 +15,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   kbChunkOverlap: 64,
   kbTopK: 5,
   openAlexApiKey: "",
+  aiBackend: "ollama",
+  claudeModel: "claude-sonnet-4-6",
+  theme: "system",
 };
 
 function extToKind(name: string, isDir: boolean): FileNodeKind {

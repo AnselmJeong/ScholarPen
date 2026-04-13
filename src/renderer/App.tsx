@@ -33,6 +33,7 @@ export function App() {
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
+  const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel">>({
     aiBackend: "ollama",
@@ -52,6 +53,9 @@ export function App() {
   const editorRef      = useRef<BlockNoteEditor<any, any, any> | null>(null);
   const editorGroupRef = useRef<EditorPaneGroupHandle | null>(null);
 
+  // Resize refs — Left sidebar
+  const isResizingLeftRef    = useRef(false);
+  const resizeLeftStartRef   = useRef({ x: 0, width: 0 });
   // Resize refs — AI sidebar
   const isResizingAIRef    = useRef(false);
   const resizeAIStartRef   = useRef({ x: 0, width: 0 });
@@ -166,13 +170,15 @@ export function App() {
     }
   }, [graphMode, activeProject, kbGraph]);
 
-  const handleGraphNodeClick = useCallback((node: KBGraphNode) => {
-    setGraphSelectedNodeId(node.id);
-    // Construct a FileNode so EditorPaneGroup can open it in FileViewer
+  const handleKnowledgeFileSelect = useCallback((filePath: string, _title?: string) => {
+    // Derive the display name and kind from the actual file path
+    const fileName = filePath.split("/").at(-1) ?? filePath;
+    const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+    const kind: FileNode["kind"] = ext === ".pdf" ? "pdf" : "note";
     const fileNode: FileNode = {
-      name: node.title + ".md",
-      path: node.filePath,
-      kind: "note",
+      name: fileName,
+      path: filePath,
+      kind,
       isDirectory: false,
       lastModified: Date.now(),
     };
@@ -180,17 +186,10 @@ export function App() {
     setCurrentView("editor");
   }, []);
 
-  const handleKnowledgeFileSelect = useCallback((filePath: string, title: string) => {
-    const fileNode: FileNode = {
-      name: title + ".md",
-      path: filePath,
-      kind: "note",
-      isDirectory: false,
-      lastModified: Date.now(),
-    };
-    editorGroupRef.current?.openFile(fileNode);
-    setCurrentView("editor");
-  }, []);
+  const handleGraphNodeClick = useCallback((node: KBGraphNode) => {
+    setGraphSelectedNodeId(node.id);
+    handleKnowledgeFileSelect(node.filePath);
+  }, [handleKnowledgeFileSelect]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -325,6 +324,26 @@ export function App() {
     });
   }, [activeProject]);
 
+  // ── Left sidebar resize ────────────────────────────────────────────────────
+
+  const handleLeftResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingLeftRef.current = true;
+    resizeLeftStartRef.current = { x: e.clientX, width: leftSidebarWidth };
+    const onMove = (ev: MouseEvent) => {
+      if (!isResizingLeftRef.current) return;
+      const delta = ev.clientX - resizeLeftStartRef.current.x;
+      setLeftSidebarWidth(Math.max(200, Math.min(480, resizeLeftStartRef.current.width + delta)));
+    };
+    const onUp = () => {
+      isResizingLeftRef.current = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [leftSidebarWidth]);
+
   // ── AI sidebar resize ─────────────────────────────────────────────────────
 
   const handleAIResizeMouseDown = useCallback((e: React.MouseEvent) => {
@@ -384,25 +403,32 @@ export function App() {
       <div className="flex flex-1 overflow-hidden">
 
         {/* Left: Sidebar (Files + Knowledge tabs) */}
-        <LeftSidebar
-          projects={projects}
-          activeProject={activeProject}
-          onProjectChange={handleProjectChange}
-          onCreateProject={handleCreateProject}
-          fileTree={fileTree}
-          activeFile={activeFile}
-          onFileSelect={handleFileSelect}
-          onOpenSettings={() => setCurrentView("settings")}
-          onRefreshTree={refreshFileTree}
-          onExportDocument={() => setExportDialogOpen(true)}
-          onImportFile={handleImportFromFile}
-          onFileRenamed={handleFileRenamed}
-          onFileDeleted={handleFileDeleted}
-          onKnowledgeFileSelect={handleKnowledgeFileSelect}
-          activeFilePath={activeFile?.path}
-          graphMode={graphMode}
-          graphLoading={graphLoading}
-          onToggleGraph={handleToggleGraph}
+        <div style={{ width: leftSidebarWidth }} className="flex-shrink-0 h-full">
+          <LeftSidebar
+            projects={projects}
+            activeProject={activeProject}
+            onProjectChange={handleProjectChange}
+            onCreateProject={handleCreateProject}
+            fileTree={fileTree}
+            activeFile={activeFile}
+            onFileSelect={handleFileSelect}
+            onOpenSettings={() => setCurrentView("settings")}
+            onRefreshTree={refreshFileTree}
+            onExportDocument={() => setExportDialogOpen(true)}
+            onImportFile={handleImportFromFile}
+            onFileRenamed={handleFileRenamed}
+            onFileDeleted={handleFileDeleted}
+            onKnowledgeFileSelect={handleKnowledgeFileSelect}
+            activeFilePath={activeFile?.path}
+            graphMode={graphMode}
+            graphLoading={graphLoading}
+            onToggleGraph={handleToggleGraph}
+          />
+        </div>
+        {/* Resize handle */}
+        <div
+          className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors"
+          onMouseDown={handleLeftResizeMouseDown}
         />
 
         {/* Center: Settings | Graph+Editor */}
@@ -469,6 +495,7 @@ export function App() {
               editor={editorRef.current}
               onClose={() => setAiSidebarOpen(false)}
               width={aiSidebarWidth}
+              onOpenKBFile={(filePath) => handleKnowledgeFileSelect(filePath)}
             />
           </>
         )}

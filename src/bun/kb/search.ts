@@ -26,7 +26,7 @@ export interface KBStatus {
 }
 
 // Bump this whenever cleanBody or indexing logic changes to force a rebuild.
-const INDEX_VERSION = "3";
+const INDEX_VERSION = "4";
 
 // Wiki subdirectories to index (schema.md page types)
 const WIKI_SUBDIRS = [
@@ -144,15 +144,17 @@ function cleanBody(raw: string): string {
     .trim();
 }
 
-// Sanitize user query for FTS5 — remove special chars, keep words
+// Sanitize user query for FTS5 — remove FTS special chars, keep Unicode words.
+// Uses Unicode-aware regex so Korean/CJK characters are preserved for search.
+// Terms joined with OR for broader recall (any matching doc is surfaced).
 function safeFtsQuery(text: string): string {
   const words = text
-    .replace(/[^\w\s]/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ") // keep Unicode letters & digits (incl. Korean)
     .trim()
     .split(/\s+/)
-    .filter((w) => w.length > 2); // skip very short tokens
+    .filter((w) => w.length > 1); // 2+ chars: handles short Korean words like 구속, 연구
   if (words.length === 0) return '""'; // empty match — returns nothing
-  return words.join(" ");
+  return words.join(" OR "); // OR logic: any word match qualifies
 }
 
 // ── YAML index loader ──────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback, useState, useMemo } from "react"
 import * as d3 from "d3";
 import { Network, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useIsDark } from "../../main";
 import type { KBGraph, KBGraphNode } from "@shared/rpc-types";
 
 interface SimNode extends d3.SimulationNodeDatum {
@@ -53,6 +54,7 @@ export function KnowledgeGraphPanel({
   onNodeClick,
   onClearSelection,
 }: Props) {
+  const isDark = useIsDark();
   const svgRef       = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const zoomRef      = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -200,7 +202,7 @@ export function KnowledgeGraphPanel({
     nodeSel.append("circle")
       .attr("r",    (d) => nodeRadius(d.degree))
       .attr("fill", (d) => NODE_COLOR[d.type] ?? NODE_COLOR.other)
-      .attr("stroke", "#fff")
+      .attr("stroke", isDark ? "#1e2130" : "#fff")
       .attr("stroke-width", 1.5);
 
     nodeSel.append("text")
@@ -208,7 +210,7 @@ export function KnowledgeGraphPanel({
       .attr("y", "0.35em")
       .style("font-size", "10px")
       .style("font-family", "system-ui, sans-serif")
-      .style("fill", "#374151")
+      .style("fill", isDark ? "#e2e8f0" : "#374151")
       .style("pointer-events", "none")
       .text((d) => d.title.length > 24 ? d.title.slice(0, 22) + "…" : d.title);
 
@@ -237,7 +239,7 @@ export function KnowledgeGraphPanel({
         }
       }
     };
-  }, [graph, visibleTypes]); // Rebuild when either changes
+  }, [graph, visibleTypes, isDark]); // Rebuild when any changes
 
   // ── Selection highlight (no simulation restart needed) ──────────────────────
   useEffect(() => {
@@ -304,7 +306,7 @@ export function KnowledgeGraphPanel({
   );
 
   return (
-    <div ref={containerRef} className="flex flex-col h-full bg-gray-50 border-r border-border">
+    <div ref={containerRef} className="flex flex-col h-full bg-background border-r border-border">
       {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background flex-shrink-0">
         <div className="flex items-center gap-1.5">

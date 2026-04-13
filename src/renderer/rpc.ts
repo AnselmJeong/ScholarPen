@@ -114,7 +114,11 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       kbChunkSize: 512,
       kbChunkOverlap: 64,
       kbTopK: 5,
+      aiBackend: "ollama",
+      claudeModel: "claude-sonnet-4-6",
+      theme: "system",
     },
+    getOllamaModels: [],
     getKBGraph: { nodes: [], edges: [] },
   };
   return mocks[method] ?? null;
@@ -189,14 +193,18 @@ export const rpc = {
     call<void>("rebuildKBIndex", { projectPath }),
   getKBGraph: (projectPath: string) =>
     call<KBGraph>("getKBGraph", { projectPath }),
+  // ── Ollama model list ─────────────────────────────────
+  getOllamaModels: () => call<string[]>("getOllamaModels"),
+  openExternal: (url: string) => call<void>("openExternal", { url }),
   // ── Claude CLI streaming ──────────────────────────────
   getClaudeSlashCommands: (projectPath?: string) => call<string[]>("getClaudeSlashCommands", { projectPath }),
   claudeStream: (
     message: string,
     sessionId: string | null,
     projectPath: string | null,
-    kbEnabled?: boolean
-  ) => call<void>("claudeStream", { message, sessionId, projectPath, kbEnabled }),
+    kbEnabled?: boolean,
+    lang?: "ko" | "en"
+  ) => call<void>("claudeStream", { message, sessionId, projectPath, kbEnabled, lang }),
   // ── Streaming AI ──────────────────────────────────────
   generateTextStream: (
     model: string,

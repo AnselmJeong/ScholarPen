@@ -110,10 +110,16 @@ export class ClaudeClient {
     model: string,
     callbacks: ClaudeCallbacks,
     backend: "ollama" | "claude" = "ollama",
+    allowedTools?: string,
   ): Promise<void> {
     const { onChunk, onDone, onInit } = callbacks;
 
-    const ALLOWED_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,WebSearch,WebFetch,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
+    // Full tool set for slash commands / unrestricted mode
+    const FULL_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,WebSearch,WebFetch,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
+    // KB-mode: allow file-system tools for document editing, but block external search
+    const KB_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
+
+    const tools = allowedTools ?? FULL_TOOLS;
 
     let args: string[];
     if (backend === "claude") {
@@ -123,11 +129,11 @@ export class ClaudeClient {
         "-p", message,
         "--output-format", "stream-json",
         "--dangerously-skip-permissions",
-        "--allowed-tools", ALLOWED_TOOLS,
+        "--allowed-tools", tools,
       ];
       if (model) args.push("--model", model);
       if (sessionId) args.push("--resume", sessionId);
-      console.log(`[Claude] Direct: ${CLAUDE_BIN} -p <msg(${message.length}chars)>${model ? ` --model ${model}` : ""}${sessionId ? ` --resume ${sessionId}` : ""}`);
+      console.log(`[Claude] Direct: ${CLAUDE_BIN} -p <msg(${message.length}chars)>${model ? ` --model ${model}` : ""}${sessionId ? ` --resume ${sessionId}` : ""} tools=${tools === FULL_TOOLS ? "full" : "kb-only"}`);
     } else {
       // Ollama: ollama launch claude --model <model> -y -- -p <msg> ...
       const ollamaArgs = [OLLAMA_BIN, "launch", "claude"];
@@ -137,11 +143,11 @@ export class ClaudeClient {
         "-p", message,
         "--output-format", "stream-json",
         "--dangerously-skip-permissions",
-        "--allowed-tools", ALLOWED_TOOLS,
+        "--allowed-tools", tools,
       ];
       if (sessionId) claudeArgs.push("--resume", sessionId);
       args = [...ollamaArgs, ...claudeArgs];
-      console.log(`[Claude] Ollama: ${OLLAMA_BIN} launch claude${model ? ` --model ${model}` : ""} -- -p <msg(${message.length}chars)>${sessionId ? ` --resume ${sessionId}` : ""}`);
+      console.log(`[Claude] Ollama: ${OLLAMA_BIN} launch claude${model ? ` --model ${model}` : ""} -- -p <msg(${message.length}chars)>${sessionId ? ` --resume ${sessionId}` : ""} tools=${tools === FULL_TOOLS ? "full" : "kb-only"}`);
     }
 
     let proc: ReturnType<typeof Bun.spawn>;

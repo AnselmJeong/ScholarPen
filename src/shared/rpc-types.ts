@@ -103,6 +103,11 @@ export interface AppSettings {
   kbChunkOverlap: number;
   kbTopK: number;
   openAlexApiKey: string;
+  // AI backend selection
+  aiBackend: "ollama" | "claude";
+  claudeModel: string;
+  // Theme
+  theme: "light" | "dark" | "system";
 }
 
 export type AppSettingsUpdate = Partial<AppSettings>;

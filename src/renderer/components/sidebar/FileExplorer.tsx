@@ -92,6 +92,14 @@ function displayName(node: FileNode): string {
   return node.name;
 }
 
+/** Recursively check if a node (or any of its descendants) matches the query */
+function hasMatchingDescendant(node: FileNode, query: string): boolean {
+  if (!node.isDirectory) {
+    return displayName(node).toLowerCase().includes(query.toLowerCase());
+  }
+  return node.children?.some((child) => hasMatchingDescendant(child, query)) ?? false;
+}
+
 // ── TreeNode ───────────────────────────────────────────────────
 interface TreeNodeProps {
   node: FileNode;
@@ -137,7 +145,7 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
 
   if (node.isDirectory) {
     const hasVisibleChildren = !query || node.children?.some(
-      (c) => !c.isDirectory && displayName(c).toLowerCase().includes(query.toLowerCase())
+      (c) => hasMatchingDescendant(c, query)
     );
     if (query && !hasVisibleChildren) return null;
 
@@ -155,7 +163,7 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
           <FileIcon kind="folder" isDirectory={true} isOpen={isOpen} />
           <span className="truncate text-xs font-medium">{name}</span>
         </button>
-        {isOpen && node.children && (
+        {(isOpen || !!query) && node.children && (
           <div>
             {node.children.map((child) => (
               <TreeNode
@@ -548,7 +556,7 @@ export function FileExplorer({
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-popover border border-border text-popover-foreground rounded-md shadow-lg py-1 min-w-[180px] text-sm"
+          className="fixed z-50 bg-popover border border-border text-popover-foreground rounded-md shadow-lg py-1 min-w-[140px] !w-auto text-sm"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >

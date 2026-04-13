@@ -26,6 +26,7 @@ interface AISidebarProps {
   editor: BlockNoteEditor<any, any, any> | null;
   onClose: () => void;
   width?: number;
+  onOpenKBFile?: (filePath: string) => void;
 }
 
 interface Message {
@@ -75,7 +76,7 @@ function analyzeInput(value: string): { mode: DropdownMode; query: string } {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
+export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AISidebarProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -85,6 +86,7 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
   const [dropdownIndex, setDropdownIndex] = useState(0);
   const [kbStatus, setKbStatus] = useState<KBStatus | null>(null);
   const [kbEnabled, setKbEnabled] = useState(true);
+  const [lang, setLang] = useState<"ko" | "en">("ko");
 
   const abortedRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -168,10 +170,18 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
     }
     if (dropdownMode === "file") {
       const flat = flattenFiles(fileList);
-      if (!dropdownQuery) return flat.slice(0, 8);
-      return flat
-        .filter((f) => f.name.toLowerCase().includes(dropdownQuery))
-        .slice(0, 8);
+      // Group files by base name (without extension) to show related files together
+      if (!dropdownQuery) return flat.slice(0, 50);
+      const filtered = flat.filter((f) => f.name.toLowerCase().includes(dropdownQuery));
+      // Sort: prioritize files that start with the query, then by name
+      const sorted = filtered.sort((a, b) => {
+        const aStarts = a.name.toLowerCase().startsWith(dropdownQuery);
+        const bStarts = b.name.toLowerCase().startsWith(dropdownQuery);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      return sorted.slice(0, 30);
     }
     return [];
   }, [dropdownMode, dropdownQuery, slashCommands, fileList]);
@@ -228,7 +238,8 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
         userMessage,
         sessionId,
         project?.path ?? null,
-        kbStatus?.exists ? kbEnabled : false
+        kbStatus?.exists ? kbEnabled : false,
+        lang
       );
     } catch (err) {
       if (!abortedRef.current) {
@@ -243,7 +254,7 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
         setLoading(false);
       }
     }
-  }, [input, loading, sessionId, project, scrollToBottom, kbStatus, kbEnabled]);
+  }, [input, loading, sessionId, project, scrollToBottom, kbStatus, kbEnabled, lang]);
 
   const handleStop = useCallback(() => {
     abortedRef.current = true;
@@ -344,7 +355,32 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          {/* Language toggle */}
+          <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-semibold">
+            <button
+              onClick={() => setLang("ko")}
+              className={cn(
+                "px-2 py-0.5 transition-colors",
+                lang === "ko"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
+              )}
+            >
+              KO
+            </button>
+            <button
+              onClick={() => setLang("en")}
+              className={cn(
+                "px-2 py-0.5 transition-colors",
+                lang === "en"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
+              )}
+            >
+              EN
+            </button>
+          </div>
           <Button
             variant="ghost"
             size="icon"
@@ -444,6 +480,36 @@ export function AISidebar({ project, editor, onClose, width }: AISidebarProps) {
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm, remarkMath]}
                             rehypePlugins={[rehypeKatex]}
+                            urlTransform={(url) => url}
+                            components={{
+                              a: ({ href, children }) => {
+                                // KB reference links use https://x-sp-ref<path> prefix
+                                // (plain custom schemes like file-ref:// get stripped by react-markdown)
+                                const SP_FILE_REF = "https://x-sp-ref";
+                                if (href?.startsWith(SP_FILE_REF)) {
+                                  const rawPath = href.slice(SP_FILE_REF.length);
+                                  const filePath = decodeURIComponent(rawPath);
+                                  return (
+                                    <a
+                                      href="#"
+                                      onClick={(e) => { e.preventDefault(); onOpenKBFile?.(filePath); }}
+                                      className="cursor-pointer text-primary underline hover:text-primary/80"
+                                    >
+                                      {children}
+                                    </a>
+                                  );
+                                }
+                                return (
+                                  <a
+                                    href="#"
+                                    onClick={(e) => { e.preventDefault(); if (href) rpc.openExternal(href); }}
+                                    className="cursor-pointer text-blue-400 underline hover:text-blue-300"
+                                  >
+                                    {children}
+                                  </a>
+                                );
+                              },
+                            }}
                           >
                             {msg.content}
                           </ReactMarkdown>

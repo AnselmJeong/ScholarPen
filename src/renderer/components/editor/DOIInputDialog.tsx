@@ -51,12 +51,12 @@ export function DOIInputDialog({
       />
 
       {/* Dialog */}
-      <div className="relative bg-white rounded-lg shadow-xl w-[440px] p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-gray-800">Insert Citation via DOI</h2>
+      <div className="relative bg-popover text-popover-foreground rounded-lg shadow-xl w-[440px] p-6 space-y-4 border border-border">
+        <h2 className="text-sm font-semibold">Insert Citation via DOI</h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
               DOI
             </label>
             <input
@@ -66,7 +66,7 @@ export function DOIInputDialog({
               onChange={(e) => setDoi(e.target.value)}
               placeholder="10.1038/s41586-021-03819-2"
               disabled={isLoading}
-              className="w-full px-3 py-2 text-sm font-mono border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+              className="w-full px-3 py-2 text-sm font-mono border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent disabled:opacity-50"
             />
           </div>
 
@@ -81,7 +81,7 @@ export function DOIInputDialog({
               type="button"
               onClick={onClose}
               disabled={isLoading}
-              className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-accent disabled:opacity-50"
             >
               Cancel
             </button>

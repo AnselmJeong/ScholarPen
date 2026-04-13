@@ -495,7 +495,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
           <>
             <div
               style={{ width: `${splitRatio}%` }}
-              className="min-h-0 flex flex-col overflow-hidden border-r border-gray-200"
+              className="min-h-0 flex flex-col overflow-hidden border-r border-border"
             >
               {renderPane(leftPane, "left")}
             </div>
@@ -523,8 +523,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
 
 function EmptyPane() {
   return (
-    <div className="h-full flex items-center justify-center bg-white">
-      <div className="text-center text-gray-300 select-none">
+    <div className="h-full flex items-center justify-center bg-background">
+      <div className="text-center text-muted-foreground/40 select-none">
         <p className="text-sm">No file open</p>
         <p className="text-xs mt-1">Open a file from the sidebar</p>
       </div>

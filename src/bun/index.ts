@@ -14,32 +14,53 @@ import type { ScholarRPC } from "../shared/scholar-rpc";
 // Build KB context string to prepend to the user's message.
 // Uses XML-style tags — Claude understands these well and they
 // won't be mistaken for CLI option flags (unlike leading "---").
-function buildKBContext(results: KBSearchResult[]): string {
+function buildKBContext(results: KBSearchResult[], lang?: string): string {
   const items = results.map((r, i) => {
     const excerpt = r.excerpt
       ? `\n    ${r.excerpt.replace(/\n+/g, " ").trim().slice(0, 300)}`
       : "";
     return `[${i + 1}] ${r.title || r.docId} (${r.docType})${excerpt}`;
   });
+
+  // CRITICAL: Language rule MUST be followed - place it first
+  const langRule = lang === "ko"
+    ? "0. CRITICAL — LANGUAGE: 답변은 반드시 한국어(Korean)로만 작성하세요. 영어로 작성하면 안 됩니다."
+    : lang === "en"
+      ? "0. CRITICAL — LANGUAGE: Respond in English ONLY. Do not use any other language."
+      : "";
+
+  const formatRule = lang === "ko"
+    ? "6. 답변 구조: 먼저 질문에 대한 상세 설명을 작성하고, 각 주장 뒤에 [1], [2] 등으로 인용하세요. 설명 뒤에 References 목록이 자동으로 추가되므로 여기서는 생략하세요. 설명 없이 References만 적지 마세요."
+    : "6. Structure: First write a detailed explanation with inline citations [1], [2], etc. A References list will be appended automatically — do not include it. Never respond with only References.";
+
   return [
     "<kb_context>",
-    "STRICT RULES — follow exactly:",
-    "1. Answer ONLY from the references listed below. Do NOT use Glob, Read, Bash, or any other tools.",
-    "2. Cite every claim with an inline marker [1], [2], etc. immediately after the sentence.",
-    "3. Do not fabricate content absent from the references.",
-    "4. If the references are insufficient, say so — do not search for more.",
+    "STRICT RULES — follow exactly (highest priority first):",
+    langRule,
+    "1. Answer primarily from the references listed below using inline citations [1], [2], etc.",
+    "2. If the user explicitly references a specific file (e.g., '@filename.pdf'), use Read/Glob tools to access that file's full content.",
+    "3. Do not fabricate content absent from the references or the explicitly requested file.",
+    "4. Do NOT use WebSearch or WebFetch — only use local file tools (Read, Glob) when needed.",
+    "5. Cite every claim with [1], [2], etc. immediately after the sentence.",
+    formatRule,
     "",
     "References:",
     ...items,
     "</kb_context>",
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
-// Append a formatted reference list after Claude's response
+// Append a formatted reference list after Claude's response.
+// Uses https://x-sp-ref<path> so react-markdown doesn't sanitize the URL away
+// (custom schemes like file-ref:// get stripped by the default URL sanitizer).
 function buildReferenceList(results: KBSearchResult[]): string {
-  const lines = results.map(
-    (r, i) => `${i + 1}. **${r.title || r.docId}** *(${r.docType})*`
-  );
+  const lines = results.map((r, i) => {
+    const title = r.title || r.docId;
+    const fileName = basename(r.filePath);
+    // Encode each path segment individually to preserve slashes
+    const encodedPath = r.filePath.split("/").map(encodeURIComponent).join("/");
+    return `${i + 1}. **[${title}](https://x-sp-ref${encodedPath})** — \`${fileName}\``;
+  });
   return `\n\n**References (${results.length})**\n${lines.join("\n")}`;
 }
 
@@ -263,9 +284,11 @@ async function main() {
         // ── Claude CLI streaming ───────────────────────────
         getClaudeSlashCommands: ({ projectPath }) => claudeClient.getSlashCommands(projectPath),
 
+        openExternal: ({ url }) => { Utils.openExternal(url); },
+
         // Fire-and-forget: return immediately so Electrobun can process
         // outbound claudeChunk messages while Claude streams in background.
-        claudeStream: async ({ message, sessionId, projectPath, kbEnabled }) => {
+        claudeStream: async ({ message, sessionId, projectPath, kbEnabled, lang }) => {
           const settings = await fileSystem.getSettings();
           const backend = settings.aiBackend ?? "ollama";
           const model = backend === "claude"
@@ -281,6 +304,7 @@ async function main() {
           const isSlashCommand = message.trimStart().startsWith("/");
 
           // Inject KB context when enabled and project has a KB
+          // Search uses the raw message (no language prefix) to keep FTS accurate
           if (!isSlashCommand && kbEnabled !== false && projectPath) {
             try {
               const kbRoot = await findKBRoot(projectPath);
@@ -289,7 +313,7 @@ async function main() {
                 await engine.ensureIndexed();
                 kbResults = engine.search(message, 5);
                 if (kbResults.length > 0) {
-                  enrichedMessage = buildKBContext(kbResults) + "\n\n" + message;
+                  enrichedMessage = buildKBContext(kbResults, lang) + "\n\n" + message;
                 }
               }
             } catch (err) {
@@ -297,19 +321,39 @@ async function main() {
             }
           }
 
+          // Append language instruction AFTER KB context injection so it
+          // does not pollute the FTS search query above.
+          // Add both before and after as reinforcement.
+          const hasKB = !isSlashCommand && kbResults.length > 0;
+          if (lang === "en") {
+            const langInstruction = "[CRITICAL: Respond in English ONLY. Do not use other languages.]";
+            enrichedMessage = langInstruction + "\n\n" + enrichedMessage + "\n\n" + langInstruction;
+          } else if (lang === "ko") {
+            const langInstruction = "[CRITICAL: 반드시 한국어로만 답변하세요. 영어로 답변하지 마세요.]";
+            enrichedMessage = langInstruction + "\n\n" + enrichedMessage + "\n\n" + langInstruction;
+          }
+
           const usingKB = !isSlashCommand && kbResults.length > 0;
+
+          // KB mode: block external search tools (WebSearch, WebFetch); Normal mode: allow all tools
+          const KB_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
+          const allowedTools = usingKB ? KB_TOOLS : undefined;
 
           claudeClient.streamChat(enrichedMessage, sessionId, projectPath, model, {
             onChunk: (text) => sendClaudeChunk?.({ content: text, done: false }),
             onDone: (newSessionId) => {
-              if (usingKB) {
-                sendClaudeChunk?.({ content: buildReferenceList(kbResults), done: false });
+              try {
+                if (usingKB && kbResults.length > 0) {
+                  sendClaudeChunk?.({ content: buildReferenceList(kbResults), done: false });
+                }
+              } catch (err) {
+                console.error("[KB] buildReferenceList failed:", err);
               }
               sendClaudeChunk?.({ content: "", done: true, sessionId: newSessionId });
             },
             onInit: (slashCommands) =>
               sendClaudeChunk?.({ content: "", done: false, slashCommands }),
-          }, backend).catch((err) => {
+          }, backend, allowedTools).catch((err) => {
             sendClaudeChunk?.({ content: `\n\n❌ 오류: ${err.message}`, done: false });
             sendClaudeChunk?.({ content: "", done: true });
           });

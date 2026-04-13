@@ -63,11 +63,13 @@ type BunRequests = RPCSchema<{
         sessionId: string | null;
         projectPath: string | null;
         kbEnabled?: boolean;
+        lang?: "ko" | "en";
       };
       response: void;
     };
     getClaudeSlashCommands: { params: { projectPath?: string }; response: string[] };
     getOllamaModels: { params: void; response: string[] };
+    openExternal: { params: { url: string }; response: void };
   };
   messages: {
     aiChunk: { content: string };

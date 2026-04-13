@@ -23,7 +23,7 @@ interface LeftSidebarProps {
   onFileRenamed: (newPath: string, newName: string) => void;
   onFileDeleted: (filePath: string) => void;
   // Knowledge / graph props
-  onKnowledgeFileSelect: (filePath: string, title: string) => void;
+  onKnowledgeFileSelect: (filePath: string, title?: string) => void;
   activeFilePath?: string;
   graphMode: boolean;
   graphLoading: boolean;
@@ -55,7 +55,7 @@ export function LeftSidebar({
   const [activeTab, setActiveTab] = useState<SidebarTab>("files");
 
   return (
-    <div className="w-56 flex-shrink-0 flex flex-col h-full border-r border-sidebar-border bg-sidebar">
+    <div className="w-full flex-shrink-0 flex flex-col h-full border-r border-sidebar-border bg-sidebar">
       {/* Tab bar */}
       <div className="flex border-b border-sidebar-border flex-shrink-0">
         <button

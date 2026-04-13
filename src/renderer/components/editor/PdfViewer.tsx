@@ -138,17 +138,17 @@ export function PdfViewer({ file }: PdfViewerProps) {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50">
-        <p className="text-sm text-gray-400">Loading {file.name}...</p>
+      <div className="flex-1 flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading {file.name}...</p>
       </div>
     );
   }
 
   if (error || !blobUrl) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-white gap-2">
+      <div className="flex-1 flex flex-col items-center justify-center bg-background gap-2">
         <FileText className="h-12 w-12 text-red-300" />
-        <p className="text-sm text-gray-700">{file.name}</p>
+        <p className="text-sm text-foreground">{file.name}</p>
         <p className="text-xs text-red-400">{error || "Could not load PDF"}</p>
       </div>
     );
@@ -157,9 +157,9 @@ export function PdfViewer({ file }: PdfViewerProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Toolbar */}
-      <div className="px-4 py-1.5 border-b border-gray-100 flex items-center gap-1 flex-shrink-0 bg-white">
+      <div className="px-4 py-1.5 border-b border-border flex items-center gap-1 flex-shrink-0 bg-background">
         <FileText className="h-4 w-4 text-red-400 flex-shrink-0 mr-1" />
-        <span className="text-sm text-gray-600 font-medium truncate flex-1 min-w-0">{file.name}</span>
+        <span className="text-sm text-muted-foreground font-medium truncate flex-1 min-w-0">{file.name}</span>
 
         {/* Zoom controls */}
         <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -167,14 +167,14 @@ export function PdfViewer({ file }: PdfViewerProps) {
             onClick={zoomOut}
             disabled={zoom <= ZOOM_MIN}
             title="Zoom out (-)"
-            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ZoomOut className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={zoomReset}
             title="Reset zoom (⌘0)"
-            className="px-2 py-0.5 rounded hover:bg-gray-100 transition-colors text-xs text-gray-600 tabular-nums min-w-[3rem] text-center"
+            className="px-2 py-0.5 rounded hover:bg-accent transition-colors text-xs text-muted-foreground tabular-nums min-w-[3rem] text-center"
           >
             {Math.round(zoom * 100)}%
           </button>
@@ -182,22 +182,22 @@ export function PdfViewer({ file }: PdfViewerProps) {
             onClick={zoomIn}
             disabled={zoom >= ZOOM_MAX}
             title="Zoom in (+)"
-            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ZoomIn className="h-3.5 w-3.5" />
           </button>
           <button
             onClick={zoomReset}
             title="Fit to window"
-            className="p-1 rounded hover:bg-gray-100 transition-colors ml-0.5"
+            className="p-1 rounded hover:bg-accent transition-colors ml-0.5"
           >
-            <Maximize2 className="h-3.5 w-3.5 text-gray-400" />
+            <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
         </div>
 
         {/* Page count */}
         {numPages > 0 && (
-          <span className="text-xs text-gray-400 flex-shrink-0 ml-2 tabular-nums">
+          <span className="text-xs text-muted-foreground flex-shrink-0 ml-2 tabular-nums">
             {pageNumber} / {numPages}
           </span>
         )}
@@ -206,7 +206,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
       {/* PDF content — overflow-auto for horizontal scroll when zoomed in */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-auto flex flex-col items-center py-4 bg-gray-100"
+        className="flex-1 overflow-auto flex flex-col items-center py-4 bg-muted/50"
       >
         <Document
           file={blobUrl}
@@ -235,23 +235,23 @@ export function PdfViewer({ file }: PdfViewerProps) {
 
       {/* Pagination bar */}
       {numPages > 1 && (
-        <div className="flex-shrink-0 flex items-center justify-center gap-3 py-2 border-t border-gray-100 bg-white">
+        <div className="flex-shrink-0 flex items-center justify-center gap-3 py-2 border-t border-border bg-background">
           <button
             onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
             disabled={pageNumber <= 1}
             title="Previous page (← ↑)"
-            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <span className="text-xs text-gray-500 select-none tabular-nums">
+          <span className="text-xs text-muted-foreground select-none tabular-nums">
             Page {pageNumber} of {numPages}
           </span>
           <button
             onClick={() => setPageNumber((p) => Math.min(numPages, p + 1))}
             disabled={pageNumber >= numPages}
             title="Next page (→ ↓)"
-            className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
