@@ -35,6 +35,7 @@ import "@blocknote/xl-ai/style.css";
 import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-transport";
 import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
 import { DOIInputDialog } from "./DOIInputDialog";
+import { FindReplacePanel } from "./FindReplacePanel";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -100,6 +101,8 @@ export function EditorArea({
   const [doiDialogOpen, setDoiDialogOpen] = useState(false);
   const [doiLoading, setDoiLoading] = useState(false);
   const [doiError, setDoiError] = useState<string | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findShowReplace, setFindShowReplace] = useState(false);
 
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
@@ -338,7 +341,20 @@ export function EditorArea({
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-background">
+    <div
+      className="flex-1 flex flex-col overflow-hidden bg-background relative"
+      onKeyDown={(e) => {
+        if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "f") {
+          e.preventDefault();
+          setFindOpen(true);
+          setFindShowReplace(false);
+        } else if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "h") {
+          e.preventDefault();
+          setFindOpen(true);
+          setFindShowReplace(true);
+        }
+      }}
+    >
       <div className="px-6 py-2 border-b border-border text-sm text-muted-foreground font-medium">
         {project.name}{documentFilename ? ` / ${documentFilename.replace(".scholarpen.json", "")}` : ""}
       </div>
@@ -458,6 +474,14 @@ export function EditorArea({
           </BlockNoteView>
         </div>
       </div>
+
+      {/* Find / Replace panel — absolutely positioned in top-right of editor */}
+      <FindReplacePanel
+        editor={editor}
+        isOpen={findOpen}
+        onClose={() => setFindOpen(false)}
+        showReplaceInitially={findShowReplace}
+      />
 
       {/* DOI input dialog */}
       <DOIInputDialog
