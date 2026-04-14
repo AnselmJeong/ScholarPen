@@ -93,6 +93,7 @@ export function EditorArea({
     ],
   });
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveStatusRef = useRef<SaveStatus>("saved");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
@@ -136,7 +137,7 @@ export function EditorArea({
       .catch(() => setCitekeys([]));
   }, [project?.path]);
 
-  // Load document when project or document changes
+  // Load document when project or file switches
   useEffect(() => {
     if (!project) return;
     const filename = documentFilename || "manuscript.scholarpen.json";
@@ -144,14 +145,46 @@ export function EditorArea({
       .loadDocument(project.path, filename)
       .then((content) => {
         if (Array.isArray(content) && content.length > 0) {
-          editor.replaceBlocks(
-            editor.document,
-            content as Parameters<typeof editor.replaceBlocks>[1]
-          );
+          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
+            editor.replaceBlocks(
+              editor.document,
+              content as Parameters<typeof editor.replaceBlocks>[1]
+            );
+          }
         }
       })
       .catch(console.error);
-  }, [project?.path, documentFilename, reloadTrigger]);
+  }, [project?.path, documentFilename]);
+
+  // Refs so the reload effect can read current project/filename without re-running on their changes
+  const projectRef = useRef(project);
+  const documentFilenameRef = useRef(documentFilename);
+  useEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => { documentFilenameRef.current = documentFilename; }, [documentFilename]);
+
+  // Reload from external file change — but only when the editor has no unsaved changes,
+  // to prevent cursor being jumped to the end while the user is actively typing.
+  useEffect(() => {
+    if (reloadTrigger === 0) return; // skip initial mount
+    const p = projectRef.current;
+    if (!p) return;
+    if (saveStatusRef.current !== "saved") return;
+    const filename = documentFilenameRef.current || "manuscript.scholarpen.json";
+    rpc
+      .loadDocument(p.path, filename)
+      .then((content) => {
+        if (Array.isArray(content) && content.length > 0) {
+          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
+            editor.replaceBlocks(
+              editor.document,
+              content as Parameters<typeof editor.replaceBlocks>[1]
+            );
+          }
+        }
+      })
+      .catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadTrigger]);
 
   const countWords = useCallback(() => {
     const text = editor.document.map((b) => extractText(b.content)).join(" ");
@@ -160,6 +193,7 @@ export function EditorArea({
   }, [editor, onWordCountChange]);
 
   const updateSaveStatus = useCallback((status: SaveStatus) => {
+    saveStatusRef.current = status;
     setSaveStatus(status);
     onSaveStatusChange(status);
   }, [onSaveStatusChange]);
@@ -274,7 +308,7 @@ export function EditorArea({
           console.error("Auto-save failed:", err);
           updateSaveStatus("unsaved");
         });
-    }, 2000);
+    }, 5 * 60 * 1000); // 5 minutes
   }, [editor, project, documentFilename, countWords, updateSaveStatus]);
 
   // Build slash menu items once; only rebuild when editor, AI, or citekeys change.

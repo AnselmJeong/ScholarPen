@@ -165,14 +165,14 @@ async function main() {
 
         // ── Document CRUD ─────────────────────────────────
         saveDocument: async ({ projectPath, filename, content }) => {
-          // Suppress file watcher for 1s to avoid reload loop from our own save
+          // Suppress file watcher for 3s to avoid reload loop from our own save
           const rel = `documents/${filename}`;
           recentlySavedFiles.add(rel);
           recentlySavedFiles.add(filename);
           setTimeout(() => {
             recentlySavedFiles.delete(rel);
             recentlySavedFiles.delete(filename);
-          }, 1000);
+          }, 3000);
           return fileSystem.saveDocument(projectPath, filename, content);
         },
 
@@ -189,8 +189,12 @@ async function main() {
         loadManuscript: ({ projectPath }) =>
           fileSystem.loadManuscript(projectPath),
 
-        saveBibtex: ({ projectPath, bibtex }) =>
-          fileSystem.saveBibtex(projectPath, bibtex),
+        saveBibtex: async ({ projectPath, bibtex }) => {
+          // Suppress file watcher to avoid triggering a document reload
+          recentlySavedFiles.add("references.bib");
+          setTimeout(() => recentlySavedFiles.delete("references.bib"), 3000);
+          return fileSystem.saveBibtex(projectPath, bibtex);
+        },
 
         loadBibtex: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
 
