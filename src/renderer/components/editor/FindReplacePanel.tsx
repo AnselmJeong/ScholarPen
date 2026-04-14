@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { TextSelection } from "prosemirror-state";
+import { Decoration, DecorationSet } from "prosemirror-view";
 import type { Node as PMNode } from "prosemirror-model";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { X, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 
-// ── Types ───────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface Match {
   from: number;
@@ -15,11 +16,10 @@ interface FindReplacePanelProps {
   editor: BlockNoteEditor<any, any, any>;
   isOpen: boolean;
   onClose: () => void;
-  /** When true, the Replace row is visible on open */
   showReplaceInitially?: boolean;
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function findAllMatches(doc: PMNode, term: string): Match[] {
   if (!term) return [];
@@ -37,7 +37,7 @@ function findAllMatches(doc: PMNode, term: string): Match[] {
   return results;
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export function FindReplacePanel({
   editor,
@@ -51,9 +51,52 @@ export function FindReplacePanel({
   const [matches, setMatches] = useState<Match[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
 
+  // Refs so the decorations closure always has fresh values
+  const matchesRef = useRef<Match[]>([]);
+  const currentIdxRef = useRef(0);
+  matchesRef.current = matches;
+  currentIdxRef.current = currentIdx;
+
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // Focus search input and reset state when panel opens/closes
+  const getView = useCallback(() => (editor as any).prosemirrorView as any, [editor]);
+
+  // ── Decorations ────────────────────────────────────────────────────────────
+  // Apply yellow highlight for all matches + orange for the current one.
+  // Uses view.setProps({ decorations }) so we never call replaceBlocks
+  // and never cause a cursor jump.
+
+  const applyDecorations = useCallback((list: Match[], idx: number) => {
+    const view = getView();
+    if (!view) return;
+    view.setProps({
+      decorations: (state: any) => {
+        const decos = list.flatMap((m, i) => {
+          // Skip stale positions that fall outside the current document
+          if (m.from < 0 || m.to > state.doc.content.size) return [];
+          const isCurrent = i === idx;
+          return [
+            Decoration.inline(m.from, m.to, {
+              style: isCurrent
+                ? "background:rgba(251,146,60,0.55);border-radius:2px;outline:1.5px solid rgba(251,146,60,0.8);"
+                : "background:rgba(253,224,71,0.45);border-radius:2px;",
+            }),
+          ];
+        });
+        return DecorationSet.create(state.doc, decos);
+      },
+    });
+  }, [getView]);
+
+  const clearDecorations = useCallback(() => {
+    const view = getView();
+    if (!view) return;
+    view.setProps({ decorations: undefined });
+  }, [getView]);
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  // Focus input when panel opens; reset everything on close.
   useEffect(() => {
     if (isOpen) {
       setShowReplace(showReplaceInitially);
@@ -63,7 +106,7 @@ export function FindReplacePanel({
       }, 30);
       return () => clearTimeout(t);
     } else {
-      // Clear on close so next open starts fresh
+      clearDecorations();
       setSearchTerm("");
       setReplaceTerm("");
       setMatches([]);
@@ -71,23 +114,27 @@ export function FindReplacePanel({
     }
   }, [isOpen]);
 
-  const getView = () => (editor as any).prosemirrorView as any;
+  // Cleanup decorations if the component ever unmounts
+  useEffect(() => () => clearDecorations(), []);
 
-  // ── Highlight a specific match by selecting it in ProseMirror ──────────────
+  // ── Navigate to a match ────────────────────────────────────────────────────
+  // Move the cursor (NOT a text selection) to the match start and scroll to it.
+  // Collapsed cursor means BlockNote's FormattingToolbar will NOT appear.
 
-  const highlightMatch = (idx: number, list: Match[]) => {
+  const goToMatch = useCallback((idx: number, list: Match[]) => {
     if (list.length === 0) return;
     const view = getView();
     if (!view) return;
-    const { from, to } = list[idx];
+    const { from } = list[idx];
     const tr = view.state.tr
-      .setSelection(TextSelection.create(view.state.doc, from, to))
+      .setSelection(TextSelection.create(view.state.doc, from))
       .scrollIntoView();
     view.dispatch(tr);
-    // Don't call view.focus() here — it would steal focus from the panel's inputs
-  };
+    applyDecorations(list, idx);
+    // Don't steal focus from the panel's search input
+  }, [getView, applyDecorations]);
 
-  // ── Recalculate matches whenever searchTerm changes ──────────────────────
+  // ── Recalculate matches on searchTerm change ───────────────────────────────
 
   useEffect(() => {
     if (!isOpen) return;
@@ -96,28 +143,32 @@ export function FindReplacePanel({
     const found = findAllMatches(view.state.doc, searchTerm);
     setMatches(found);
     setCurrentIdx(0);
-    if (found.length > 0) highlightMatch(0, found);
+    if (found.length > 0) {
+      goToMatch(0, found);
+    } else {
+      clearDecorations();
+    }
   }, [searchTerm, isOpen]);
 
   // ── Navigation ────────────────────────────────────────────────────────────
 
-  const goNext = () => {
+  const goNext = useCallback(() => {
     if (matches.length === 0) return;
     const next = (currentIdx + 1) % matches.length;
     setCurrentIdx(next);
-    highlightMatch(next, matches);
-  };
+    goToMatch(next, matches);
+  }, [currentIdx, matches, goToMatch]);
 
-  const goPrev = () => {
+  const goPrev = useCallback(() => {
     if (matches.length === 0) return;
     const prev = (currentIdx - 1 + matches.length) % matches.length;
     setCurrentIdx(prev);
-    highlightMatch(prev, matches);
-  };
+    goToMatch(prev, matches);
+  }, [currentIdx, matches, goToMatch]);
 
   // ── Replace ───────────────────────────────────────────────────────────────
 
-  const replaceCurrent = () => {
+  const replaceCurrent = useCallback(() => {
     if (matches.length === 0) return;
     const view = getView();
     if (!view) return;
@@ -129,18 +180,19 @@ export function FindReplacePanel({
     view.dispatch(tr);
     // Recalculate after mutation
     const found = findAllMatches(view.state.doc, searchTerm);
+    const next = Math.max(0, Math.min(currentIdx, found.length - 1));
     setMatches(found);
-    const next = Math.min(currentIdx, found.length - 1);
-    setCurrentIdx(next < 0 ? 0 : next);
-    if (found.length > 0) highlightMatch(next < 0 ? 0 : next, found);
-  };
+    setCurrentIdx(next);
+    if (found.length > 0) goToMatch(next, found);
+    else clearDecorations();
+  }, [matches, currentIdx, replaceTerm, searchTerm, getView, goToMatch, clearDecorations]);
 
-  const replaceAll = () => {
+  const replaceAll = useCallback(() => {
     if (matches.length === 0) return;
     const view = getView();
     if (!view) return;
     const { state } = view;
-    // Apply from last → first to avoid position shifts invalidating earlier positions
+    // Apply last → first to preserve earlier positions
     let tr = state.tr;
     for (let i = matches.length - 1; i >= 0; i--) {
       const { from, to } = matches[i];
@@ -153,12 +205,13 @@ export function FindReplacePanel({
     view.dispatch(tr);
     setMatches([]);
     setCurrentIdx(0);
-  };
+    clearDecorations();
+  }, [matches, replaceTerm, getView, clearDecorations]);
 
   // ── Keyboard ─────────────────────────────────────────────────────────────
+  // Stop all key events so nothing leaks through to BlockNote.
 
-  const handlePanelKeyDown = (e: React.KeyboardEvent) => {
-    // Block ALL key events from reaching BlockNote below
+  const handlePanelKeyDown = useCallback((e: React.KeyboardEvent) => {
     e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
@@ -168,11 +221,11 @@ export function FindReplacePanel({
       e.preventDefault();
       e.shiftKey ? goPrev() : goNext();
     }
-  };
+  }, [onClose, getView, goNext, goPrev]);
 
   if (!isOpen) return null;
 
-  const hasNoMatches = searchTerm.length > 0 && matches.length === 0;
+  const noMatches = searchTerm.length > 0 && matches.length === 0;
 
   return (
     <div
@@ -193,7 +246,7 @@ export function FindReplacePanel({
       }}
       onKeyDown={handlePanelKeyDown}
     >
-      {/* ── Header ──────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={headerLabelStyle}>
           {showReplace ? "Find & Replace" : "Find"}
@@ -207,7 +260,11 @@ export function FindReplacePanel({
             <ChevronsUpDown size={12} />
           </button>
           <button
-            onMouseDown={(e) => { e.preventDefault(); onClose(); getView()?.focus(); }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onClose();
+              getView()?.focus();
+            }}
             title="Close (Esc)"
             style={iconBtnStyle}
           >
@@ -216,7 +273,7 @@ export function FindReplacePanel({
         </div>
       </div>
 
-      {/* ── Search row ──────────────────────────────────────────────── */}
+      {/* ── Search row ──────────────────────────────────────────── */}
       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
         <input
           ref={searchRef}
@@ -225,7 +282,9 @@ export function FindReplacePanel({
           placeholder="Find…"
           style={{
             ...inputStyle,
-            borderColor: hasNoMatches ? "hsl(var(--destructive))" : "hsl(var(--border))",
+            borderColor: noMatches
+              ? "hsl(var(--destructive))"
+              : "hsl(var(--border))",
           }}
           spellCheck={false}
         />
@@ -254,7 +313,7 @@ export function FindReplacePanel({
         </button>
       </div>
 
-      {/* ── Replace row ─────────────────────────────────────────────── */}
+      {/* ── Replace row ─────────────────────────────────────────── */}
       {showReplace && (
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           <input
@@ -286,7 +345,7 @@ export function FindReplacePanel({
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const headerLabelStyle: React.CSSProperties = {
   fontSize: 10,
