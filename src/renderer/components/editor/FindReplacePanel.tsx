@@ -59,7 +59,16 @@ export function FindReplacePanel({
 
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const getView = useCallback(() => (editor as any).prosemirrorView as any, [editor]);
+  // Safe view accessor — returns null if editor/view is not yet mounted or already destroyed
+  const getView = useCallback(() => {
+    try {
+      const view = (editor as any).prosemirrorView;
+      if (!view || typeof view.setProps !== "function" || !view.docView) return null;
+      return view;
+    } catch {
+      return null;
+    }
+  }, [editor]);
 
   // ── Decorations ────────────────────────────────────────────────────────────
   // Apply yellow highlight for all matches + orange for the current one.
@@ -69,29 +78,32 @@ export function FindReplacePanel({
   const applyDecorations = useCallback((list: Match[], idx: number) => {
     const view = getView();
     if (!view) return;
-    view.setProps({
-      decorations: (state: any) => {
-        const decos = list.flatMap((m, i) => {
-          // Skip stale positions that fall outside the current document
-          if (m.from < 0 || m.to > state.doc.content.size) return [];
-          const isCurrent = i === idx;
-          return [
-            Decoration.inline(m.from, m.to, {
-              style: isCurrent
-                ? "background:rgba(251,146,60,0.55);border-radius:2px;outline:1.5px solid rgba(251,146,60,0.8);"
-                : "background:rgba(253,224,71,0.45);border-radius:2px;",
-            }),
-          ];
-        });
-        return DecorationSet.create(state.doc, decos);
-      },
-    });
+    try {
+      view.setProps({
+        decorations: (state: any) => {
+          const decos = list.flatMap((m, i) => {
+            if (m.from < 0 || m.to > state.doc.content.size) return [];
+            const isCurrent = i === idx;
+            return [
+              Decoration.inline(m.from, m.to, {
+                style: isCurrent
+                  ? "background:rgba(251,146,60,0.55);border-radius:2px;outline:1.5px solid rgba(251,146,60,0.8);"
+                  : "background:rgba(253,224,71,0.45);border-radius:2px;",
+              }),
+            ];
+          });
+          return DecorationSet.create(state.doc, decos);
+        },
+      });
+    } catch { /* view may have unmounted between check and call */ }
   }, [getView]);
 
   const clearDecorations = useCallback(() => {
     const view = getView();
     if (!view) return;
-    view.setProps({ decorations: undefined });
+    try {
+      view.setProps({ decorations: undefined });
+    } catch { /* view may have unmounted */ }
   }, [getView]);
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -125,13 +137,14 @@ export function FindReplacePanel({
     if (list.length === 0) return;
     const view = getView();
     if (!view) return;
-    const { from } = list[idx];
-    const tr = view.state.tr
-      .setSelection(TextSelection.create(view.state.doc, from))
-      .scrollIntoView();
-    view.dispatch(tr);
-    applyDecorations(list, idx);
-    // Don't steal focus from the panel's search input
+    try {
+      const { from } = list[idx];
+      const tr = view.state.tr
+        .setSelection(TextSelection.create(view.state.doc, from))
+        .scrollIntoView();
+      view.dispatch(tr);
+      applyDecorations(list, idx);
+    } catch { /* editor may have unmounted during navigation */ }
   }, [getView, applyDecorations]);
 
   // ── Recalculate matches on searchTerm change ───────────────────────────────
@@ -172,40 +185,42 @@ export function FindReplacePanel({
     if (matches.length === 0) return;
     const view = getView();
     if (!view) return;
-    const { from, to } = matches[currentIdx];
-    const { state } = view;
-    const tr = replaceTerm
-      ? state.tr.replaceWith(from, to, state.schema.text(replaceTerm))
-      : state.tr.delete(from, to);
-    view.dispatch(tr);
-    // Recalculate after mutation
-    const found = findAllMatches(view.state.doc, searchTerm);
-    const next = Math.max(0, Math.min(currentIdx, found.length - 1));
-    setMatches(found);
-    setCurrentIdx(next);
-    if (found.length > 0) goToMatch(next, found);
-    else clearDecorations();
+    try {
+      const { from, to } = matches[currentIdx];
+      const { state } = view;
+      const tr = replaceTerm
+        ? state.tr.replaceWith(from, to, state.schema.text(replaceTerm))
+        : state.tr.delete(from, to);
+      view.dispatch(tr);
+      const found = findAllMatches(view.state.doc, searchTerm);
+      const next = Math.max(0, Math.min(currentIdx, found.length - 1));
+      setMatches(found);
+      setCurrentIdx(next);
+      if (found.length > 0) goToMatch(next, found);
+      else clearDecorations();
+    } catch { /* editor may have unmounted */ }
   }, [matches, currentIdx, replaceTerm, searchTerm, getView, goToMatch, clearDecorations]);
 
   const replaceAll = useCallback(() => {
     if (matches.length === 0) return;
     const view = getView();
     if (!view) return;
-    const { state } = view;
-    // Apply last → first to preserve earlier positions
-    let tr = state.tr;
-    for (let i = matches.length - 1; i >= 0; i--) {
-      const { from, to } = matches[i];
-      if (replaceTerm) {
-        tr = tr.replaceWith(from, to, state.schema.text(replaceTerm));
-      } else {
-        tr = tr.delete(from, to);
+    try {
+      const { state } = view;
+      let tr = state.tr;
+      for (let i = matches.length - 1; i >= 0; i--) {
+        const { from, to } = matches[i];
+        if (replaceTerm) {
+          tr = tr.replaceWith(from, to, state.schema.text(replaceTerm));
+        } else {
+          tr = tr.delete(from, to);
+        }
       }
-    }
-    view.dispatch(tr);
-    setMatches([]);
-    setCurrentIdx(0);
-    clearDecorations();
+      view.dispatch(tr);
+      setMatches([]);
+      setCurrentIdx(0);
+      clearDecorations();
+    } catch { /* editor may have unmounted */ }
   }, [matches, replaceTerm, getView, clearDecorations]);
 
   // ── Keyboard ─────────────────────────────────────────────────────────────
