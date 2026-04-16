@@ -41,10 +41,11 @@ function RailIcon({ icon, active, onClick, title }: RailIconProps) {
 export function IconRail({ activeTab, onTabChange, onOpenSettings }: IconRailProps) {
   return (
     <div
-      className="flex-shrink-0 flex flex-col items-center py-4 gap-2"
+      className="flex-shrink-0 flex flex-col items-center gap-2"
       style={{
         width: 56,
         background: "hsl(var(--sidebar))",
+        paddingTop: "1.125rem",  /* aligns with PROJECT label in sidebar (pt-4 + label height) */
       }}
     >
       {/* Top nav icons */}

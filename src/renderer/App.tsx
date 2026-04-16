@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { PenLine } from "lucide-react";
+import { PenLine, Plus } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
 import { LeftSidebar, type SidebarTab } from "./components/sidebar/LeftSidebar";
 import { IconRail } from "./components/sidebar/IconRail";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
@@ -37,6 +39,8 @@ export function App() {
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
+  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel">>({
     aiBackend: "ollama",
     claudeModel: "claude-sonnet-4-6",
@@ -399,8 +403,56 @@ export function App() {
           </div>
           <span className="text-sm font-bold tracking-tight" style={{ color: "#1e1b4b" }}>ScholarPen</span>
         </div>
-        <div className="flex items-center gap-1" />
+        {/* Right: New Project button */}
+        <button
+          onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
+          className="flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
+          style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)", boxShadow: "0 4px 12px rgba(91,33,182,0.3)" }}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Project
+        </button>
       </header>
+
+      {/* New Project Dialog */}
+      <Dialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>New Project</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              placeholder="Project name..."
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newProjectName.trim()) {
+                  handleCreateProject(newProjectName.trim());
+                  setNewProjectDialogOpen(false);
+                }
+                if (e.key === "Escape") setNewProjectDialogOpen(false);
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <button
+              onClick={() => setNewProjectDialogOpen(false)}
+              className="px-3 py-1.5 text-xs rounded-md border border-border text-muted-foreground hover:bg-accent"
+            >Cancel</button>
+            <button
+              onClick={() => {
+                if (newProjectName.trim()) {
+                  handleCreateProject(newProjectName.trim());
+                  setNewProjectDialogOpen(false);
+                }
+              }}
+              className="px-3 py-1.5 text-xs rounded-md text-white font-medium"
+              style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}
+            >Create</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 3-pane layout */}
       <div className="flex flex-1 overflow-hidden">

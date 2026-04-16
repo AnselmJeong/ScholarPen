@@ -463,17 +463,6 @@ export function FileExplorer({
           </DropdownMenu>
         </div>
 
-        {/* New Project button — gradient CTA */}
-        <div className="px-3 pb-3 mt-2">
-          <button
-            onClick={() => setNewProjectDialogOpen(true)}
-            className="w-full flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
-            style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)", boxShadow: "0 4px 12px rgba(91,33,182,0.3)" }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New Project
-          </button>
-        </div>
 
         {/* Explorer section */}
         <div className="flex flex-col flex-1 min-h-0 pt-1">
