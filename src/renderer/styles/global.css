@@ -118,6 +118,16 @@ body {
   --sidebar-accent:        263  40% 20%;
   --sidebar-accent-foreground: 263 70% 80%;
   --sidebar-border:        244  20% 18%;
+
+  /* Scholar tokens — dark mode overrides */
+  --scholar-bg:            #0d0b1a;
+  --scholar-sidebar:       #0f0d1f;
+  --scholar-border:        rgba(139, 92, 246, 0.15);
+  --scholar-text:          #e2e0f0;
+  --scholar-muted:         #9090b0;
+  --scholar-accent:        #a78bfa;
+  --scholar-surface-high:  #1e1a3a;
+  --scholar-shadow:        0 10px 30px -10px rgba(0, 0, 0, 0.40);
 }
 
 /* ── BlockNote editor overrides ─────────────────────────────────── */
@@ -132,11 +142,17 @@ body {
   background: #ffffff;
 }
 
+/* Dark mode: .dark on <html> (app) + [data-color-scheme] (BlockNote internal) */
+.dark .bn-editor,
+.dark .bn-container,
+.dark .bn-editor .bn-block-group,
+.dark .ProseMirror,
 [data-color-scheme="dark"] .bn-editor,
 [data-color-scheme="dark"] .bn-container,
 [data-color-scheme="dark"] .bn-editor .bn-block-group,
 [data-color-scheme="dark"] .ProseMirror {
   background: hsl(var(--background)) !important;
+  color: hsl(240 20% 88%) !important;
 }
 
 /* ── Editor typography — scholarly serif body text ──────────────── */
@@ -145,11 +161,21 @@ body {
 .bn-editor li,
 .bn-editor td,
 .bn-editor th {
-  /* macOS: Iowan Old Style or New York; fallback: Georgia */
-  font-family: "Iowan Old Style", "New York", Georgia, "Times New Roman", serif;
+  /* Korean-first serif: Nanum Myeongjo → AppleMyungjo → Latin fallback */
+  font-family: "Nanum Myeongjo", "AppleMyungjo",
+               "Iowan Old Style", "New York", Georgia, "Times New Roman", serif;
   font-size: 16px;
   line-height: 1.8;
   color: #1e1b4b;
+  word-break: keep-all;
+}
+
+.dark .bn-editor .bn-block-content,
+.dark .bn-editor p,
+.dark .bn-editor li,
+.dark .bn-editor td,
+.dark .bn-editor th {
+  color: hsl(240 20% 88%);
 }
 
 /* Headings: system-ui for structural clarity */
@@ -159,6 +185,12 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
   color: #1e1b4b;
   letter-spacing: -0.01em;
+}
+
+.dark .bn-editor h1,
+.dark .bn-editor h2,
+.dark .bn-editor h3 {
+  color: hsl(240 20% 92%);
 }
 
 .bn-editor h1 { font-size: 2em;   line-height: 1.2;  font-weight: 700; }

@@ -13,6 +13,9 @@ import {
   NestBlockButton,
   UnnestBlockButton,
   CreateLinkButton,
+  DragHandleMenu,
+  RemoveBlockItem,
+  BlockColorsItem,
 } from "@blocknote/react";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -331,8 +334,8 @@ export function EditorArea({
 
   if (!project) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#ffffff" }}>
-        <div className="text-center" style={{ color: "#7b7e94" }}>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "hsl(var(--background))" }}>
+        <div className="text-center" style={{ color: "var(--scholar-muted)" }}>
           <p className="text-lg mb-2" style={{ fontFamily: "Newsreader, Georgia, serif" }}>No project open</p>
           <p className="text-sm">Create or open a project from the sidebar</p>
         </div>
@@ -342,7 +345,7 @@ export function EditorArea({
 
   return (
     <div
-      className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "#ffffff" }}
+      className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "hsl(var(--background))" }}
       onKeyDown={(e) => {
         if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "f") {
           e.preventDefault();
@@ -356,16 +359,16 @@ export function EditorArea({
       }}
     >
       {/* Breadcrumb */}
-      <div className="px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "#6d6d8e", background: "#ffffff" }}>
-        <span className="font-medium" style={{ color: "#1e1b4b" }}>{project.name}</span>
+      <div className="px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "var(--scholar-muted)", background: "hsl(var(--background))" }}>
+        <span className="font-medium" style={{ color: "var(--scholar-text)" }}>{project.name}</span>
         {documentFilename && (
           <>
-            <span style={{ color: "#b0aec8" }}>/</span>
+            <span style={{ color: "var(--scholar-muted)" }}>/</span>
             <span>{documentFilename.replace(".scholarpen.json", "")}</span>
           </>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto" style={{ background: "#ffffff", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}>
+      <div className="flex-1 overflow-y-auto" style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}>
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
         <div style={{ maxWidth: "800px", margin: "0 auto" }}>
           <BlockNoteView
@@ -374,6 +377,13 @@ export function EditorArea({
             theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
+            dragHandleMenu={(props) => (
+              <DragHandleMenu {...props}>
+                <BlockTypeSelect key="blockTypeSelect" />
+                <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
+                <BlockColorsItem {...props} />
+              </DragHandleMenu>
+            )}
           >
             <AIMenuController />
             <SuggestionMenuController
@@ -463,7 +473,6 @@ export function EditorArea({
                     </button>
                   )}
 
-                  <BlockTypeSelect key="blockTypeSelect" />
                   <BasicTextStyleButton basicTextStyle="bold" key="boldStyleButton" />
                   <BasicTextStyleButton basicTextStyle="italic" key="italicStyleButton" />
                   <BasicTextStyleButton basicTextStyle="underline" key="underlineStyleButton" />
