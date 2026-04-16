@@ -45,7 +45,7 @@ export function IconRail({ activeTab, onTabChange, onOpenSettings }: IconRailPro
       style={{
         width: 56,
         background: "hsl(var(--sidebar))",
-        paddingTop: "1.125rem",  /* aligns with PROJECT label in sidebar (pt-4 + label height) */
+        paddingTop: "92px",  /* skip project header → aligns first icon with EXPLORER label */
       }}
     >
       {/* Top nav icons */}
