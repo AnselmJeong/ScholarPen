@@ -219,15 +219,23 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
       onClick={() => onFileSelect(node)}
       onContextMenu={(e) => onContextMenu(e, node)}
       className={cn(
-        "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm transition-colors",
+        "flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
         isActive
-          ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-          : "text-foreground hover:bg-sidebar-accent/60"
+          ? "font-semibold"
+          : "hover:bg-sidebar-accent/50"
       )}
-      style={{ paddingLeft: `${depth * 12 + 8}px` }}
+      style={{
+        paddingLeft: `${depth * 12 + 10}px`,
+        ...(isActive ? {
+          background: "rgba(91,33,182,0.12)",
+          color: "#5b21b6",
+        } : {
+          color: "var(--scholar-text)",
+        })
+      }}
     >
       <FileIcon kind={node.kind} isDirectory={false} />
-      <span className="truncate text-xs">{name}</span>
+      <span className="truncate">{name}</span>
     </button>
   );
 }
@@ -404,19 +412,30 @@ export function FileExplorer({
 
   return (
     <TooltipProvider delayDuration={500}>
-      <div className="w-56 flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-full select-none">
-        {/* Project dropdown */}
-        <div className="px-2 pt-3 pb-2">
+      <div className="w-56 flex-shrink-0 bg-sidebar flex flex-col h-full select-none">
+        {/* Project header */}
+        <div className="px-3 pt-4 pb-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--scholar-muted)" }}>
+            Project
+          </p>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 hover:bg-sidebar-accent transition-colors text-left">
-                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/20 flex-shrink-0">
-                  <PenLine className="h-3.5 w-3.5 text-primary" />
+              <button className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-sidebar-accent transition-colors text-left" style={{ background: "rgba(139,92,246,0.08)" }}>
+                <div className="flex h-6 w-6 items-center justify-center rounded-md flex-shrink-0"
+                     style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}>
+                  <PenLine className="h-3.5 w-3.5 text-white" />
                 </div>
-                <span className="flex-1 truncate text-sm font-semibold text-foreground">
-                  {activeProject?.name ?? "No project"}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="block truncate text-xs font-semibold" style={{ color: "var(--scholar-text)" }}>
+                    {activeProject?.name ?? "No project"}
+                  </span>
+                  {activeProject && (
+                    <span className="block text-[10px] font-medium uppercase tracking-wide" style={{ color: "var(--scholar-muted)" }}>
+                      Active Manuscript
+                    </span>
+                  )}
+                </div>
+                <ChevronDown className="h-3 w-3 flex-shrink-0" style={{ color: "var(--scholar-muted)" }} />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-52">
@@ -444,24 +463,22 @@ export function FileExplorer({
           </DropdownMenu>
         </div>
 
-        {/* New Project button */}
-        <div className="px-2 pb-3">
-          <Button
-            size="sm"
-            className="w-full gap-1.5 text-xs h-7"
+        {/* New Project button — gradient CTA */}
+        <div className="px-3 pb-3 mt-2">
+          <button
             onClick={() => setNewProjectDialogOpen(true)}
+            className="w-full flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
+            style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)", boxShadow: "0 4px 12px rgba(91,33,182,0.3)" }}
           >
             <Plus className="h-3.5 w-3.5" />
-            NEW PROJECT
-          </Button>
+            New Project
+          </button>
         </div>
 
-        <Separator />
-
         {/* Explorer section */}
-        <div className="flex flex-col flex-1 min-h-0 pt-2">
+        <div className="flex flex-col flex-1 min-h-0 pt-1">
           <div className="px-3 pb-1.5 flex items-center justify-between">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "var(--scholar-muted)" }}>
               Explorer
             </p>
             {activeProject && (
@@ -519,38 +536,8 @@ export function FileExplorer({
           </ScrollArea>
         </div>
 
-        <Separator />
-
-        {/* Bottom nav */}
-        <div className="px-1 py-2 flex flex-col gap-0.5">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start gap-2 text-xs text-muted-foreground h-7"
-                onClick={onOpenSettings}
-              >
-                <Settings className="h-3.5 w-3.5" />
-                Settings
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">App Settings</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-full justify-start gap-2 text-xs text-muted-foreground h-7"
-              >
-                <HelpCircle className="h-3.5 w-3.5" />
-                Help
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Help & Documentation</TooltipContent>
-          </Tooltip>
-        </div>
+        {/* bottom padding */}
+        <div className="py-2" />
       </div>
 
       {/* Context Menu */}

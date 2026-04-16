@@ -331,9 +331,9 @@ export function EditorArea({
 
   if (!project) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background">
-        <div className="text-center text-muted-foreground">
-          <p className="text-lg mb-2">No project open</p>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "#ffffff" }}>
+        <div className="text-center" style={{ color: "#7b7e94" }}>
+          <p className="text-lg mb-2" style={{ fontFamily: "Newsreader, Georgia, serif" }}>No project open</p>
           <p className="text-sm">Create or open a project from the sidebar</p>
         </div>
       </div>
@@ -342,7 +342,7 @@ export function EditorArea({
 
   return (
     <div
-      className="flex-1 flex flex-col overflow-hidden bg-background relative"
+      className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "#ffffff" }}
       onKeyDown={(e) => {
         if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "f") {
           e.preventDefault();
@@ -355,11 +355,19 @@ export function EditorArea({
         }
       }}
     >
-      <div className="px-6 py-2 border-b border-border text-sm text-muted-foreground font-medium">
-        {project.name}{documentFilename ? ` / ${documentFilename.replace(".scholarpen.json", "")}` : ""}
+      {/* Breadcrumb */}
+      <div className="px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "#6d6d8e", background: "#ffffff" }}>
+        <span className="font-medium" style={{ color: "#1e1b4b" }}>{project.name}</span>
+        {documentFilename && (
+          <>
+            <span style={{ color: "#b0aec8" }}>/</span>
+            <span>{documentFilename.replace(".scholarpen.json", "")}</span>
+          </>
+        )}
       </div>
-      <div className="flex-1 overflow-y-auto px-8 py-6">
-        <div className="max-w-3xl mx-auto">
+      <div className="flex-1 overflow-y-auto" style={{ background: "#ffffff", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}>
+        {/* max-width 800px for optimal reading line length per DESIGN.md */}
+        <div style={{ maxWidth: "800px", margin: "0 auto" }}>
           <BlockNoteView
             editor={editor}
             onChange={handleChange}

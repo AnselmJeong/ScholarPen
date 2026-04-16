@@ -7,38 +7,68 @@
   30%            { transform: translateY(-5px); opacity: 1;   }
 }
 
+/* ── Design System: "The Digital Curator" ──────────────────────────
+ * Surface hierarchy (tonal layering — no hard borders):
+ *   Base (#f5f3ff)         → desk / background (stronger lavender)
+ *   surface-low (#ede9fe)  → sidebar / file explorer
+ *   surface-lowest (#fff)  → active document / editor
+ *   surface-high (#ddd6fe) → AI sidebar
+ * Primary: #5b21b6 (Violet-800) → darker, more authoritative indigo
+ * On-surface: #1e1b4b (near-black indigo for text)
+ * Fonts: system-ui (SF Pro / Segoe UI) for UI; Georgia/Iowan Old Style for editor
+ * ─────────────────────────────────────────────────────────────── */
+
 :root {
-  --background: 0 0% 100%;
-  --foreground: 224 15% 13%;
-  --card: 0 0% 100%;
-  --card-foreground: 224 15% 13%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 224 15% 13%;
-  --primary: 230 88% 65%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 95%;
-  --secondary-foreground: 220 9% 40%;
-  --muted: 220 14% 96%;
-  --muted-foreground: 220 9% 46%;
-  --accent: 230 88% 95%;
-  --accent-foreground: 230 70% 40%;
-  --destructive: 0 84% 60%;
+  /* Base surfaces — stronger lavender identity */
+  --background:            250  67% 97%;   /* #f5f3ff */
+  --foreground:            244  47% 20%;   /* #1e1b4b — on-surface */
+
+  --card:                  0   0%  100%;
+  --card-foreground:       244  47% 20%;
+  --popover:               0   0%  100%;
+  --popover-foreground:    244  47% 20%;
+
+  /* Primary: Violet #5b21b6 */
+  --primary:               263  80% 42%;
+  --primary-foreground:    0   0%  100%;
+
+  /* Sidebar: strong lavender surface */
+  --secondary:             252  80% 95%;   /* #ede9fe */
+  --secondary-foreground:  244  47% 20%;
+  --muted:                 252  60% 93%;
+  --muted-foreground:      244  20% 55%;
+
+  /* Accent */
+  --accent:                252  80% 95%;
+  --accent-foreground:     263  80% 42%;
+
+  /* Destructive */
+  --destructive:           0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 220 13% 90%;
-  --input: 220 13% 90%;
-  --ring: 230 88% 65%;
-  --radius: 0.375rem;
-  --sidebar: 224 20% 96%;
-  --sidebar-foreground: 224 15% 13%;
-  --sidebar-accent: 230 60% 94%;
-  --sidebar-accent-foreground: 230 70% 35%;
-  --sidebar-border: 220 13% 90%;
-  --scholar-bg: #f8f9fc;
-  --scholar-sidebar: #f2f4f9;
-  --scholar-border: #e4e7ee;
-  --scholar-text: #1a1d23;
-  --scholar-muted: #6b7280;
-  --scholar-accent: #4f6ef7;
+
+  /* Ghost borders only */
+  --border:                252  30% 88%;
+  --input:                 252  30% 82%;
+  --ring:                  263  80% 42%;
+
+  --radius: 0.5rem;
+
+  /* Sidebar: surface-low */
+  --sidebar:               252  80% 95%;   /* #ede9fe */
+  --sidebar-foreground:    244  47% 20%;
+  --sidebar-accent:        263  70% 90%;
+  --sidebar-accent-foreground: 263 80% 35%;
+  --sidebar-border:        252  40% 90%;
+
+  /* Scholar tokens */
+  --scholar-bg:            #f5f3ff;
+  --scholar-sidebar:       #ede9fe;
+  --scholar-border:        rgba(139, 92, 246, 0.12);
+  --scholar-text:          #1e1b4b;
+  --scholar-muted:         #6d6d8e;
+  --scholar-accent:        #5b21b6;
+  --scholar-surface-high:  #ddd6fe;
+  --scholar-shadow:        0 10px 30px -10px rgba(30, 27, 75, 0.10);
 }
 
 * {
@@ -55,53 +85,53 @@ body,
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* System sans-serif: SF Pro on macOS, Segoe UI on Windows */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   -webkit-font-smoothing: antialiased;
 }
 
-/* Dark mode variables */
+/* ── Dark mode ───────────────────────────────────────────────────── */
 .dark {
-  --background: 224 18% 9%;
-  --foreground: 220 14% 90%;
-  --card: 224 18% 11%;
-  --card-foreground: 220 14% 90%;
-  --popover: 224 18% 10%;
-  --popover-foreground: 220 14% 90%;
-  --primary: 230 88% 65%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 18%;
-  --secondary-foreground: 220 9% 70%;
-  --muted: 220 14% 15%;
-  --muted-foreground: 220 9% 55%;
-  --accent: 230 60% 20%;
-  --accent-foreground: 230 70% 75%;
-  --destructive: 0 72% 51%;
+  --background:            244  30%  9%;
+  --foreground:            240  20% 90%;
+  --card:                  244  30% 11%;
+  --card-foreground:       240  20% 90%;
+  --popover:               244  30% 10%;
+  --popover-foreground:    240  20% 90%;
+  --primary:               263  70% 65%;
+  --primary-foreground:    0   0%  100%;
+  --secondary:             244  25% 15%;
+  --secondary-foreground:  240  20% 80%;
+  --muted:                 244  25% 13%;
+  --muted-foreground:      240  10% 55%;
+  --accent:                263  40% 20%;
+  --accent-foreground:     263  70% 80%;
+  --destructive:           0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 220 13% 20%;
-  --input: 220 13% 20%;
-  --ring: 230 88% 65%;
-  --sidebar: 224 20% 7%;
-  --sidebar-foreground: 220 14% 85%;
-  --sidebar-accent: 230 60% 18%;
-  --sidebar-accent-foreground: 230 70% 75%;
-  --sidebar-border: 220 13% 18%;
+  --border:                244  20% 22%;
+  --input:                 244  20% 25%;
+  --ring:                  263  70% 65%;
+  --sidebar:               244  30%  7%;
+  --sidebar-foreground:    240  20% 85%;
+  --sidebar-accent:        263  40% 20%;
+  --sidebar-accent-foreground: 263 70% 80%;
+  --sidebar-border:        244  20% 18%;
 }
 
-/* BlockNote overrides */
+/* ── BlockNote editor overrides ─────────────────────────────────── */
 .bn-editor {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background: #ffffff;
+  color: #1e1b4b;
   min-height: 100%;
 }
 
 .bn-container {
   height: 100%;
-  background: hsl(var(--background));
+  background: #ffffff;
 }
 
-/* Dark theme: unify BlockNote background with surrounding area */
 [data-color-scheme="dark"] .bn-editor,
 [data-color-scheme="dark"] .bn-container,
 [data-color-scheme="dark"] .bn-editor .bn-block-group,
@@ -109,16 +139,28 @@ body {
   background: hsl(var(--background)) !important;
 }
 
-/* Editor typography — readable body text */
+/* ── Editor typography — scholarly serif body text ──────────────── */
 .bn-editor .bn-block-content,
 .bn-editor p,
 .bn-editor li,
 .bn-editor td,
 .bn-editor th {
-  font-size: 15px;
-  line-height: 1.65;
+  /* macOS: Iowan Old Style or New York; fallback: Georgia */
+  font-family: "Iowan Old Style", "New York", Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  line-height: 1.8;
+  color: #1e1b4b;
 }
 
-.bn-editor h1 { font-size: 1.9em; line-height: 1.3; }
-.bn-editor h2 { font-size: 1.5em; line-height: 1.35; }
-.bn-editor h3 { font-size: 1.25em; line-height: 1.4; }
+/* Headings: system-ui for structural clarity */
+.bn-editor h1,
+.bn-editor h2,
+.bn-editor h3 {
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #1e1b4b;
+  letter-spacing: -0.01em;
+}
+
+.bn-editor h1 { font-size: 2em;   line-height: 1.2;  font-weight: 700; }
+.bn-editor h2 { font-size: 1.5em; line-height: 1.3;  font-weight: 600; }
+.bn-editor h3 { font-size: 1.2em; line-height: 1.4;  font-weight: 600; }

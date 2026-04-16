@@ -7,6 +7,10 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ["Inter", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        serif: ["Newsreader", "Georgia", "Times New Roman", "serif"],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -49,10 +53,10 @@ export default {
           border: "hsl(var(--sidebar-border))",
         },
         scholar: {
-          50: "#f0f4ff",
+          50:  "#f0f4ff",
           100: "#e0e9ff",
-          500: "#4f6ef7",
-          600: "#3b55e6",
+          500: "#5148d7",
+          600: "#4439cb",
           900: "#1a2456",
         },
       },
@@ -60,6 +64,10 @@ export default {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        ambient: "0 10px 30px -10px rgba(46, 49, 69, 0.08)",
+        "ambient-lg": "0 20px 50px -15px rgba(46, 49, 69, 0.12)",
       },
     },
   },

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { PenLine } from "lucide-react";
-import { LeftSidebar } from "./components/sidebar/LeftSidebar";
+import { LeftSidebar, type SidebarTab } from "./components/sidebar/LeftSidebar";
+import { IconRail } from "./components/sidebar/IconRail";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { AISidebar } from "./components/sidebar/AISidebar";
 import { StatusBar } from "./components/editor/StatusBar";
@@ -35,6 +36,7 @@ export function App() {
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel">>({
     aiBackend: "ollama",
     claudeModel: "claude-sonnet-4-6",
@@ -389,12 +391,13 @@ export function App() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
       {/* Top Bar */}
-      <header className="flex items-center justify-between px-4 h-11 border-b border-border bg-background flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary">
-            <PenLine className="h-3.5 w-3.5 text-white" />
+      <header className="flex items-center justify-between px-5 h-12 flex-shrink-0" style={{ background: "hsl(var(--background))", boxShadow: "0 1px 0 rgba(91,33,182,0.08)" }}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg flex-shrink-0"
+               style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}>
+            <PenLine className="h-4 w-4 text-white" />
           </div>
-          <span className="text-sm font-semibold text-foreground tracking-tight">ScholarPen</span>
+          <span className="text-sm font-bold tracking-tight" style={{ color: "#1e1b4b" }}>ScholarPen</span>
         </div>
         <div className="flex items-center gap-1" />
       </header>
@@ -402,9 +405,17 @@ export function App() {
       {/* 3-pane layout */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Left: Sidebar (Files + Knowledge tabs) */}
+        {/* Icon Rail — leftmost narrow column */}
+        <IconRail
+          activeTab={sidebarTab}
+          onTabChange={setSidebarTab}
+          onOpenSettings={() => setCurrentView("settings")}
+        />
+
+        {/* Left: File/Knowledge panel */}
         <div style={{ width: leftSidebarWidth }} className="flex-shrink-0 h-full">
           <LeftSidebar
+            activeTab={sidebarTab}
             projects={projects}
             activeProject={activeProject}
             onProjectChange={handleProjectChange}
@@ -427,7 +438,7 @@ export function App() {
         </div>
         {/* Resize handle */}
         <div
-          className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors"
+          className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
           onMouseDown={handleLeftResizeMouseDown}
         />
 
@@ -459,7 +470,7 @@ export function App() {
                 </div>
                 {/* Resize handle */}
                 <div
-                  className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors"
+                  className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
                   onMouseDown={handleGraphResizeMouseDown}
                 />
               </>
@@ -486,7 +497,7 @@ export function App() {
         {aiSidebarOpen && (
           <>
             <div
-              className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors"
+              className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
               onMouseDown={handleAIResizeMouseDown}
             />
             <AISidebar

@@ -341,11 +341,11 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div
-      className="flex-shrink-0 border-l border-border bg-background flex flex-col h-full relative"
-      style={{ width: width ?? 576 }}
+      className="flex-shrink-0 flex flex-col h-full relative backdrop-blur-xl"
+      style={{ width: width ?? 576, background: "rgba(229, 231, 253, 0.85)", boxShadow: "-10px 0 30px -10px rgba(46, 49, 69, 0.08)" }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+      <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2">
           <Bot className="h-4 w-4 text-primary" />
           <div>
@@ -398,7 +398,7 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
 
       {/* Project context badge + KB toggle */}
       {project && (
-        <div className="px-3 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between gap-2">
+        <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ background: "rgba(229, 231, 253, 0.5)" }}>
           <p className="text-xs text-muted-foreground truncate">
             <span className="font-medium text-foreground/80">{project.name}</span>
           </p>
@@ -562,7 +562,7 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
       </ScrollArea>
 
       {/* Input area */}
-      <div className="border-t border-border p-3 space-y-2 relative">
+      <div className="p-3 space-y-2 relative" style={{ background: "rgba(229, 231, 253, 0.6)" }}>
         {/* Dropdown — positioned above input */}
         {dropdownMode && dropdownItems.length > 0 && (
           <div className="absolute bottom-full left-3 right-3 mb-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden z-50 max-h-64 overflow-y-auto">
@@ -599,7 +599,7 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
               ))}
 
             {/* Hint */}
-            <div className="px-3 py-1.5 border-t border-border bg-muted/30">
+            <div className="px-3 py-1.5" style={{ background: "rgba(229, 231, 253, 0.5)" }}>
               <p className="text-[11px] text-muted-foreground">
                 ↑↓ 탐색 · Enter/Tab 선택 · Esc 닫기
               </p>
