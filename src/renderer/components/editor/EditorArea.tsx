@@ -6,13 +6,19 @@ import {
   SuggestionMenuController,
   FormattingToolbar,
   FormattingToolbarController,
-  BlockTypeSelect,
   BasicTextStyleButton,
   TextAlignButton,
   ColorStyleButton,
   NestBlockButton,
   UnnestBlockButton,
   CreateLinkButton,
+  DragHandleMenu,
+  RemoveBlockItem,
+  BlockColorsItem,
+  useBlockNoteEditor,
+  useComponentsContext,
+  SideMenu,
+  SideMenuController,
 } from "@blocknote/react";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -58,6 +64,52 @@ interface EditorAreaProps {
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   reloadTrigger?: number;
+}
+
+/** Block type submenu for the drag handle popup */
+const BLOCK_TYPE_ITEMS = [
+  { type: "paragraph",       label: "Paragraph",       props: {} },
+  { type: "heading",         label: "Heading 1",        props: { level: 1 } },
+  { type: "heading",         label: "Heading 2",        props: { level: 2 } },
+  { type: "heading",         label: "Heading 3",        props: { level: 3 } },
+  { type: "bulletListItem",  label: "Bullet List",      props: {} },
+  { type: "numberedListItem",label: "Numbered List",    props: {} },
+  { type: "checkListItem",   label: "Check List",       props: {} },
+  { type: "quote",           label: "Quote",            props: {} },
+] as const;
+
+function BlockTypeDragItem() {
+  const editor = useBlockNoteEditor();
+  const components = useComponentsContext();
+  if (!components) return null;
+  return (
+    <components.Generic.Menu.Root position="right" sub={true}>
+      <components.Generic.Menu.Trigger sub={true}>
+        <components.Generic.Menu.Item className="bn-menu-item" subTrigger={true}>
+          Turn Into
+        </components.Generic.Menu.Item>
+      </components.Generic.Menu.Trigger>
+      <components.Generic.Menu.Dropdown sub={true} className="bn-menu-dropdown">
+        {BLOCK_TYPE_ITEMS.map(({ type, label, props: blockProps }) => (
+          <components.Generic.Menu.Item
+            key={label}
+            className="bn-menu-item"
+            onClick={() => {
+              // Read the hovered block from the side menu store at click time
+              const sideMenuExt = (editor as any).getExtension("sideMenu");
+              const block = sideMenuExt?.store?.state?.block
+                ?? editor.getTextCursorPosition().block;
+              editor.updateBlock(block, { type: type as any, props: blockProps as any });
+              editor.setTextCursorPosition(block.id, "end");
+              editor.focus();
+            }}
+          >
+            {label}
+          </components.Generic.Menu.Item>
+        ))}
+      </components.Generic.Menu.Dropdown>
+    </components.Generic.Menu.Root>
+  );
 }
 
 function extractText(content: unknown): string {
@@ -331,8 +383,8 @@ export function EditorArea({
 
   if (!project) {
     return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "#ffffff" }}>
-        <div className="text-center" style={{ color: "#7b7e94" }}>
+      <div className="flex-1 flex items-center justify-center" style={{ background: "hsl(var(--background))" }}>
+        <div className="text-center" style={{ color: "var(--scholar-muted)" }}>
           <p className="text-lg mb-2" style={{ fontFamily: "Newsreader, Georgia, serif" }}>No project open</p>
           <p className="text-sm">Create or open a project from the sidebar</p>
         </div>
@@ -342,7 +394,7 @@ export function EditorArea({
 
   return (
     <div
-      className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "#ffffff" }}
+      className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "hsl(var(--background))" }}
       onKeyDown={(e) => {
         if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "f") {
           e.preventDefault();
@@ -356,16 +408,16 @@ export function EditorArea({
       }}
     >
       {/* Breadcrumb */}
-      <div className="px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "#6d6d8e", background: "#ffffff" }}>
-        <span className="font-medium" style={{ color: "#1e1b4b" }}>{project.name}</span>
+      <div className="px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "var(--scholar-muted)", background: "hsl(var(--background))" }}>
+        <span className="font-medium" style={{ color: "var(--scholar-text)" }}>{project.name}</span>
         {documentFilename && (
           <>
-            <span style={{ color: "#b0aec8" }}>/</span>
+            <span style={{ color: "var(--scholar-muted)" }}>/</span>
             <span>{documentFilename.replace(".scholarpen.json", "")}</span>
           </>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto" style={{ background: "#ffffff", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}>
+      <div className="flex-1 overflow-y-auto" style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}>
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
         <div style={{ maxWidth: "800px", margin: "0 auto" }}>
           <BlockNoteView
@@ -374,7 +426,21 @@ export function EditorArea({
             theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
+            sideMenu={false}
           >
+            <SideMenuController
+              sideMenu={() => (
+                <SideMenu
+                  dragHandleMenu={(props) => (
+                    <DragHandleMenu {...props}>
+                      <BlockTypeDragItem />
+                      <BlockColorsItem {...props}>Colors</BlockColorsItem>
+                      <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
+                    </DragHandleMenu>
+                  )}
+                />
+              )}
+            />
             <AIMenuController />
             <SuggestionMenuController
               triggerCharacter="$"
@@ -463,7 +529,6 @@ export function EditorArea({
                     </button>
                   )}
 
-                  <BlockTypeSelect key="blockTypeSelect" />
                   <BasicTextStyleButton basicTextStyle="bold" key="boldStyleButton" />
                   <BasicTextStyleButton basicTextStyle="italic" key="italicStyleButton" />
                   <BasicTextStyleButton basicTextStyle="underline" key="underlineStyleButton" />
