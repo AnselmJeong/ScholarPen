@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/pr
 import { join, extname, basename, dirname } from "path";
 import { homedir } from "os";
 import type { ProjectInfo, ProjectFile, FileNode, FileNodeKind, AppSettings, AppSettingsUpdate } from "../../shared/rpc-types";
+import { deduplicateBibtex } from "../../shared/bibtex-utils";
 
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
@@ -438,7 +439,7 @@ class FileSystemManager {
   // ── BibTeX ──────────────────────────────────────────────────
 
   async saveBibtex(projectPath: string, bibtex: string): Promise<void> {
-    await writeFile(join(projectPath, "references.bib"), bibtex);
+    await writeFile(join(projectPath, "references.bib"), deduplicateBibtex(bibtex));
   }
 
   async loadBibtex(projectPath: string): Promise<string> {

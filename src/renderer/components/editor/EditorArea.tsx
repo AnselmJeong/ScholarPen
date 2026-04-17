@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { parseBibtexCitekeys, parseBibtexDOIMap } from "../../../shared/bibtex-utils";
 import { useIsDark } from "../../main";
 import {
   useCreateBlockNote,
@@ -47,13 +48,7 @@ type SaveStatus = "saved" | "saving" | "unsaved";
 
 // Extract @type{citekey, ...} keys from a BibTeX string
 function parseCitekeys(bibtex: string): string[] {
-  const keys: string[] = [];
-  const re = /@\w+\{([^,\s]+)\s*,/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(bibtex)) !== null) {
-    keys.push(m[1]);
-  }
-  return keys;
+  return parseBibtexCitekeys(bibtex);
 }
 
 interface EditorAreaProps {
@@ -283,9 +278,16 @@ export function EditorArea({
     try {
       const meta = await rpc.resolveDOI(doi);
 
-      // Only fetch and update bibtex if the key isn't already loaded
-      if (!citekeys.includes(meta.citekey)) {
-        const existing = await rpc.loadBibtex(project.path);
+      // Always read fresh from disk to avoid stale-state race conditions.
+      // Check by DOI first (catches same paper with different citekeys),
+      // then fall back to citekey check.
+      const existing = await rpc.loadBibtex(project.path);
+      const doiMap = parseBibtexDOIMap(existing ?? "");
+      const normalizedDOI = meta.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//i, "");
+      const existingCitekey = doiMap.get(normalizedDOI);
+      const effectiveCitekey = existingCitekey ?? meta.citekey;
+
+      if (!existingCitekey && !parseBibtexCitekeys(existing ?? "").includes(meta.citekey)) {
         const updated = existing ? `${existing.trimEnd()}\n\n${meta.bibtex}` : meta.bibtex;
         await rpc.saveBibtex(project.path, updated);
         setCitekeys((prev) =>
@@ -298,7 +300,7 @@ export function EditorArea({
       requestAnimationFrame(() => {
         editor.focus();
         editor.insertInlineContent([
-          { type: "citation", props: { citekey: meta.citekey, locator: "" } },
+          { type: "citation", props: { citekey: effectiveCitekey, locator: "" } },
         ]);
       });
     } catch (err) {

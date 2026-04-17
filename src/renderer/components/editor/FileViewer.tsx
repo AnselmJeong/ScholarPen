@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut } from "lucide-react";
+import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut, FilterX } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
 import { parseFrontmatter } from "../../utils/frontmatter";
@@ -9,6 +9,7 @@ import { FrontmatterCard } from "./FrontmatterCard";
 import { PdfViewer } from "./PdfViewer";
 import { TextFindPanel } from "./TextFindPanel";
 import { useTextFind } from "../../hooks/useTextFind";
+import { deduplicateBibtex, parseBibtexCitekeys } from "../../../shared/bibtex-utils";
 
 interface FileViewerProps {
   file: FileNode;
@@ -125,6 +126,7 @@ export function FileViewer({ file }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const find = useTextFind(contentRef, file.path);
@@ -136,7 +138,18 @@ export function FileViewer({ file }: FileViewerProps) {
   const fontSize = FONT_SIZES[fontSizeIdx];
   const zoomIn  = useCallback(() => setFontSizeIdx((i) => { const n = Math.min(i + 1, FONT_SIZES.length - 1); localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
   const zoomOut = useCallback(() => setFontSizeIdx((i) => { const n = Math.max(i - 1, 0);                    localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
-
+  const handleDedup = useCallback(async () => {
+    if (!content) return;
+    const before = parseBibtexCitekeys(content).length;
+    const deduped = deduplicateBibtex(content);
+    const after = parseBibtexCitekeys(deduped).length;
+    const removed = before - after;
+    const projectPath = file.path.substring(0, file.path.lastIndexOf("/"));
+    await rpc.saveBibtex(projectPath, deduped);
+    setContent(deduped);
+    setDedupMsg(removed > 0 ? `${removed}개 중복 항목 제거됨` : "중복 없음");
+    setTimeout(() => setDedupMsg(null), 3000);
+  }, [content, file.path]);
   // Cmd+F to open find panel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -247,6 +260,19 @@ export function FileViewer({ file }: FileViewerProps) {
         {getFileIcon(file.kind)}
         <span>{file.name}</span>
         {isBibtex && <span className="text-xs text-muted-foreground/60 ml-2">BibTeX</span>}
+        {isBibtex && (
+          <div className="ml-auto flex items-center gap-2">
+            {dedupMsg && <span className="text-xs text-emerald-500">{dedupMsg}</span>}
+            <button
+              onClick={handleDedup}
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+              title="citekey/DOI 중복 항목 제거"
+            >
+              <FilterX className="h-3.5 w-3.5" />
+              중복 제거
+            </button>
+          </div>
+        )}
         {isMarkdown && <span className="text-xs text-muted-foreground/60 ml-2">Markdown</span>}
         {isMarkdown && (
           <div className="ml-auto flex items-center gap-1">
