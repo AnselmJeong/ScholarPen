@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut } from "lucide-react";
@@ -7,6 +7,8 @@ import type { FileNode } from "../../../shared/rpc-types";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import { FrontmatterCard } from "./FrontmatterCard";
 import { PdfViewer } from "./PdfViewer";
+import { TextFindPanel } from "./TextFindPanel";
+import { useTextFind } from "../../hooks/useTextFind";
 
 interface FileViewerProps {
   file: FileNode;
@@ -123,6 +125,9 @@ export function FileViewer({ file }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const find = useTextFind(contentRef, file.path);
   const [fontSizeIdx, setFontSizeIdx] = useState<number>(() => {
     const saved = localStorage.getItem(FONT_SIZE_KEY);
     return saved ? Math.min(Math.max(Number(saved), 0), FONT_SIZES.length - 1) : 1;
@@ -131,6 +136,25 @@ export function FileViewer({ file }: FileViewerProps) {
   const fontSize = FONT_SIZES[fontSizeIdx];
   const zoomIn  = useCallback(() => setFontSizeIdx((i) => { const n = Math.min(i + 1, FONT_SIZES.length - 1); localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
   const zoomOut = useCallback(() => setFontSizeIdx((i) => { const n = Math.max(i - 1, 0);                    localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
+
+  // Cmd+F to open find panel
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Clear find state when file changes
+  useEffect(() => {
+    setFindOpen(false);
+    find.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file.path]);
 
   useEffect(() => {
     let cancelled = false;
@@ -206,7 +230,18 @@ export function FileViewer({ file }: FileViewerProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-background">
+    <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
+      {findOpen && (
+        <TextFindPanel
+          query={find.query}
+          onQueryChange={find.setQuery}
+          matchCount={find.matchCount}
+          currentIdx={find.currentIdx}
+          onNext={find.goNext}
+          onPrev={find.goPrev}
+          onClose={() => { setFindOpen(false); find.clear(); }}
+        />
+      )}
       {/* Header */}
       <div className="px-6 py-2 border-b border-border text-sm text-muted-foreground font-medium flex items-center gap-2">
         {getFileIcon(file.kind)}
@@ -237,7 +272,7 @@ export function FileViewer({ file }: FileViewerProps) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={contentRef} className="flex-1 overflow-y-auto">
         {isMarkdown && (
           <div className="max-w-3xl mx-auto px-8 py-6">
             {parsedFrontmatter && <FrontmatterCard frontmatter={parsedFrontmatter} />}

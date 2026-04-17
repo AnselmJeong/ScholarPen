@@ -131,15 +131,15 @@ body {
 }
 
 /* ── BlockNote editor overrides ─────────────────────────────────── */
+.bn-editor,
+.bn-container,
+.bn-editor .bn-block-group,
+.ProseMirror {
+  background: hsl(var(--background)) !important;
+}
 .bn-editor {
-  background: #ffffff;
   color: #1e1b4b;
   min-height: 100%;
-}
-
-.bn-container {
-  height: 100%;
-  background: #ffffff;
 }
 
 /* Dark mode: .dark on <html> (app) + [data-color-scheme] (BlockNote internal) */
@@ -196,3 +196,20 @@ body {
 .bn-editor h1 { font-size: 2em;   line-height: 1.2;  font-weight: 700; }
 .bn-editor h2 { font-size: 1.5em; line-height: 1.3;  font-weight: 600; }
 .bn-editor h3 { font-size: 1.2em; line-height: 1.4;  font-weight: 600; }
+
+/* ── Text-find highlights (DOM <mark> injection) ─────────────────── */
+mark[data-find] {
+  background-color: rgba(253, 224, 71, 0.55);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+}
+mark[data-find][data-current] {
+  background-color: rgba(251, 146, 60, 0.80);
+}
+.dark mark[data-find] {
+  background-color: rgba(253, 224, 71, 0.30);
+}
+.dark mark[data-find][data-current] {
+  background-color: rgba(251, 146, 60, 0.55);
+}
