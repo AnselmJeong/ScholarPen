@@ -426,7 +426,13 @@ export function EditorArea({
             theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
-            sideMenu={false}
+            dragHandleMenu={(props) => (
+              <DragHandleMenu {...props}>
+                <BlockTypeSelect key="blockTypeSelect" />
+                <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
+                <BlockColorsItem {...props} />
+              </DragHandleMenu>
+            )}
           >
             <SideMenuController
               sideMenu={() => (

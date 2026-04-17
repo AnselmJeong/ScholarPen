@@ -21,7 +21,7 @@ export const citationInline = createReactInlineContentSpec(
       const label = locator ? `${citekey}, ${locator}` : citekey;
       return (
         <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200 cursor-default select-none mx-0.5"
+          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:border-amber-700/50 cursor-default select-none mx-0.5"
           title={`Citation: ${citekey}`}
           data-citekey={citekey}
         >

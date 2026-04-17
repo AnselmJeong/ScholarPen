@@ -5,6 +5,8 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
+import { TextFindPanel } from "./TextFindPanel";
+import { useTextFind } from "../../hooks/useTextFind";
 
 // Worker MUST be configured in the same module as <Document> / <Page>
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -33,8 +35,12 @@ export function PdfViewer({ file }: PdfViewerProps) {
   const [zoom, setZoom] = useState(1.0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [baseWidth, setBaseWidth] = useState(600);
+  // refreshKey changes on page render to re-run find over the new text layer
+  const [textLayerKey, setTextLayerKey] = useState(0);
+  const find = useTextFind(containerRef, textLayerKey);
 
   // Load PDF binary via RPC → Blob URL
   useEffect(() => {
@@ -91,6 +97,12 @@ export function PdfViewer({ file }: PdfViewerProps) {
       const isEditable =
         tag === "input" || tag === "textarea" || (e.target as HTMLElement)?.isContentEditable;
       if (isEditable) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+        return;
+      }
 
       switch (e.key) {
         case "ArrowRight":
@@ -155,7 +167,18 @@ export function PdfViewer({ file }: PdfViewerProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden relative">
+      {findOpen && (
+        <TextFindPanel
+          query={find.query}
+          onQueryChange={find.setQuery}
+          matchCount={find.matchCount}
+          currentIdx={find.currentIdx}
+          onNext={find.goNext}
+          onPrev={find.goPrev}
+          onClose={() => { setFindOpen(false); find.clear(); }}
+        />
+      )}
       {/* Toolbar */}
       <div className="px-4 py-1.5 border-b border-border flex items-center gap-1 flex-shrink-0 bg-background">
         <FileText className="h-4 w-4 text-red-400 flex-shrink-0 mr-1" />
@@ -229,6 +252,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
             renderTextLayer={true}
             renderAnnotationLayer={true}
             className="shadow-lg"
+            onRenderSuccess={() => setTextLayerKey((k) => k + 1)}
           />
         </Document>
       </div>
