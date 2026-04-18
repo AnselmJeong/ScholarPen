@@ -36,7 +36,9 @@ export interface EditorPaneGroupHandle {
 interface EditorPaneGroupProps {
   project: ProjectInfo | null;
   ollamaStatus: OllamaStatus;
+  ollamaBaseUrl: string;
   reloadTrigger: number;
+  bibReloadTrigger: number;
   onActiveFileChange: (file: FileNode | null, docFilename: string | null) => void;
   onActiveEditorChange: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onWordCountChange: (count: number) => void;
@@ -60,7 +62,9 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     {
       project,
       ollamaStatus,
+      ollamaBaseUrl,
       reloadTrigger,
+      bibReloadTrigger,
       onActiveFileChange,
       onActiveEditorChange,
       onWordCountChange,
@@ -402,7 +406,9 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                 project={project}
                 documentFilename={activeTab.file.name}
                 ollamaStatus={ollamaStatus}
+                ollamaBaseUrl={ollamaBaseUrl}
                 reloadTrigger={reloadTrigger}
+                bibReloadTrigger={bibReloadTrigger}
                 onWordCountChange={(count) => {
                   if (focusedPaneRef.current === paneId) onWordCountChange(count);
                 }}

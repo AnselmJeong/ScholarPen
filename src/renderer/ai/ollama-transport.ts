@@ -17,7 +17,7 @@ import { ClientSideTransport } from "@blocknote/xl-ai/server";
  * models return an empty `content` field while thinking tokens go into
  * `reasoning_content`, which leaves BlockNote's AI extension with a blank response.
  */
-function ollamaFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+const ollamaFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   if (init?.body && typeof init.body === "string") {
     try {
       const body = JSON.parse(init.body);
@@ -28,14 +28,14 @@ function ollamaFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
     }
   }
   return fetch(input, init);
-}
+}) as unknown as typeof fetch;
 
-export function createOllamaTransport(modelName: string) {
+export function createOllamaTransport(modelName: string, baseURL = "http://localhost:11434") {
   console.log("[ollama-transport] Creating transport for model:", modelName);
   // Use OpenAI Compatible provider for Ollama
   const ollama = createOpenAICompatible({
     name: "ollama",
-    baseURL: "http://localhost:11434/v1",
+    baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
     apiKey: "ollama", // Ollama doesn't require API key, but provider needs one
     fetch: ollamaFetch,
   });
@@ -81,10 +81,10 @@ export function createOllamaTransportWithSystemPrompt(modelName: string, systemP
  * (connection refused), which BlockNote surfaces as a recoverable error state
  * rather than an uncaught crash.
  */
-export function createNoOpTransport() {
+export function createNoOpTransport(baseURL = "http://localhost:11434") {
   const ollama = createOpenAICompatible({
     name: "ollama-placeholder",
-    baseURL: "http://localhost:11434/v1",
+    baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
     apiKey: "none",
   });
   return new ClientSideTransport({

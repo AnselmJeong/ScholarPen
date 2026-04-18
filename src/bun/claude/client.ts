@@ -111,6 +111,7 @@ export class ClaudeClient {
     callbacks: ClaudeCallbacks,
     backend: "ollama" | "claude" = "ollama",
     allowedTools?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const { onChunk, onDone, onInit } = callbacks;
 
@@ -151,6 +152,11 @@ export class ClaudeClient {
     }
 
     let proc: ReturnType<typeof Bun.spawn>;
+    if (signal?.aborted) {
+      onDone("");
+      return;
+    }
+
     try {
       proc = Bun.spawn(args, {
         stdout: "pipe",
@@ -168,6 +174,11 @@ export class ClaudeClient {
       onDone("");
       return;
     }
+
+    const abortHandler = () => {
+      try { proc.kill(); } catch {}
+    };
+    signal?.addEventListener("abort", abortHandler, { once: true });
 
     // Drain stderr concurrently to prevent blocking
     const stderrTask = (async () => {
@@ -274,6 +285,7 @@ export class ClaudeClient {
     } finally {
       reader.releaseLock();
       if (idleTimer) clearTimeout(idleTimer);
+      signal?.removeEventListener("abort", abortHandler);
     }
 
     // Check exit code — CLI may exit non-zero without a result event
@@ -285,7 +297,9 @@ export class ClaudeClient {
       console.error("[Claude] stderr:\n" + stderrText);
     }
 
-    if (idleKilled) {
+    if (signal?.aborted) {
+      if (!gotAssistantContent) onChunk("중단됨");
+    } else if (idleKilled) {
       // Process was killed because it stopped producing output — likely an
       // interactive command (/usage, /cost, etc.) that hangs in -p mode.
       if (!gotAssistantContent) {

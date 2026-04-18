@@ -36,6 +36,10 @@
     "lucide-react": "^1.7.0",
     "ollama": "^0.6.3",
     "ollama-ai-provider": "^1.2.0",
+    "pdfjs-dist": "^5.4.296",
+    "prosemirror-model": "^1.25.4",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
@@ -43,7 +47,8 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",

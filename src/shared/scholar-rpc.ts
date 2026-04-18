@@ -28,6 +28,7 @@ type BunRequests = RPCSchema<{
     loadManuscript: { params: { projectPath: string }; response: unknown };
     // BibTeX
     saveBibtex: { params: { projectPath: string; bibtex: string }; response: void };
+    saveBibtexRaw: { params: { projectPath: string; bibtex: string }; response: void };
     loadBibtex: { params: { projectPath: string }; response: string };
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
@@ -73,6 +74,7 @@ type BunRequests = RPCSchema<{
       response: void;
     };
     getClaudeSlashCommands: { params: { projectPath?: string }; response: string[] };
+    abortClaudeStream: { params: void; response: void };
     getOllamaModels: { params: void; response: string[] };
     openExternal: { params: { url: string }; response: void };
   };
@@ -87,7 +89,7 @@ type WebviewRequests = RPCSchema<{
   messages: {
     aiChunk: { content: string; done: boolean };
     claudeChunk: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] };
-    projectUpdated: { projectPath: string };
+    projectUpdated: { projectPath: string; filePath?: string };
     menuAction: { action: string };
     importMarkdownContent: { content: string; suggestedFilename: string };
   };

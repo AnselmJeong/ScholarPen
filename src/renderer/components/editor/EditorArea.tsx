@@ -55,10 +55,12 @@ interface EditorAreaProps {
   project: ProjectInfo | null;
   documentFilename: string | null;
   ollamaStatus: OllamaStatus;
+  ollamaBaseUrl: string;
   onWordCountChange: (count: number) => void;
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   reloadTrigger?: number;
+  bibReloadTrigger?: number;
 }
 
 /** Block type submenu for the drag handle popup */
@@ -120,10 +122,12 @@ export function EditorArea({
   project,
   documentFilename,
   ollamaStatus,
+  ollamaBaseUrl,
   onWordCountChange,
   onEditorReady,
   onSaveStatusChange,
   reloadTrigger,
+  bibReloadTrigger,
 }: EditorAreaProps) {
   const isDark = useIsDark();
   const editor = useCreateBlockNote({
@@ -135,13 +139,15 @@ export function EditorArea({
     extensions: [
       AIExtension({
         transport: ollamaStatus.connected
-          ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:cloud")
-          : createNoOpTransport(),
+          ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:cloud", ollamaBaseUrl)
+          : createNoOpTransport(ollamaBaseUrl),
       }),
     ],
   });
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveStatusRef = useRef<SaveStatus>("saved");
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const saveRequestSeqRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
@@ -164,9 +170,10 @@ export function EditorArea({
 
     const transport = ollamaStatus.connected
       ? createOllamaTransport(
-          ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen2.5:latest"
+          ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen2.5:latest",
+          ollamaBaseUrl
         )
-      : createNoOpTransport();
+      : createNoOpTransport(ollamaBaseUrl);
 
     aiExt.options.setState((prev: Record<string, unknown>) => ({
       ...prev,
@@ -177,7 +184,7 @@ export function EditorArea({
     if (menuState === "closed" || menuState == null) {
       aiExt.closeAIMenu?.();
     }
-  }, [editor, ollamaStatus.connected, ollamaStatus.activeModel]);
+  }, [editor, ollamaStatus.connected, ollamaStatus.activeModel, ollamaBaseUrl]);
 
   // Load citekeys from references.bib when project changes
   useEffect(() => {
@@ -185,7 +192,7 @@ export function EditorArea({
     rpc.loadBibtex(project.path)
       .then((bibtex) => setCitekeys(parseCitekeys(bibtex ?? "")))
       .catch(() => setCitekeys([]));
-  }, [project?.path]);
+  }, [project?.path, bibReloadTrigger]);
 
   // Load document when project or file switches
   useEffect(() => {
@@ -248,6 +255,26 @@ export function EditorArea({
     onSaveStatusChange(status);
   }, [onSaveStatusChange]);
 
+  const enqueueSave = useCallback((filename: string, content: unknown) => {
+    if (!project) return Promise.resolve();
+    const seq = ++saveRequestSeqRef.current;
+    updateSaveStatus("saving");
+
+    const run = saveChainRef.current
+      .catch(() => undefined)
+      .then(() => rpc.saveDocument(project.path, filename, content))
+      .then(() => {
+        if (seq === saveRequestSeqRef.current) updateSaveStatus("saved");
+      })
+      .catch((err) => {
+        console.error("Save failed:", err);
+        if (seq === saveRequestSeqRef.current) updateSaveStatus("unsaved");
+      });
+
+    saveChainRef.current = run;
+    return run;
+  }, [project, updateSaveStatus]);
+
   // Immediate save (for Cmd+S / menu action)
   const saveNow = useCallback(() => {
     if (!project) return;
@@ -256,14 +283,8 @@ export function EditorArea({
       saveTimerRef.current = null;
     }
     const filename = documentFilename || "manuscript.scholarpen.json";
-    updateSaveStatus("saving");
-    rpc.saveDocument(project.path, filename, editor.document)
-      .then(() => updateSaveStatus("saved"))
-      .catch((err) => {
-        console.error("Save failed:", err);
-        updateSaveStatus("unsaved");
-      });
-  }, [editor, project, documentFilename, updateSaveStatus]);
+    enqueueSave(filename, editor.document);
+  }, [editor, project, documentFilename, enqueueSave]);
 
   // Expose saveNow for external callers (e.g., menu actions)
   useEffect(() => {
@@ -358,15 +379,9 @@ export function EditorArea({
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const filename = documentFilename || "manuscript.scholarpen.json";
-      updateSaveStatus("saving");
-      rpc.saveDocument(project.path, filename, editor.document)
-        .then(() => updateSaveStatus("saved"))
-        .catch((err) => {
-          console.error("Auto-save failed:", err);
-          updateSaveStatus("unsaved");
-        });
+      enqueueSave(filename, editor.document);
     }, 2 * 1000); // 2 seconds
-  }, [editor, project, documentFilename, countWords, updateSaveStatus]);
+  }, [editor, project, documentFilename, countWords, updateSaveStatus, enqueueSave]);
 
   // Flush any pending save immediately when the window loses focus.
   useEffect(() => {
@@ -375,11 +390,7 @@ export function EditorArea({
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
         const filename = documentFilename || "manuscript.scholarpen.json";
-        updateSaveStatus("saving");
-        rpc.saveDocument(project.path, filename, editor.document).then(
-          () => updateSaveStatus("saved"),
-          () => updateSaveStatus("unsaved")
-        );
+        enqueueSave(filename, editor.document);
       }
     };
     const handler = () => {
@@ -387,7 +398,7 @@ export function EditorArea({
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [editor, project, documentFilename, updateSaveStatus]);
+  }, [editor, project, documentFilename, enqueueSave]);
 
   // Build slash menu items once; only rebuild when editor, AI, or citekeys change.
   // Kept out of getItems to avoid reconstructing all block-type arrays on every keystroke.
@@ -449,13 +460,6 @@ export function EditorArea({
             theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
-            dragHandleMenu={(props) => (
-              <DragHandleMenu {...props}>
-                <BlockTypeSelect key="blockTypeSelect" />
-                <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
-                <BlockColorsItem {...props} />
-              </DragHandleMenu>
-            )}
           >
             <SideMenuController
               sideMenu={() => (

@@ -1,107 +1,20 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut, FilterX } from "lucide-react";
+import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import { FrontmatterCard } from "./FrontmatterCard";
-import { PdfViewer } from "./PdfViewer";
+import { BibtexEditor } from "./BibtexEditor";
 import { TextFindPanel } from "./TextFindPanel";
 import { useTextFind } from "../../hooks/useTextFind";
-import { deduplicateBibtex, parseBibtexCitekeys } from "../../../shared/bibtex-utils";
 
 interface FileViewerProps {
   file: FileNode;
 }
 
-// Token types for single-pass BibTeX highlighting
-type TokenType = "entry" | "field" | "value" | "year" | "plain";
-interface Token { type: TokenType; text: string }
-
-/** Tokenize a single BibTeX line in one pass (no regex overlap) */
-function tokenizeBibtexLine(line: string): Token[] {
-  const tokens: Token[] = [];
-  let pos = 0;
-
-  // 1. Entry type: @word{
-  const entryMatch = line.match(/^(@\w+)\{/);
-  if (entryMatch) {
-    tokens.push({ type: "entry", text: entryMatch[1] });
-    tokens.push({ type: "plain", text: "{" });
-    pos = entryMatch[0].length;
-  }
-
-  // 2. Scan the rest character-by-character for field=/value/"year"
-  while (pos < line.length) {
-    // Field name followed by =
-    const fieldMatch = line.slice(pos).match(/^(\w+)\s*=/);
-    if (fieldMatch) {
-      tokens.push({ type: "field", text: fieldMatch[1] });
-      tokens.push({ type: "plain", text: line.slice(pos + fieldMatch[1].length, pos + fieldMatch[0].length) });
-      pos += fieldMatch[0].length;
-      continue;
-    }
-
-    // Quoted string value
-    const quoteMatch = line.slice(pos).match(/^("[^"]*")/);
-    if (quoteMatch) {
-      tokens.push({ type: "value", text: quoteMatch[1] });
-      pos += quoteMatch[0].length;
-      continue;
-    }
-
-    // 4-digit year (standalone, not inside quotes — those are already consumed)
-    const yearMatch = line.slice(pos).match(/^(\d{4})/);
-    if (yearMatch) {
-      tokens.push({ type: "year", text: yearMatch[1] });
-      pos += yearMatch[0].length;
-      continue;
-    }
-
-    // Plain character
-    const lastPlain = tokens[tokens.length - 1];
-    const ch = line[pos];
-    if (lastPlain?.type === "plain") {
-      lastPlain.text += ch;
-    } else {
-      tokens.push({ type: "plain", text: ch });
-    }
-    pos++;
-  }
-
-  return tokens;
-}
-
-const TOKEN_CLASS: Record<TokenType, string> = {
-  entry:  "text-purple-600 font-semibold",
-  field:  "text-blue-600",
-  value:  "text-green-700",
-  year:   "text-orange-600",
-  plain:  "",
-};
-
-/** Syntax-highlighted BibTeX rendering using JSX (no dangerouslySetInnerHTML) */
-function highlightBibtex(code: string): React.ReactNode[] {
-  const lines = code.split("\n");
-  return lines.map((line, i) => {
-    const tokens = tokenizeBibtexLine(line);
-    return (
-      <div key={i} className="flex">
-        <span className="w-10 text-right pr-3 text-muted-foreground/50 select-none text-xs leading-5">{i + 1}</span>
-        <span className="flex-1 text-xs leading-5 font-mono whitespace-pre">
-          {tokens.map((t, j) =>
-            TOKEN_CLASS[t.type] ? (
-              <span key={j} className={TOKEN_CLASS[t.type]}>{t.text}</span>
-            ) : (
-              <span key={j}>{t.text}</span>
-            )
-          )}
-        </span>
-      </div>
-    );
-  });
-}
+const PdfViewer = lazy(() => import("./PdfViewer").then((m) => ({ default: m.PdfViewer })));
 
 
 function getFileIcon(kind: FileNode["kind"]) {
@@ -126,7 +39,6 @@ export function FileViewer({ file }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dedupMsg, setDedupMsg] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const find = useTextFind(contentRef, file.path);
@@ -138,18 +50,6 @@ export function FileViewer({ file }: FileViewerProps) {
   const fontSize = FONT_SIZES[fontSizeIdx];
   const zoomIn  = useCallback(() => setFontSizeIdx((i) => { const n = Math.min(i + 1, FONT_SIZES.length - 1); localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
   const zoomOut = useCallback(() => setFontSizeIdx((i) => { const n = Math.max(i - 1, 0);                    localStorage.setItem(FONT_SIZE_KEY, String(n)); return n; }), []);
-  const handleDedup = useCallback(async () => {
-    if (!content) return;
-    const before = parseBibtexCitekeys(content).length;
-    const deduped = deduplicateBibtex(content);
-    const after = parseBibtexCitekeys(deduped).length;
-    const removed = before - after;
-    const projectPath = file.path.substring(0, file.path.lastIndexOf("/"));
-    await rpc.saveBibtex(projectPath, deduped);
-    setContent(deduped);
-    setDedupMsg(removed > 0 ? `${removed}개 중복 항목 제거됨` : "중복 없음");
-    setTimeout(() => setDedupMsg(null), 3000);
-  }, [content, file.path]);
   // Cmd+F to open find panel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -204,7 +104,11 @@ export function FileViewer({ file }: FileViewerProps) {
 
   // PDF viewer — binary file, handled separately
   if (file.kind === "pdf" || ext === ".pdf") {
-    return <PdfViewer file={file} />;
+    return (
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center bg-background text-sm text-muted-foreground">Loading PDF viewer...</div>}>
+        <PdfViewer file={file} />
+      </Suspense>
+    );
   }
 
   // Image viewer — use data URL directly
@@ -242,6 +146,10 @@ export function FileViewer({ file }: FileViewerProps) {
     );
   }
 
+  if (isBibtex) {
+    return <BibtexEditor file={file} initialContent={content} />;
+  }
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
       {findOpen && (
@@ -259,20 +167,6 @@ export function FileViewer({ file }: FileViewerProps) {
       <div className="px-6 py-2 border-b border-border text-sm text-muted-foreground font-medium flex items-center gap-2">
         {getFileIcon(file.kind)}
         <span>{file.name}</span>
-        {isBibtex && <span className="text-xs text-muted-foreground/60 ml-2">BibTeX</span>}
-        {isBibtex && (
-          <div className="ml-auto flex items-center gap-2">
-            {dedupMsg && <span className="text-xs text-emerald-500">{dedupMsg}</span>}
-            <button
-              onClick={handleDedup}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-              title="citekey/DOI 중복 항목 제거"
-            >
-              <FilterX className="h-3.5 w-3.5" />
-              중복 제거
-            </button>
-          </div>
-        )}
         {isMarkdown && <span className="text-xs text-muted-foreground/60 ml-2">Markdown</span>}
         {isMarkdown && (
           <div className="ml-auto flex items-center gap-1">
@@ -306,14 +200,6 @@ export function FileViewer({ file }: FileViewerProps) {
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {markdownBody}
               </ReactMarkdown>
-            </div>
-          </div>
-        )}
-
-        {isBibtex && (
-          <div className="max-w-4xl mx-auto px-4 py-4 bg-muted/50 border border-border rounded-lg m-4">
-            <div className="overflow-x-auto">
-              {highlightBibtex(content)}
             </div>
           </div>
         )}

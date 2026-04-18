@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
+import { parse as parseYaml } from "yaml";
 
 export interface KBSearchResult {
   docId: string;
@@ -107,7 +108,7 @@ function parseMd(content: string): ParsedMd {
       const item = line.replace(/^\s+-\s+/, "").trim().replace(/^["']|["']$/g, "");
       if (item) authors.push(item);
     }
-    if (year === null) {
+    if (year === undefined) {
       const m = line.match(/^year:\s*(\d{4})/);
       if (m) year = parseInt(m[1], 10);
     }
@@ -216,119 +217,6 @@ async function loadKeywordRegistry(kbRoot: string): Promise<KeywordRegistry | nu
     console.warn("[KB] Could not load keyword_registry.yaml:", err);
     return null;
   }
-}
-
-/** Very small YAML parser — handles scalars, lists of scalars, and simple mappings.
- *  Sufficient for master_index.yaml and keyword_registry.yaml formats. */
-function parseYaml(raw: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  let currentKey = "";
-  let currentList: unknown[] | null = null;
-  let currentMap: Record<string, unknown> | null = null;
-  let listDepth = 0;
-
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trimEnd();
-
-    // Skip comments and empty lines
-    if (trimmed === "" || trimmed.startsWith("#")) continue;
-
-    // Top-level key: value
-    const topMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
-    if (topMatch && !line.startsWith(" ") && !line.startsWith("-")) {
-      // Save previous list/map
-      if (currentKey && currentList !== null && listDepth === 0) {
-        result[currentKey] = currentList;
-        currentList = null;
-      } else if (currentKey && currentMap !== null) {
-        if (listDepth === 0) {
-          result[currentKey] = currentMap;
-          currentMap = null;
-        }
-      }
-
-      currentKey = topMatch[1];
-      const val = topMatch[2].trim();
-      if (val === "" || val === "|" || val === ">") {
-        // Value is a list or map on following lines
-        currentList = null;
-        currentMap = null;
-      } else if (val.startsWith("[") && val.endsWith("]")) {
-        // Inline list
-        const items = val.slice(1, -1).split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
-        result[currentKey] = items;
-        currentList = null;
-      } else if (val.startsWith("'") && val.endsWith("'")) {
-        result[currentKey] = val.slice(1, -1);
-      } else if (val.startsWith('"') && val.endsWith('"')) {
-        result[currentKey] = val.slice(1, -1);
-      } else if (/^\d+$/.test(val)) {
-        result[currentKey] = parseInt(val, 10);
-      } else {
-        result[currentKey] = val;
-      }
-      continue;
-    }
-
-    // List item at top level (starts with "- ")
-    if (trimmed.startsWith("- ") && listDepth === 0 && currentKey) {
-      if (currentList === null) currentList = [];
-      const item = trimmed.slice(2).trim();
-      // Check if it's a map-style list item like "id: ..."
-      if (item.includes(": ")) {
-        if (currentMap === null) currentMap = {};
-        const [k, ...v] = item.split(": ");
-        (currentMap as Record<string, unknown>)[k.trim()] = v.join(": ").trim().replace(/^["']|["']$/g, "");
-      } else {
-        currentList.push(item.replace(/^["']|["']$/g, ""));
-      }
-      continue;
-    }
-
-    // Nested key inside a list item (indented property)
-    if (line.startsWith("    ") || line.startsWith("\t\t")) {
-      const nestedMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_() -]*):\s*(.*)$/);
-      if (nestedMatch && currentMap) {
-        const nk = nestedMatch[1].trim();
-        const nv = nestedMatch[2].trim();
-        if (nv.startsWith("[") && nv.endsWith("]")) {
-          (currentMap as Record<string, unknown>)[nk] = nv.slice(1, -1).split(",").map(s => s.trim().replace(/^["']|["']$/g, ""));
-        } else if (nv) {
-          (currentMap as Record<string, unknown>)[nk] = nv.replace(/^["']|["']$/g, "");
-        }
-      }
-      continue;
-    }
-
-    // Sub-list item (indented "- ")
-    if (trimmed.startsWith("- ") && (line.startsWith("      ") || line.match(/^\s{6,}/))) {
-      const item = trimmed.slice(2).trim().replace(/^["']|["']$/g, "");
-      // Find the last array property in currentMap
-      if (currentMap) {
-        for (const key of Object.keys(currentMap).reverse()) {
-          if (Array.isArray(currentMap[key])) {
-            (currentMap[key] as unknown[]).push(item);
-            break;
-          }
-        }
-      }
-      continue;
-    }
-  }
-
-  // Flush final list/map
-  if (currentKey && currentList !== null && listDepth === 0) {
-    result[currentKey] = currentList;
-  } else if (currentKey && currentMap !== null) {
-    // Wrap single map in array if top-level expects an array
-    if (result[currentKey] === undefined) {
-      result[currentKey] = [currentMap];
-    } else if (Array.isArray(result[currentKey])) {
-      (result[currentKey] as unknown[]).push(currentMap);
-    }
-  }
-
-  return result;
 }
 
 // ── Engine singleton cache ─────────────────────────────────────────────────────
@@ -460,7 +348,7 @@ export class KBSearchEngine {
           if (subdir === "sources" && slugToPaper.has(slug)) {
             const paper = slugToPaper.get(slug)!;
             if (enrichedAuthors.length === 0) enrichedAuthors = paper.authors;
-            if (enrichedYear === null) enrichedYear = paper.year;
+            if (enrichedYear === undefined) enrichedYear = paper.year;
           }
 
           insertDoc.run(docId, docType, title, cleanBody(body));

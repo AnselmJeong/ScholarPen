@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
-import { join, extname, basename, dirname } from "path";
+import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import type { ProjectInfo, ProjectFile, FileNode, FileNodeKind, AppSettings, AppSettingsUpdate } from "../../shared/rpc-types";
 import { deduplicateBibtex } from "../../shared/bibtex-utils";
@@ -271,6 +271,63 @@ concept_threshold: 3
 `;
 
 class FileSystemManager {
+  private allowedProjectPaths = new Set<string>();
+
+  private markProjectPath(projectPath: string): string {
+    const resolved = resolve(projectPath);
+    this.allowedProjectPaths.add(resolved);
+    return resolved;
+  }
+
+  private async assertKnownProjectPath(projectPath: string): Promise<string> {
+    const resolvedProject = resolve(projectPath);
+    if (this.allowedProjectPaths.has(resolvedProject)) return resolvedProject;
+
+    const rootDir = resolve(await this.getProjectsRootDir());
+    const rel = relative(rootDir, resolvedProject);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
+      this.allowedProjectPaths.add(resolvedProject);
+      return resolvedProject;
+    }
+
+    throw new Error("Project path is outside the configured projects root and has not been opened.");
+  }
+
+  private async assertProjectFilePath(filePath: string): Promise<string> {
+    const resolvedFile = resolve(filePath);
+    for (const projectPath of this.allowedProjectPaths) {
+      const rel = relative(projectPath, resolvedFile);
+      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+        return resolvedFile;
+      }
+    }
+
+    const rootDir = resolve(await this.getProjectsRootDir());
+    const rel = relative(rootDir, resolvedFile);
+    if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+      return resolvedFile;
+    }
+
+    throw new Error("File path is outside the active ScholarPen project roots.");
+  }
+
+  private safeFilename(filename: string, expectedSuffix?: string): string {
+    if (
+      !filename ||
+      filename.includes("\0") ||
+      filename.includes("/") ||
+      filename.includes("\\") ||
+      filename.includes("..") ||
+      basename(filename) !== filename
+    ) {
+      throw new Error("Invalid filename.");
+    }
+    if (expectedSuffix && !filename.endsWith(expectedSuffix)) {
+      throw new Error(`Filename must end with ${expectedSuffix}.`);
+    }
+    return filename;
+  }
+
   private async getProjectsRootDir(): Promise<string> {
     try {
       const settings = await this.getSettings();
@@ -304,6 +361,7 @@ class FileSystemManager {
       try {
         const docsDir = join(projectPath, "documents");
         const info = await stat(docsDir);
+        this.markProjectPath(projectPath);
         projects.push({
           name: entry.name,
           path: projectPath,
@@ -314,6 +372,7 @@ class FileSystemManager {
         // Also accept projects with legacy manuscript at root
         try {
           const info = await stat(join(projectPath, "manuscript.scholarpen.json"));
+          this.markProjectPath(projectPath);
           projects.push({
             name: entry.name,
             path: projectPath,
@@ -332,7 +391,7 @@ class FileSystemManager {
   async createProject(name: string): Promise<ProjectInfo> {
     const rootDir = await this.getProjectsRootDir();
     const safeName = name.replace(/[^a-zA-Z0-9-_]/g, "-").toLowerCase();
-    const projectPath = join(rootDir, safeName);
+    const projectPath = this.markProjectPath(join(rootDir, safeName));
 
     await mkdir(projectPath, { recursive: true });
     await mkdir(join(projectPath, "documents"), { recursive: true });
@@ -374,11 +433,12 @@ class FileSystemManager {
 
   async openProject(name: string): Promise<ProjectInfo> {
     const rootDir = await this.getProjectsRootDir();
-    const projectPath = join(rootDir, name);
+    const safeName = this.safeFilename(name);
+    const projectPath = this.markProjectPath(join(rootDir, safeName));
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
     return {
-      name,
+      name: safeName,
       path: projectPath,
       files: this.buildFileList(projectPath),
       lastModified: info.mtimeMs,
@@ -386,6 +446,7 @@ class FileSystemManager {
   }
 
   async openProjectByPath(projectPath: string): Promise<ProjectInfo> {
+    projectPath = this.markProjectPath(projectPath);
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
     const name = basename(projectPath);
@@ -400,6 +461,8 @@ class FileSystemManager {
   // ── Document CRUD ───────────────────────────────────────────
 
   async saveDocument(projectPath: string, filename: string, content: unknown): Promise<void> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    filename = this.safeFilename(filename, ".scholarpen.json");
     const docsDir = join(projectPath, "documents");
     await mkdir(docsDir, { recursive: true });
     const filePath = join(docsDir, filename);
@@ -407,17 +470,20 @@ class FileSystemManager {
   }
 
   async loadDocument(projectPath: string, filename: string): Promise<unknown> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    filename = this.safeFilename(filename, ".scholarpen.json");
     const filePath = join(projectPath, "documents", filename);
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw);
   }
 
   async createDocument(projectPath: string, filename: string, content?: unknown): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
     const docsDir = join(projectPath, "documents");
     await mkdir(docsDir, { recursive: true });
     const safeFilename = filename.endsWith(".scholarpen.json")
-      ? filename
-      : `${filename}.scholarpen.json`;
+      ? this.safeFilename(filename, ".scholarpen.json")
+      : this.safeFilename(`${filename}.scholarpen.json`, ".scholarpen.json");
     const filePath = join(docsDir, safeFilename);
     const data = content ?? [];
     await writeFile(filePath, JSON.stringify(data, null, 2));
@@ -439,10 +505,17 @@ class FileSystemManager {
   // ── BibTeX ──────────────────────────────────────────────────
 
   async saveBibtex(projectPath: string, bibtex: string): Promise<void> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
     await writeFile(join(projectPath, "references.bib"), deduplicateBibtex(bibtex));
   }
 
+  async saveBibtexRaw(projectPath: string, bibtex: string): Promise<void> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    await writeFile(join(projectPath, "references.bib"), bibtex);
+  }
+
   async loadBibtex(projectPath: string): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
     try {
       return await readFile(join(projectPath, "references.bib"), "utf-8");
     } catch {
@@ -453,6 +526,8 @@ class FileSystemManager {
   // ── Export ──────────────────────────────────────────────────
 
   async exportFile(projectPath: string, filename: string, content: string): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    filename = this.safeFilename(filename);
     const exportDir = join(projectPath, "exports");
     await mkdir(exportDir, { recursive: true });
     const filePath = join(exportDir, filename);
@@ -463,15 +538,18 @@ class FileSystemManager {
   // ── File Management ────────────────────────────────────────
 
   async readTextFile(filePath: string): Promise<string> {
+    filePath = await this.assertProjectFilePath(filePath);
     return readFile(filePath, "utf-8");
   }
 
   async readBinaryFile(filePath: string): Promise<string> {
+    filePath = await this.assertProjectFilePath(filePath);
     const buf = await readFile(filePath);
     return buf.toString("base64");
   }
 
   async renameFile(filePath: string, newName: string): Promise<string> {
+    filePath = await this.assertProjectFilePath(filePath);
     const dir = dirname(filePath);
     const oldBasename = basename(filePath);
 
@@ -488,27 +566,29 @@ class FileSystemManager {
       }
     }
 
-    const newPath = join(dir, finalName);
+    finalName = this.safeFilename(finalName);
+    const newPath = await this.assertProjectFilePath(join(dir, finalName));
     await rename(filePath, newPath);
     return newPath;
   }
 
   async deleteFile(filePath: string): Promise<void> {
+    filePath = await this.assertProjectFilePath(filePath);
     await unlink(filePath);
   }
 
   // ── File Tree ───────────────────────────────────────────────
 
   async listProjectFiles(projectPath: string, depth = 0): Promise<FileNode[]> {
+    if (depth === 0) projectPath = await this.assertKnownProjectPath(projectPath);
     if (depth > 5) return [];
     const entries = await readdir(projectPath, { withFileTypes: true });
-    const nodes: FileNode[] = [];
 
     // Files/folders generated by Electrobun or other internal tools
     const IGNORE = new Set(["node_modules", "snapshots", "project.json"]);
 
-    for (const entry of entries) {
-      if (entry.name.startsWith(".") || IGNORE.has(entry.name)) continue;
+    const nodes = await Promise.all(entries.map(async (entry): Promise<FileNode | null> => {
+      if (entry.name.startsWith(".") || IGNORE.has(entry.name)) return null;
       const fullPath = join(projectPath, entry.name);
       const isDir = entry.isDirectory();
       const kind = extToKind(entry.name, isDir);
@@ -532,11 +612,11 @@ class FileSystemManager {
         node.children = await this.listProjectFiles(fullPath, depth + 1);
       }
 
-      nodes.push(node);
-    }
+      return node;
+    }));
 
     // Directories first, then files, both alphabetical
-    return nodes.sort((a, b) => {
+    return nodes.filter((node): node is FileNode => node !== null).sort((a, b) => {
       if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
       return a.name.localeCompare(b.name);
     });

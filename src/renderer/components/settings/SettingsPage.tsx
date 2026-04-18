@@ -167,8 +167,8 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
             {/* Ollama model */}
             {backend === "ollama" && (
               <SettingRow
-                label="Ollama Model"
-                description="ollama launch claude 로 실행할 모델"
+                label="Sidebar Agent Model"
+                description="Ollama를 통해 Claude wrapper를 launch할 때 사용할 모델"
               >
                 <div className="space-y-1.5">
                   {ollamaModels.length > 0 ? (
@@ -209,11 +209,23 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
               </SettingRow>
             )}
 
+            <SettingRow
+              label="Ollama Base URL"
+              description="Editor inline AI와 Ollama backend status/model lookup에 사용"
+            >
+              <Input
+                value={settings.ollamaBaseUrl}
+                onChange={(e) => updateSetting("ollamaBaseUrl", e.target.value)}
+                placeholder="http://localhost:11434"
+                className="font-mono text-xs"
+              />
+            </SettingRow>
+
             {/* Claude direct model */}
             {backend === "claude" && (
               <SettingRow
-                label="Claude Model"
-                description="Anthropic API를 통해 직접 실행"
+                label="Sidebar Agent Model"
+                description="Claude Code CLI를 직접 사용할 때의 모델"
               >
                 <Select
                   value={settings.claudeModel ?? "claude-sonnet-4-6"}
@@ -232,6 +244,10 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                 </Select>
               </SettingRow>
             )}
+
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              Sidebar agent mode can read, edit, and write project files and can use web tools. Ollama launches the Claude wrapper through Ollama; Claude uses Claude Code directly.
+            </div>
 
           </SettingSection>
 
@@ -302,6 +318,28 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                 className="font-mono text-xs"
               />
             </SettingRow>
+          </SettingSection>
+
+          <Separator />
+
+          {/* Knowledge Base */}
+          <SettingSection icon={BookOpen} title="Knowledge Base">
+            <SettingRow
+              label="Search Results"
+              description="Number of KB pages injected into AI context"
+            >
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={settings.kbTopK}
+                onChange={(e) => updateSetting("kbTopK", Math.max(1, Math.min(20, Number(e.target.value) || 5)))}
+                className="font-mono text-xs"
+              />
+            </SettingRow>
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Chunk size, chunk overlap, and embed model are planned for Phase 4 hybrid RAG. Current KB search uses page-level FTS.
+            </div>
           </SettingSection>
         </div>
       </div>

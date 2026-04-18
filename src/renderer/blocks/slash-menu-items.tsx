@@ -2,7 +2,7 @@ import React from "react";
 import { insertOrUpdateBlockForSlashMenu, BlockNoteEditor } from "@blocknote/core";
 import { DefaultReactSuggestionItem } from "@blocknote/react";
 import { getAIDictionary } from "@blocknote/xl-ai";
-import { RiSparkling2Fill, RiH1, RiH2, RiH3, RiH4, RiH5 } from "react-icons/ri";
+import { Sparkles } from "lucide-react";
 import type { ScholarEditor } from "./schema";
 
 // ── Scholar custom slash-menu items ────────────────────────────────────────
@@ -56,18 +56,15 @@ export function getScholarSlashMenuItems(
 
 // ── Custom heading items H1–H5 ─────────────────────────────────────────────
 
-const headingIcons = [RiH1, RiH2, RiH3, RiH4, RiH5] as const;
-
 export function getCustomHeadingSlashMenuItems(
   editor: ScholarEditor
 ): DefaultReactSuggestionItem[] {
   return ([1, 2, 3, 4, 5] as const).map((level) => {
-    const Icon = headingIcons[level - 1];
     return {
       title: `Heading ${level}`,
       aliases: [`h${level}`, `heading${level}`],
       group: "Headings",
-      icon: <Icon size={18} />,
+      icon: <span className="text-sm font-bold leading-none">H{level}</span>,
       subtext: `Heading level ${level}`,
       onItemClick: () =>
         insertOrUpdateBlockForSlashMenu(editor, {
@@ -114,9 +111,14 @@ export function getAISlashMenuItemsFixed(
   editor: BlockNoteEditor<any, any, any>
 ): DefaultReactSuggestionItem[] {
   // Use string key lookup instead of factory function lookup
-  const ai = editor.getExtension("ai");
+  const ai = editor.getExtension("ai") as { openAIMenuAtBlock?: (blockId: string) => void } | undefined;
   if (!ai) {
     console.log("[getAISlashMenuItemsFixed] AI extension not found by key 'ai'");
+    return [];
+  }
+  const openAIMenuAtBlock = ai.openAIMenuAtBlock;
+  if (!openAIMenuAtBlock) {
+    console.log("[getAISlashMenuItemsFixed] AI extension cannot open menu by block");
     return [];
   }
   console.log("[getAISlashMenuItemsFixed] AI extension found, creating slash menu item");
@@ -132,13 +134,13 @@ export function getAISlashMenuItemsFixed(
           cursor.block.content.length === 0 &&
           cursor.prevBlock
         ) {
-          ai.openAIMenuAtBlock(cursor.prevBlock.id);
+          openAIMenuAtBlock(cursor.prevBlock.id);
         } else {
-          ai.openAIMenuAtBlock(cursor.block.id);
+          openAIMenuAtBlock(cursor.block.id);
         }
       },
       ...getAIDictionary(editor).slash_menu.ai,
-      icon: <RiSparkling2Fill size={18} />,
+      icon: <Sparkles size={18} />,
     },
   ];
 

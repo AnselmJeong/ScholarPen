@@ -5,8 +5,6 @@ import { fileSystem } from "../fs/manager";
 const OLLAMA_BASE_URL = "http://localhost:11434";
 const DEFAULT_MODEL = "qwen3.5:cloud";
 
-const ollama = new Ollama({ host: OLLAMA_BASE_URL });
-
 class OllamaClient {
   private defaultModel: string;
   private baseUrl: string;
@@ -16,13 +14,24 @@ class OllamaClient {
     this.baseUrl = OLLAMA_BASE_URL;
   }
 
+  private normalizeBaseUrl(baseUrl: string | undefined): string {
+    return (baseUrl || OLLAMA_BASE_URL).replace(/\/$/, "");
+  }
+
+  private async getRuntimeSettings() {
+    const settings = await fileSystem.getSettings().catch(() => null);
+    const baseUrl = this.normalizeBaseUrl(settings?.ollamaBaseUrl);
+    const defaultModel = settings?.ollamaDefaultModel || this.defaultModel;
+    return { settings, baseUrl, defaultModel };
+  }
+
   async getStatus(): Promise<OllamaStatus> {
     try {
       console.log("[OllamaClient] Checking status...");
-      const [result, settings] = await Promise.all([
-        ollama.list(),
-        fileSystem.getSettings().catch(() => null),
-      ]);
+      const { settings, baseUrl } = await this.getRuntimeSettings();
+      this.baseUrl = baseUrl;
+      const ollama = new Ollama({ host: baseUrl });
+      const result = await ollama.list();
       const models = result.models.map((m) => m.name);
       console.log("[OllamaClient] Connected. Models:", models);
       const savedModel = settings?.ollamaDefaultModel;
@@ -42,8 +51,10 @@ class OllamaClient {
     onChunk: (content: string) => void,
     signal?: AbortSignal
   ): Promise<void> {
-    const model = req.model || this.defaultModel;
-    const res = await fetch(`${this.baseUrl}/api/chat`, {
+    const { baseUrl, defaultModel } = await this.getRuntimeSettings();
+    this.baseUrl = baseUrl;
+    const model = req.model || defaultModel;
+    const res = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       signal,
       headers: { "Content-Type": "application/json" },
@@ -87,10 +98,12 @@ class OllamaClient {
   }
 
   async embed(text: string, model = "nomic-embed-text"): Promise<number[]> {
-    const res = await fetch(`${this.baseUrl}/api/embeddings`, {
+    const { baseUrl, settings } = await this.getRuntimeSettings();
+    this.baseUrl = baseUrl;
+    const res = await fetch(`${baseUrl}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt: text }),
+      body: JSON.stringify({ model: settings?.ollamaEmbedModel || model, prompt: text }),
     });
     if (!res.ok) throw new Error(`Embedding error: HTTP ${res.status}`);
     const data = await res.json() as { embedding: number[] };

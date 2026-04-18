@@ -16,13 +16,14 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 // Stable options — defined outside component to avoid re-renders triggering PDF reload
 const PDF_OPTIONS = {
-  cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+  cMapUrl: new URL("./cmaps/", window.location.href).toString(),
   cMapPacked: true,
 };
 
 const ZOOM_STEP = 0.25;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3.0;
+const LARGE_PDF_BYTES = 80 * 1024 * 1024;
 
 interface PdfViewerProps {
   file: FileNode;
@@ -34,6 +35,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
   const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState(1.0);
   const [loading, setLoading] = useState(true);
+  const [allowLargeLoad, setAllowLargeLoad] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +55,13 @@ export function PdfViewer({ file }: PdfViewerProps) {
     setPageNumber(1);
     setNumPages(0);
     setZoom(1.0);
+
+    if ((file.size ?? 0) > LARGE_PDF_BYTES && !allowLargeLoad) {
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     rpc.readBinaryFile(file.path)
       .then((base64) => {
@@ -75,7 +84,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [file.path]);
+  }, [file.path, file.size, allowLargeLoad]);
 
   // Track container width for "fit to window" base size
   useEffect(() => {
@@ -147,6 +156,26 @@ export function PdfViewer({ file }: PdfViewerProps) {
   const zoomIn = useCallback(() => setZoom((z) => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2))), []);
   const zoomOut = useCallback(() => setZoom((z) => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2))), []);
   const zoomReset = useCallback(() => setZoom(1.0), []);
+
+  if ((file.size ?? 0) > LARGE_PDF_BYTES && !allowLargeLoad) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-background gap-3 px-8 text-center">
+        <FileText className="h-12 w-12 text-red-300" />
+        <div>
+          <p className="text-sm text-foreground">{file.name}</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            This PDF is large ({Math.round((file.size ?? 0) / 1024 / 1024)} MB). Loading it through the current desktop bridge can use significant memory.
+          </p>
+        </div>
+        <button
+          onClick={() => setAllowLargeLoad(true)}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
+        >
+          Load PDF anyway
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

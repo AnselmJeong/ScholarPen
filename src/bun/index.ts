@@ -1,7 +1,7 @@
 import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils } from "electrobun/bun";
 import { readFile } from "fs/promises";
 import { watch, type FSWatcher } from "fs";
-import { basename, extname } from "path";
+import { basename, extname, join } from "path";
 import { ollamaClient } from "./ollama/client";
 import { claudeClient, buildSubprocessEnv } from "./claude/client";
 import { citationClient } from "./citation/client";
@@ -82,11 +82,27 @@ async function getMainViewUrl(): Promise<string> {
 
 // Module-level refs — set after BrowserWindow is created
 let sendClaudeChunk: ((payload: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] }) => void) | null = null;
-let sendProjectUpdated: ((payload: { projectPath: string }) => void) | null = null;
+let sendProjectUpdated: ((payload: { projectPath: string; filePath?: string }) => void) | null = null;
 let sendAiChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
 
 // Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
 let activeAiAbortController: AbortController | null = null;
+let activeClaudeAbortController: AbortController | null = null;
+
+function openValidatedExternalUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Invalid external URL.");
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http and https external links are allowed.");
+  }
+
+  Utils.openExternal(parsed.toString());
+}
 
 // File watcher state — tracks external changes to project files
 let activeProjectWatcher: FSWatcher | null = null;
@@ -102,7 +118,7 @@ function watchProjectDir(projectPath: string) {
       // Suppress if we just saved this file
       if (recentlySavedFiles.has(norm) || recentlySavedFiles.has(filename)) return;
       if (norm.endsWith(".scholarpen.json") || norm.endsWith(".bib")) {
-        sendProjectUpdated?.({ projectPath });
+        sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
       }
     });
   } catch (err) {
@@ -200,6 +216,12 @@ async function main() {
           return fileSystem.saveBibtex(projectPath, bibtex);
         },
 
+        saveBibtexRaw: async ({ projectPath, bibtex }) => {
+          recentlySavedFiles.add("references.bib");
+          setTimeout(() => recentlySavedFiles.delete("references.bib"), 3000);
+          return fileSystem.saveBibtexRaw(projectPath, bibtex);
+        },
+
         loadBibtex: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
 
         resolveDOI: ({ doi }) => citationClient.resolveDOI(doi),
@@ -214,7 +236,8 @@ async function main() {
           if (!kbRoot) return [];
           const engine = getKBEngine(kbRoot);
           await engine.ensureIndexed();
-          const results = engine.search(query, 5);
+          const settings = await fileSystem.getSettings();
+          const results = engine.search(query, settings.kbTopK || 5);
           return results.map((r) => ({
             id: r.docId,
             text: r.excerpt,
@@ -292,11 +315,15 @@ async function main() {
         // ── Claude CLI streaming ───────────────────────────
         getClaudeSlashCommands: ({ projectPath }) => claudeClient.getSlashCommands(projectPath),
 
-        openExternal: ({ url }) => { Utils.openExternal(url); },
+        openExternal: ({ url }) => { openValidatedExternalUrl(url); },
 
         // Fire-and-forget: return immediately so Electrobun can process
         // outbound claudeChunk messages while Claude streams in background.
         claudeStream: async ({ message, sessionId, projectPath, kbEnabled, lang }) => {
+          activeClaudeAbortController?.abort();
+          const controller = new AbortController();
+          activeClaudeAbortController = controller;
+
           const settings = await fileSystem.getSettings();
           const backend = settings.aiBackend ?? "ollama";
           const model = backend === "claude"
@@ -319,7 +346,8 @@ async function main() {
               if (kbRoot) {
                 const engine = getKBEngine(kbRoot);
                 await engine.ensureIndexed();
-                kbResults = engine.search(message, 5);
+                const topK = settings.kbTopK || 5;
+                kbResults = engine.search(message, topK);
                 if (kbResults.length > 0) {
                   enrichedMessage = buildKBContext(kbResults, lang) + "\n\n" + message;
                 }
@@ -361,10 +389,18 @@ async function main() {
             },
             onInit: (slashCommands) =>
               sendClaudeChunk?.({ content: "", done: false, slashCommands }),
-          }, backend, allowedTools).catch((err) => {
+          }, backend, allowedTools, controller.signal).catch((err) => {
             sendClaudeChunk?.({ content: `\n\n❌ 오류: ${err.message}`, done: false });
             sendClaudeChunk?.({ content: "", done: true });
+          }).finally(() => {
+            if (activeClaudeAbortController === controller) {
+              activeClaudeAbortController = null;
+            }
           });
+        },
+
+        abortClaudeStream: () => {
+          activeClaudeAbortController?.abort();
         },
 
         // Proxy Ollama chat to the renderer via aiChunk messages.

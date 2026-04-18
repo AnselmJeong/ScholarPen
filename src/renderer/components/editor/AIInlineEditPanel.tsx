@@ -28,6 +28,7 @@ interface AIInlineEditPanelProps {
 
 const PANEL_WIDTH = 440;
 const PANEL_HEIGHT_EST = 290; // used only for flip-above logic
+const PANEL_MARGIN = 8;
 
 const QUICK_ACTIONS = [
   { label: "Improve",   prompt: "Improve the writing quality and clarity of" },
@@ -69,6 +70,35 @@ export function AIInlineEditPanel({
   const accumulatedRef = useRef("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const translateRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ startX: number; startY: number; startTop: number; startLeft: number } | null>(null);
+
+  const getPanelWidth = useCallback(
+    () => Math.min(PANEL_WIDTH, Math.max(280, window.innerWidth - PANEL_MARGIN * 2)),
+    []
+  );
+
+  const clampPosition = useCallback(
+    (next: { top: number; left: number }) => {
+      const panelWidth = getPanelWidth();
+      return {
+        top: Math.max(PANEL_MARGIN, Math.min(next.top, window.innerHeight - 80)),
+        left: Math.max(PANEL_MARGIN, Math.min(next.left, window.innerWidth - panelWidth - PANEL_MARGIN)),
+      };
+    },
+    [getPanelWidth]
+  );
+
+  const getInitialPosition = useCallback(() => {
+    const wouldOverflowBottom =
+      snapshot.bottom + PANEL_MARGIN + PANEL_HEIGHT_EST > window.innerHeight;
+    const nextTop = wouldOverflowBottom
+      ? Math.max(PANEL_MARGIN, snapshot.top - PANEL_HEIGHT_EST - PANEL_MARGIN)
+      : snapshot.bottom + PANEL_MARGIN;
+    const nextLeft = Math.min(snapshot.left, window.innerWidth - getPanelWidth() - PANEL_MARGIN);
+    return clampPosition({ top: nextTop, left: nextLeft });
+  }, [clampPosition, getPanelWidth, snapshot.bottom, snapshot.left, snapshot.top]);
+
+  const [position, setPosition] = useState(getInitialPosition);
 
   // Close translate dropdown on outside click
   useEffect(() => {
@@ -84,6 +114,46 @@ export function AIInlineEditPanel({
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 30);
   }, []);
+
+  useEffect(() => {
+    setPosition(getInitialPosition());
+  }, [getInitialPosition]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setPosition((pos) => clampPosition(pos));
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [clampPosition]);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startTop: position.top,
+      startLeft: position.left,
+    };
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      setPosition(clampPosition({
+        top: drag.startTop + moveEvent.clientY - drag.startY,
+        left: drag.startLeft + moveEvent.clientX - drag.startX,
+      }));
+    };
+
+    const handleEnd = () => {
+      dragRef.current = null;
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleEnd);
+    };
+
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleEnd);
+  }, [clampPosition, position.left, position.top]);
 
   // Close on Escape globally
   useEffect(() => {
@@ -162,18 +232,6 @@ export function AIInlineEditPanel({
     setPrompt("");
   };
 
-  // ── Positioning ───────────────────────────────────────────────────────────
-  // Place below the selection; flip above if near the bottom of the viewport.
-  const wouldOverflowBottom =
-    snapshot.bottom + 8 + PANEL_HEIGHT_EST > window.innerHeight;
-  const top = wouldOverflowBottom
-    ? Math.max(8, snapshot.top - PANEL_HEIGHT_EST - 8)
-    : snapshot.bottom + 8;
-  const left = Math.max(
-    8,
-    Math.min(snapshot.left, window.innerWidth - PANEL_WIDTH - 8)
-  );
-
   // ── Render ────────────────────────────────────────────────────────────────
   const phase: "input" | "streaming" | "result" | "error" = error
     ? "error"
@@ -187,23 +245,29 @@ export function AIInlineEditPanel({
     <div
       style={{
         position: "fixed",
-        top,
-        left,
-        width: PANEL_WIDTH,
+        top: position.top,
+        left: position.left,
+        width: getPanelWidth(),
+        maxHeight: `calc(100vh - ${PANEL_MARGIN * 2}px)`,
         zIndex: 9999,
       }}
-      className="bg-popover text-popover-foreground border border-border rounded-xl shadow-2xl p-4 flex flex-col gap-3"
+      className="bg-popover text-popover-foreground border border-border rounded-xl shadow-2xl p-4 flex flex-col gap-3 min-h-0"
       // Prevent the underlying editor from handling these mouse events
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div
+        className="flex items-center justify-between cursor-move select-none flex-shrink-0"
+        onMouseDown={handleDragStart}
+        title="Drag to move"
+      >
         <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
           <Sparkles className="h-3.5 w-3.5 text-primary" />
           Edit with AI
         </div>
         <button
           onClick={onClose}
+          onMouseDown={(e) => e.stopPropagation()}
           className="text-muted-foreground hover:text-foreground transition-colors"
         >
           <X className="h-3.5 w-3.5" />
@@ -211,7 +275,7 @@ export function AIInlineEditPanel({
       </div>
 
       {/* Selected text preview */}
-      <div className="text-xs text-muted-foreground bg-muted rounded-md px-2.5 py-1.5 line-clamp-2 italic border border-border leading-relaxed">
+      <div className="text-xs text-muted-foreground bg-muted rounded-md px-2.5 py-1.5 line-clamp-2 italic border border-border leading-relaxed flex-shrink-0">
         &ldquo;{snapshot.selectedText}&rdquo;
       </div>
 
@@ -294,7 +358,7 @@ export function AIInlineEditPanel({
       {/* ── Streaming phase ── */}
       {phase === "streaming" && (
         <>
-          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[72px] whitespace-pre-wrap leading-relaxed">
+          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[72px] max-h-[min(42vh,24rem)] overflow-y-auto overscroll-contain whitespace-pre-wrap leading-relaxed">
             {result}
             <span className="animate-pulse text-primary ml-0.5">▋</span>
           </div>
@@ -319,7 +383,7 @@ export function AIInlineEditPanel({
       {/* ── Result phase ── */}
       {phase === "result" && (
         <>
-          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[60px] whitespace-pre-wrap leading-relaxed">
+          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[60px] max-h-[min(48vh,28rem)] overflow-y-auto overscroll-contain whitespace-pre-wrap leading-relaxed">
             {result}
           </div>
           <div className="flex items-center justify-between">
