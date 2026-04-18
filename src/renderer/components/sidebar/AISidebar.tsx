@@ -258,6 +258,9 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
 
   const handleStop = useCallback(() => {
     abortedRef.current = true;
+    rpc.abortClaudeStream().catch((err) => {
+      console.error("[AISidebar] Failed to abort Claude stream:", err);
+    });
     setLoading(false);
     setMessages((prev) => {
       const updated = [...prev];
@@ -356,6 +359,12 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          <span
+            className="hidden sm:inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200"
+            title="Agent mode can read, edit, and write project files and use web tools."
+          >
+            Agent
+          </span>
           {/* Language toggle */}
           <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-semibold">
             <button

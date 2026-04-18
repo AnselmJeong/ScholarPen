@@ -36,8 +36,6 @@ export function useIsDark(): boolean {
   return isDark;
 }
 
-applyInitialTheme();
-
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { error: Error | null }
@@ -72,10 +70,15 @@ class ErrorBoundary extends React.Component<
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");
 
-createRoot(root).render(
-  <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  </React.StrictMode>
-);
+async function bootstrap() {
+  await applyInitialTheme();
+  createRoot(root!).render(
+    <React.StrictMode>
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+}
+
+bootstrap();

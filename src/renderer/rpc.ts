@@ -19,7 +19,7 @@ type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
 type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string, slashCommands?: string[]) => void;
 type AiChunkHandler = (content: string, done: boolean) => void;
-type ProjectUpdatedHandler = (projectPath: string) => void;
+type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
@@ -43,8 +43,8 @@ const electrobun = new Electroview({
         aiChunk: ({ content, done }) => {
           aiChunkListeners.forEach((handler) => handler(content, done));
         },
-        projectUpdated: ({ projectPath }) => {
-          projectUpdatedListeners.forEach((handler) => handler(projectPath));
+        projectUpdated: ({ projectPath, filePath }) => {
+          projectUpdatedListeners.forEach((handler) => handler(projectPath, filePath));
         },
       },
     },
@@ -108,6 +108,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     loadManuscript: [],
     loadDocument: [],
     loadBibtex: "",
+    saveBibtexRaw: null,
     resolveDOI: null,
     searchCitations: [],
     searchKnowledgeBase: [],
@@ -170,6 +171,8 @@ export const rpc = {
   // ── BibTeX ────────────────────────────────────────────
   saveBibtex: (projectPath: string, bibtex: string) =>
     call<void>("saveBibtex", { projectPath, bibtex }),
+  saveBibtexRaw: (projectPath: string, bibtex: string) =>
+    call<void>("saveBibtexRaw", { projectPath, bibtex }),
   loadBibtex: (projectPath: string) => call<string>("loadBibtex", { projectPath }),
   // ── Citation ──────────────────────────────────────────
   resolveDOI: (doi: string) => call<CitationMetadata>("resolveDOI", { doi }),
@@ -211,6 +214,7 @@ export const rpc = {
   openExternal: (url: string) => call<void>("openExternal", { url }),
   // ── Claude CLI streaming ──────────────────────────────
   getClaudeSlashCommands: (projectPath?: string) => call<string[]>("getClaudeSlashCommands", { projectPath }),
+  abortClaudeStream: () => call<void>("abortClaudeStream"),
   claudeStream: (
     message: string,
     sessionId: string | null,

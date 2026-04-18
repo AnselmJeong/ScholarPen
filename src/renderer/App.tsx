@@ -1,15 +1,13 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from "react";
 import { PenLine, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { LeftSidebar, type SidebarTab } from "./components/sidebar/LeftSidebar";
 import { IconRail } from "./components/sidebar/IconRail";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
-import { AISidebar } from "./components/sidebar/AISidebar";
 import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog } from "./components/editor/ExportDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
-import { KnowledgeGraphPanel } from "./components/graph/KnowledgeGraphPanel";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
@@ -18,6 +16,8 @@ import type { BlockNoteEditor } from "@blocknote/core";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
+const AISidebar = lazy(() => import("./components/sidebar/AISidebar").then((m) => ({ default: m.AISidebar })));
+const KnowledgeGraphPanel = lazy(() => import("./components/graph/KnowledgeGraphPanel").then((m) => ({ default: m.KnowledgeGraphPanel })));
 
 export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>({
@@ -38,12 +38,14 @@ export function App() {
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
+  const [bibReloadTrigger, setBibReloadTrigger]       = useState(0);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel">>({
+  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel" | "ollamaBaseUrl">>({
     aiBackend: "ollama",
     claudeModel: "claude-sonnet-4-6",
+    ollamaBaseUrl: "http://localhost:11434",
   });
 
   // ── KB Graph state ────────────────────────────────────────────────────────
@@ -94,7 +96,11 @@ export function App() {
   // Load AI backend setting once on mount
   useEffect(() => {
     rpc.getSettings()
-      .then((s) => setAppSettings({ aiBackend: s.aiBackend ?? "ollama", claudeModel: s.claudeModel ?? "claude-sonnet-4-6" }))
+      .then((s) => setAppSettings({
+        aiBackend: s.aiBackend ?? "ollama",
+        claudeModel: s.claudeModel ?? "claude-sonnet-4-6",
+        ollamaBaseUrl: s.ollamaBaseUrl ?? "http://localhost:11434",
+      }))
       .catch(console.error);
   }, []);
 
@@ -225,7 +231,6 @@ export function App() {
             const ts = new Date().toISOString().slice(0, 10);
             rpc.createDocument(activeProject.path, `Untitled-${ts}.scholarpen.json`)
               .then(async (created) => {
-                await refreshFileTree();
                 setActiveDocumentFilename(created);
                 setActiveFile(null);
                 setCurrentView("editor");
@@ -324,11 +329,16 @@ export function App() {
   }, [refreshFileTree]);
 
   useEffect(() => {
-    return onProjectUpdated((updatedPath) => {
-      if (activeProject && updatedPath === activeProject.path)
+    return onProjectUpdated((updatedPath, filePath) => {
+      if (!activeProject || updatedPath !== activeProject.path) return;
+      refreshFileTree();
+      if (filePath?.endsWith("/references.bib")) {
+        setBibReloadTrigger(n => n + 1);
+      } else if (!filePath || filePath.endsWith(`/${activeDocumentFilename ?? ""}`)) {
         setEditorReloadTrigger(n => n + 1);
+      }
     });
-  }, [activeProject]);
+  }, [activeProject, activeDocumentFilename, refreshFileTree]);
 
   // ── Left sidebar resize ────────────────────────────────────────────────────
 
@@ -501,7 +511,11 @@ export function App() {
             onClose={() => setCurrentView("editor")}
             onSettingsSaved={(saved) => {
               refreshProjects();
-              setAppSettings({ aiBackend: saved.aiBackend ?? "ollama", claudeModel: saved.claudeModel ?? "claude-sonnet-4-6" });
+              setAppSettings({
+                aiBackend: saved.aiBackend ?? "ollama",
+                claudeModel: saved.claudeModel ?? "claude-sonnet-4-6",
+                ollamaBaseUrl: saved.ollamaBaseUrl ?? "http://localhost:11434",
+              });
             }}
           />
         ) : (
@@ -513,12 +527,14 @@ export function App() {
                   style={{ width: graphPanelWidth }}
                   className="flex-shrink-0 h-full"
                 >
-                  <KnowledgeGraphPanel
-                    graph={kbGraph}
-                    selectedNodeId={graphSelectedNodeId}
-                    onNodeClick={handleGraphNodeClick}
-                    onClearSelection={() => setGraphSelectedNodeId(null)}
-                  />
+                  <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading graph...</div>}>
+                    <KnowledgeGraphPanel
+                      graph={kbGraph}
+                      selectedNodeId={graphSelectedNodeId}
+                      onNodeClick={handleGraphNodeClick}
+                      onClearSelection={() => setGraphSelectedNodeId(null)}
+                    />
+                  </Suspense>
                 </div>
                 {/* Resize handle */}
                 <div
@@ -533,7 +549,9 @@ export function App() {
               ref={editorGroupRef}
               project={activeProject}
               ollamaStatus={ollamaStatus}
+              ollamaBaseUrl={appSettings.ollamaBaseUrl}
               reloadTrigger={editorReloadTrigger}
+              bibReloadTrigger={bibReloadTrigger}
               onActiveFileChange={(file, docFilename) => {
                 setActiveFile(file);
                 setActiveDocumentFilename(docFilename);
@@ -552,14 +570,16 @@ export function App() {
               className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
               onMouseDown={handleAIResizeMouseDown}
             />
-            <AISidebar
-              project={activeProject}
-              ollamaStatus={ollamaStatus}
-              editor={editorRef.current}
-              onClose={() => setAiSidebarOpen(false)}
-              width={aiSidebarWidth}
-              onOpenKBFile={(filePath) => handleKnowledgeFileSelect(filePath)}
-            />
+            <Suspense fallback={<div style={{ width: aiSidebarWidth }} className="h-full border-l border-border flex items-center justify-center text-sm text-muted-foreground">Loading AI...</div>}>
+              <AISidebar
+                project={activeProject}
+                ollamaStatus={ollamaStatus}
+                editor={editorRef.current}
+                onClose={() => setAiSidebarOpen(false)}
+                width={aiSidebarWidth}
+                onOpenKBFile={(filePath) => handleKnowledgeFileSelect(filePath)}
+              />
+            </Suspense>
           </>
         )}
       </div>
