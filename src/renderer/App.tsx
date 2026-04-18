@@ -504,64 +504,66 @@ export function App() {
           onMouseDown={handleLeftResizeMouseDown}
         />
 
-        {/* Center: Settings | Graph+Editor */}
-        {currentView === "settings" ? (
-          <SettingsPage
-            ollamaStatus={ollamaStatus}
-            onClose={() => setCurrentView("editor")}
-            onSettingsSaved={(saved) => {
-              refreshProjects();
-              setAppSettings({
-                aiBackend: saved.aiBackend ?? "ollama",
-                claudeModel: saved.claudeModel ?? "claude-sonnet-4-6",
-                ollamaBaseUrl: saved.ollamaBaseUrl ?? "http://localhost:11434",
-              });
-            }}
-          />
-        ) : (
-          <div className="flex flex-1 overflow-hidden">
-            {/* KB Graph panel (when active) */}
-            {graphMode && kbGraph && (
-              <>
-                <div
-                  style={{ width: graphPanelWidth }}
-                  className="flex-shrink-0 h-full"
-                >
-                  <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading graph...</div>}>
-                    <KnowledgeGraphPanel
-                      graph={kbGraph}
-                      selectedNodeId={graphSelectedNodeId}
-                      onNodeClick={handleGraphNodeClick}
-                      onClearSelection={() => setGraphSelectedNodeId(null)}
-                    />
-                  </Suspense>
-                </div>
-                {/* Resize handle */}
-                <div
-                  className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
-                  onMouseDown={handleGraphResizeMouseDown}
-                />
-              </>
-            )}
+        {/* Center: Graph+Editor, with Settings overlay kept in the same workspace */}
+        <div className="relative flex flex-1 overflow-hidden">
+          {/* KB Graph panel (when active) */}
+          {graphMode && kbGraph && (
+            <>
+              <div
+                style={{ width: graphPanelWidth }}
+                className="flex-shrink-0 h-full"
+              >
+                <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading graph...</div>}>
+                  <KnowledgeGraphPanel
+                    graph={kbGraph}
+                    selectedNodeId={graphSelectedNodeId}
+                    onNodeClick={handleGraphNodeClick}
+                    onClearSelection={() => setGraphSelectedNodeId(null)}
+                  />
+                </Suspense>
+              </div>
+              {/* Resize handle */}
+              <div
+                className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
+                onMouseDown={handleGraphResizeMouseDown}
+              />
+            </>
+          )}
 
-            {/* Editor */}
-            <EditorPaneGroup
-              ref={editorGroupRef}
-              project={activeProject}
-              ollamaStatus={ollamaStatus}
-              ollamaBaseUrl={appSettings.ollamaBaseUrl}
-              reloadTrigger={editorReloadTrigger}
-              bibReloadTrigger={bibReloadTrigger}
-              onActiveFileChange={(file, docFilename) => {
-                setActiveFile(file);
-                setActiveDocumentFilename(docFilename);
-              }}
-              onActiveEditorChange={handleEditorReady}
-              onWordCountChange={setWordCount}
-              onSaveStatusChange={setSaveStatus}
-            />
-          </div>
-        )}
+          {/* Editor */}
+          <EditorPaneGroup
+            ref={editorGroupRef}
+            project={activeProject}
+            ollamaStatus={ollamaStatus}
+            ollamaBaseUrl={appSettings.ollamaBaseUrl}
+            reloadTrigger={editorReloadTrigger}
+            bibReloadTrigger={bibReloadTrigger}
+            onActiveFileChange={(file, docFilename) => {
+              setActiveFile(file);
+              setActiveDocumentFilename(docFilename);
+            }}
+            onActiveEditorChange={handleEditorReady}
+            onWordCountChange={setWordCount}
+            onSaveStatusChange={setSaveStatus}
+          />
+
+          {currentView === "settings" && (
+            <div className="absolute inset-0 z-20 flex bg-background">
+              <SettingsPage
+                ollamaStatus={ollamaStatus}
+                onClose={() => setCurrentView("editor")}
+                onSettingsSaved={(saved) => {
+                  refreshProjects();
+                  setAppSettings({
+                    aiBackend: saved.aiBackend ?? "ollama",
+                    claudeModel: saved.claudeModel ?? "claude-sonnet-4-6",
+                    ollamaBaseUrl: saved.ollamaBaseUrl ?? "http://localhost:11434",
+                  });
+                }}
+              />
+            </div>
+          )}
+        </div>
 
         {/* Right: AI Sidebar */}
         {aiSidebarOpen && (
