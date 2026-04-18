@@ -365,8 +365,29 @@ export function EditorArea({
           console.error("Auto-save failed:", err);
           updateSaveStatus("unsaved");
         });
-    }, 5 * 60 * 1000); // 5 minutes
+    }, 2 * 1000); // 2 seconds
   }, [editor, project, documentFilename, countWords, updateSaveStatus]);
+
+  // Flush any pending save immediately when the window loses focus.
+  useEffect(() => {
+    const flush = () => {
+      if (saveTimerRef.current && project) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        const filename = documentFilename || "manuscript.scholarpen.json";
+        updateSaveStatus("saving");
+        rpc.saveDocument(project.path, filename, editor.document).then(
+          () => updateSaveStatus("saved"),
+          () => updateSaveStatus("unsaved")
+        );
+      }
+    };
+    const handler = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [editor, project, documentFilename, updateSaveStatus]);
 
   // Build slash menu items once; only rebuild when editor, AI, or citekeys change.
   // Kept out of getItems to avoid reconstructing all block-type arrays on every keystroke.
