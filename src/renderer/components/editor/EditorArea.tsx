@@ -6,7 +6,6 @@ import {
   SuggestionMenuController,
   FormattingToolbar,
   FormattingToolbarController,
-  BlockTypeSelect,
   BasicTextStyleButton,
   TextAlignButton,
   ColorStyleButton,
@@ -16,6 +15,10 @@ import {
   DragHandleMenu,
   RemoveBlockItem,
   BlockColorsItem,
+  useBlockNoteEditor,
+  useComponentsContext,
+  SideMenu,
+  SideMenuController,
 } from "@blocknote/react";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
@@ -61,6 +64,52 @@ interface EditorAreaProps {
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   reloadTrigger?: number;
+}
+
+/** Block type submenu for the drag handle popup */
+const BLOCK_TYPE_ITEMS = [
+  { type: "paragraph",       label: "Paragraph",       props: {} },
+  { type: "heading",         label: "Heading 1",        props: { level: 1 } },
+  { type: "heading",         label: "Heading 2",        props: { level: 2 } },
+  { type: "heading",         label: "Heading 3",        props: { level: 3 } },
+  { type: "bulletListItem",  label: "Bullet List",      props: {} },
+  { type: "numberedListItem",label: "Numbered List",    props: {} },
+  { type: "checkListItem",   label: "Check List",       props: {} },
+  { type: "quote",           label: "Quote",            props: {} },
+] as const;
+
+function BlockTypeDragItem() {
+  const editor = useBlockNoteEditor();
+  const components = useComponentsContext();
+  if (!components) return null;
+  return (
+    <components.Generic.Menu.Root position="right" sub={true}>
+      <components.Generic.Menu.Trigger sub={true}>
+        <components.Generic.Menu.Item className="bn-menu-item" subTrigger={true}>
+          Turn Into
+        </components.Generic.Menu.Item>
+      </components.Generic.Menu.Trigger>
+      <components.Generic.Menu.Dropdown sub={true} className="bn-menu-dropdown">
+        {BLOCK_TYPE_ITEMS.map(({ type, label, props: blockProps }) => (
+          <components.Generic.Menu.Item
+            key={label}
+            className="bn-menu-item"
+            onClick={() => {
+              // Read the hovered block from the side menu store at click time
+              const sideMenuExt = (editor as any).getExtension("sideMenu");
+              const block = sideMenuExt?.store?.state?.block
+                ?? editor.getTextCursorPosition().block;
+              editor.updateBlock(block, { type: type as any, props: blockProps as any });
+              editor.setTextCursorPosition(block.id, "end");
+              editor.focus();
+            }}
+          >
+            {label}
+          </components.Generic.Menu.Item>
+        ))}
+      </components.Generic.Menu.Dropdown>
+    </components.Generic.Menu.Root>
+  );
 }
 
 function extractText(content: unknown): string {
@@ -377,14 +426,21 @@ export function EditorArea({
             theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
-            dragHandleMenu={(props) => (
-              <DragHandleMenu {...props}>
-                <BlockTypeSelect key="blockTypeSelect" />
-                <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
-                <BlockColorsItem {...props} />
-              </DragHandleMenu>
-            )}
+            sideMenu={false}
           >
+            <SideMenuController
+              sideMenu={() => (
+                <SideMenu
+                  dragHandleMenu={(props) => (
+                    <DragHandleMenu {...props}>
+                      <BlockTypeDragItem />
+                      <BlockColorsItem {...props}>Colors</BlockColorsItem>
+                      <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
+                    </DragHandleMenu>
+                  )}
+                />
+              )}
+            />
             <AIMenuController />
             <SuggestionMenuController
               triggerCharacter="$"
