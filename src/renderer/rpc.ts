@@ -18,6 +18,7 @@ import type {
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
 type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string, slashCommands?: string[]) => void;
+type AiChunkHandler = (content: string, done: boolean) => void;
 type ProjectUpdatedHandler = (projectPath: string) => void;
 
 // Create Electrobun RPC client for webview using defineRPC
@@ -39,6 +40,9 @@ const electrobun = new Electroview({
         claudeChunk: ({ content, done, sessionId, slashCommands }) => {
           claudeChunkListeners.forEach((handler) => handler(content, done, sessionId, slashCommands));
         },
+        aiChunk: ({ content, done }) => {
+          aiChunkListeners.forEach((handler) => handler(content, done));
+        },
         projectUpdated: ({ projectPath }) => {
           projectUpdatedListeners.forEach((handler) => handler(projectPath));
         },
@@ -51,6 +55,7 @@ const electrobun = new Electroview({
 const menuActionListeners: MenuActionHandler[] = [];
 const importMarkdownListeners: ImportMarkdownHandler[] = [];
 const claudeChunkListeners: ClaudeChunkHandler[] = [];
+const aiChunkListeners: AiChunkHandler[] = [];
 const projectUpdatedListeners: ProjectUpdatedHandler[] = [];
 
 export function onMenuAction(handler: MenuActionHandler) {
@@ -74,6 +79,14 @@ export function onClaudeChunk(handler: ClaudeChunkHandler): () => void {
   return () => {
     const idx = claudeChunkListeners.indexOf(handler);
     if (idx >= 0) claudeChunkListeners.splice(idx, 1);
+  };
+}
+
+export function onAiChunk(handler: AiChunkHandler): () => void {
+  aiChunkListeners.push(handler);
+  return () => {
+    const idx = aiChunkListeners.indexOf(handler);
+    if (idx >= 0) aiChunkListeners.splice(idx, 1);
   };
 }
 
@@ -205,16 +218,12 @@ export const rpc = {
     kbEnabled?: boolean,
     lang?: "ko" | "en"
   ) => call<void>("claudeStream", { message, sessionId, projectPath, kbEnabled, lang }),
-  // ── Streaming AI ──────────────────────────────────────
+  // ── Streaming AI (Ollama, proxied through bun to bypass CORS) ──
+  // Listen for chunks with `onAiChunk(...)`; this call is fire-and-forget.
   generateTextStream: (
     model: string,
-    messages: Array<{ role: string; content: string }>,
-    onChunk: (content: string) => void
-  ) => {
-    // Register message listener for aiChunk messages
-    (electrobun.rpc as any)?.addMessageListener?.("aiChunk", (payload: { content: string }) => {
-      onChunk(payload.content);
-    });
-    return call<void>("generateTextStream", { model, messages });
-  },
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    think?: boolean
+  ) => call<void>("generateTextStream", { model, messages, think }),
+  abortAiStream: () => call<void>("abortAiStream"),
 };

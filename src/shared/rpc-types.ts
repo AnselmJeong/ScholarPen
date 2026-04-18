@@ -10,6 +10,8 @@ export interface OllamaChatRequest {
   messages: OllamaMessage[];
   stream?: boolean;
   context?: string;
+  /** Disable qwen3 chain-of-thought — without this, content comes back empty. */
+  think?: boolean;
 }
 
 export interface OllamaChatChunk {

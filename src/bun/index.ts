@@ -83,6 +83,10 @@ async function getMainViewUrl(): Promise<string> {
 // Module-level refs — set after BrowserWindow is created
 let sendClaudeChunk: ((payload: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] }) => void) | null = null;
 let sendProjectUpdated: ((payload: { projectPath: string }) => void) | null = null;
+let sendAiChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
+
+// Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
+let activeAiAbortController: AbortController | null = null;
 
 // File watcher state — tracks external changes to project files
 let activeProjectWatcher: FSWatcher | null = null;
@@ -363,15 +367,38 @@ async function main() {
           });
         },
 
-        // Proxy Ollama chat request to avoid CORS issues
-        // Note: generateTextStream uses Electrobun's streaming RPC pattern
-        // where the second arg is a sendChunk callback, not a standard request param.
-        // @ts-expect-error — Electrobun streaming RPC has a different call signature
-        generateTextStream: async ({ model, messages }, sendChunk) => {
-          await ollamaClient.streamChat(
-            { model, messages },
-            (chunk: string) => sendChunk({ content: chunk })
-          );
+        // Proxy Ollama chat to the renderer via aiChunk messages.
+        // Fire-and-forget: return immediately so Electrobun can flush outbound
+        // aiChunk messages while the stream runs in the background.
+        generateTextStream: async ({ model, messages, think }) => {
+          activeAiAbortController?.abort();
+          const controller = new AbortController();
+          activeAiAbortController = controller;
+
+          ollamaClient
+            .streamChat(
+              { model, messages, think },
+              (chunk) => sendAiChunk?.({ content: chunk, done: false }),
+              controller.signal
+            )
+            .then(() => sendAiChunk?.({ content: "", done: true }))
+            .catch((err: Error) => {
+              if (err.name === "AbortError") {
+                sendAiChunk?.({ content: "", done: true });
+                return;
+              }
+              sendAiChunk?.({ content: `\n\n❌ ${err.message}`, done: false });
+              sendAiChunk?.({ content: "", done: true });
+            })
+            .finally(() => {
+              if (activeAiAbortController === controller) {
+                activeAiAbortController = null;
+              }
+            });
+        },
+
+        abortAiStream: () => {
+          activeAiAbortController?.abort();
         },
       },
       messages: {
@@ -398,6 +425,7 @@ async function main() {
   // ── Wire up message senders ──────────────────────────────────
   sendClaudeChunk = (payload) => win.webview.rpc?.send.claudeChunk(payload);
   sendProjectUpdated = (payload) => win.webview.rpc?.send.projectUpdated(payload);
+  sendAiChunk = (payload) => win.webview.rpc?.send.aiChunk(payload);
 
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {
