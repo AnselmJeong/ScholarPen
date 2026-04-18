@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import ReactDOM from "react-dom";
 import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { rpc, onAiChunk } from "../../rpc";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -64,7 +65,8 @@ export function AIInlineEditPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [translateOpen, setTranslateOpen] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const activeRef = useRef(false);
+  const accumulatedRef = useRef("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const translateRef = useRef<HTMLDivElement>(null);
 
@@ -92,65 +94,59 @@ export function AIInlineEditPanel({
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  // Cancel any in-flight stream when the panel unmounts.
+  useEffect(() => {
+    return () => {
+      if (activeRef.current) {
+        activeRef.current = false;
+        rpc.abortAiStream().catch(() => {});
+      }
+    };
+  }, []);
+
+  // Subscribe to aiChunk messages while the panel is mounted. Chunks that
+  // arrive while `activeRef.current === false` are stale (post-stop) and ignored.
+  useEffect(() => {
+    return onAiChunk((content, done) => {
+      if (!activeRef.current) return;
+      if (done) {
+        setLoading(false);
+        activeRef.current = false;
+        return;
+      }
+      if (content.startsWith("\n\n❌ ")) {
+        setError(content.replace(/^\n\n❌\s*/, ""));
+        return;
+      }
+      if (content) {
+        accumulatedRef.current += content;
+        setResult(accumulatedRef.current);
+      }
+    });
+  }, []);
+
   const run = useCallback(
     async (instruction: string) => {
       if (!instruction.trim()) return;
       setResult("");
       setError("");
       setLoading(true);
-      abortRef.current = new AbortController();
-      let accumulated = "";
+      accumulatedRef.current = "";
+      activeRef.current = true;
 
       try {
-        const res = await fetch("http://localhost:11434/api/chat", {
-          method: "POST",
-          signal: abortRef.current.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: "system", content: SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: `${instruction}:\n\n${snapshot.selectedText}`,
-              },
-            ],
-            stream: true,
-            think: false,
-          }),
-        });
-
-        if (!res.ok || !res.body)
-          throw new Error(`Ollama error: HTTP ${res.status}`);
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          for (const line of decoder.decode(value, { stream: true }).split("\n")) {
-            if (!line.trim()) continue;
-            try {
-              const parsed = JSON.parse(line) as {
-                message?: { content?: string };
-                done?: boolean;
-              };
-              if (parsed.message?.content) {
-                accumulated += parsed.message.content;
-                setResult(accumulated);
-              }
-            } catch {
-              /* skip malformed lines */
-            }
-          }
-        }
+        await rpc.generateTextStream(
+          model,
+          [
+            { role: "system", content: SYSTEM_PROMPT },
+            { role: "user", content: `${instruction}:\n\n${snapshot.selectedText}` },
+          ],
+          false
+        );
       } catch (err) {
-        if ((err as Error).name !== "AbortError") {
-          setError((err as Error).message);
-        }
-      } finally {
+        setError((err as Error).message);
         setLoading(false);
+        activeRef.current = false;
       }
     },
     [model, snapshot.selectedText]
@@ -307,7 +303,8 @@ export function AIInlineEditPanel({
               variant="ghost"
               size="sm"
               onClick={() => {
-                abortRef.current?.abort();
+                activeRef.current = false;
+                rpc.abortAiStream().catch(() => {});
                 setLoading(false);
               }}
               className="text-xs text-muted-foreground gap-1"

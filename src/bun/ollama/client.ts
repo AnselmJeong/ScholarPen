@@ -39,16 +39,20 @@ class OllamaClient {
 
   async streamChat(
     req: OllamaChatRequest,
-    onChunk: (content: string) => void
+    onChunk: (content: string) => void,
+    signal?: AbortSignal
   ): Promise<void> {
     const model = req.model || this.defaultModel;
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: "POST",
+      signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
         messages: req.messages,
         stream: true,
+        // Default to disabling qwen3 thinking — otherwise content comes back empty.
+        think: req.think ?? false,
       }),
     });
 

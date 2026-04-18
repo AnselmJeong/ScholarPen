@@ -40,9 +40,14 @@ type BunRequests = RPCSchema<{
     rebuildKBIndex: { params: { projectPath: string }; response: void };
     getKBGraph: { params: { projectPath: string }; response: KBGraph };
     generateTextStream: {
-      params: { model: string; messages: Array<{ role: string; content: string }> };
+      params: {
+        model: string;
+        messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+        think?: boolean;
+      };
       response: void;
     };
+    abortAiStream: { params: void; response: void };
     // File system
     listProjectFiles: { params: { projectPath: string }; response: FileNode[] };
     openFolderDialog: { params: void; response: string | null };
