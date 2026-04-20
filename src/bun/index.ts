@@ -3,7 +3,7 @@ import { readFile } from "fs/promises";
 import { watch, type FSWatcher } from "fs";
 import { basename, extname, join } from "path";
 import { ollamaClient } from "./ollama/client";
-import { claudeClient, buildSubprocessEnv } from "./claude/client";
+import { claudeClient, buildSubprocessEnv, getUnsupportedInteractiveCommand } from "./claude/client";
 import { citationClient } from "./citation/client";
 import { fileSystem } from "./fs/manager";
 import { findKBRoot, getKBEngine, type KBSearchResult } from "./kb/search";
@@ -320,6 +320,16 @@ async function main() {
         // Fire-and-forget: return immediately so Electrobun can process
         // outbound claudeChunk messages while Claude streams in background.
         claudeStream: async ({ message, sessionId, projectPath, kbEnabled, lang }) => {
+          const unsupportedCommand = getUnsupportedInteractiveCommand(message);
+          if (unsupportedCommand) {
+            sendClaudeChunk?.({
+              content: `⚠️ \`${unsupportedCommand}\` 명령은 대화형 Claude CLI 명령이라 ScholarPen 채팅에서는 지원되지 않습니다.`,
+              done: false,
+            });
+            sendClaudeChunk?.({ content: "", done: true, sessionId: sessionId ?? undefined });
+            return;
+          }
+
           activeClaudeAbortController?.abort();
           const controller = new AbortController();
           activeClaudeAbortController = controller;

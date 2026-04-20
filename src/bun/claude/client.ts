@@ -63,6 +63,13 @@ const OLLAMA_BIN = findOllamaBinary();
 const CLAUDE_BIN = findClaudeBinary();
 console.log(`[Claude] ollama: ${OLLAMA_BIN}  claude: ${CLAUDE_BIN}`);
 
+const UNSUPPORTED_INTERACTIVE_COMMANDS = new Set(["/usage", "/cost"]);
+
+export function getUnsupportedInteractiveCommand(message: string): string | null {
+  const firstToken = message.trimStart().split(/\s+/, 1)[0]?.toLowerCase();
+  return firstToken && UNSUPPORTED_INTERACTIVE_COMMANDS.has(firstToken) ? firstToken : null;
+}
+
 export interface ClaudeCallbacks {
   onChunk: (text: string) => void;
   onDone: (sessionId: string) => void;
@@ -114,6 +121,12 @@ export class ClaudeClient {
     signal?: AbortSignal,
   ): Promise<void> {
     const { onChunk, onDone, onInit } = callbacks;
+    const unsupportedCommand = getUnsupportedInteractiveCommand(message);
+    if (unsupportedCommand) {
+      onChunk(`⚠️ \`${unsupportedCommand}\` 명령은 대화형 Claude CLI 명령이라 ScholarPen 채팅에서는 지원되지 않습니다.`);
+      onDone(sessionId ?? "");
+      return;
+    }
 
     // Full tool set for slash commands / unrestricted mode
     const FULL_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,WebSearch,WebFetch,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
@@ -206,20 +219,22 @@ export class ClaudeClient {
     let gotAssistantContent = false; // true once we see text from an assistant event
     let gotResult = false;
 
-    // Kill the process if it produces no output for IDLE_TIMEOUT_MS.
-    // Covers commands like /usage that output a response but then hang
-    // without ever closing stdout or exiting.
-    const IDLE_TIMEOUT_MS = 15_000;
+    // Kill only after the CLI has produced meaningful output and then stops.
+    // Slow model/tool startup can legitimately be silent for a long time, so
+    // a pre-output idle timer causes valid answers to be killed prematurely.
+    const POST_CONTENT_IDLE_TIMEOUT_MS = 120_000;
+    const POST_RESULT_IDLE_TIMEOUT_MS = 15_000;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let idleKilled = false;
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
+      if (!gotAssistantContent && !gotResult) return;
+      const timeoutMs = gotResult ? POST_RESULT_IDLE_TIMEOUT_MS : POST_CONTENT_IDLE_TIMEOUT_MS;
       idleTimer = setTimeout(() => {
         idleKilled = true;
         try { proc.kill(); } catch {}
-      }, IDLE_TIMEOUT_MS);
+      }, timeoutMs);
     };
-    resetIdleTimer();
 
     try {
       while (true) {
@@ -253,6 +268,7 @@ export class ClaudeClient {
                 if (block.type === "text" && typeof block.text === "string" && block.text) {
                   onChunk(block.text);
                   gotAssistantContent = true;
+                  resetIdleTimer();
                 } else if (block.type === "tool_use") {
                   // Tool calls are internal — don't surface details to the user.
                   // The loading cursor in the UI already shows that work is in progress.
@@ -263,6 +279,7 @@ export class ClaudeClient {
 
           if (event.type === "result") {
             gotResult = true;
+            resetIdleTimer();
             if (typeof event.session_id === "string") {
               finalSessionId = event.session_id;
             }
