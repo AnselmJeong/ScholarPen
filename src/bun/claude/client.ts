@@ -1,7 +1,7 @@
 // Claude CLI subprocess client
 // Supports two launch modes:
 //   ollama: `ollama launch claude --model <model> -- <flags>`
-//   claude: `claude -p <msg> --model <model> <flags>` (direct, PATH-resolved)
+//   claude: `claude -p <msg> --model <model> --verbose <flags>` (direct, PATH-resolved)
 
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";
@@ -124,11 +124,12 @@ export class ClaudeClient {
 
     let args: string[];
     if (backend === "claude") {
-      // Direct: claude -p <msg> --model <model> --output-format stream-json ...
+      // Direct: claude -p <msg> --model <model> --output-format stream-json --verbose ...
       args = [
         CLAUDE_BIN,
         "-p", message,
         "--output-format", "stream-json",
+        "--verbose",
         "--dangerously-skip-permissions",
         "--allowed-tools", tools,
       ];
@@ -143,6 +144,7 @@ export class ClaudeClient {
       const claudeArgs = [
         "-p", message,
         "--output-format", "stream-json",
+        "--verbose",
         "--dangerously-skip-permissions",
         "--allowed-tools", tools,
       ];
