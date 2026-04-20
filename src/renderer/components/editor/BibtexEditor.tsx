@@ -132,6 +132,17 @@ function entrySummary(entry: BibtexEntry): string {
   return `${author} (${year}) ${title}`;
 }
 
+function removeEntriesFromBibtex(source: string, entriesToRemove: BibtexEntry[]): string {
+  const ranges = [...entriesToRemove]
+    .sort((a, b) => b.start - a.start)
+    .map((entry) => ({ start: entry.start, end: entry.end }));
+  let next = source;
+  for (const { start, end } of ranges) {
+    next = `${next.slice(0, start)}${next.slice(end)}`;
+  }
+  return next.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [savedContent, setSavedContent] = useState(initialContent);
@@ -142,6 +153,7 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
   const [usedCitekeys, setUsedCitekeys] = useState<Set<string> | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const [citekeyFilter, setCitekeyFilter] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const find = useTextFind(contentRef, file.path);
   const projectPath = file.path.substring(0, file.path.lastIndexOf("/"));
@@ -161,7 +173,12 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
       totalLines: lines.length,
     };
   }, [content]);
-  const visibleEntries = useMemo(() => parsed.entries.slice(0, TABLE_ROW_LIMIT), [parsed.entries]);
+  const filteredEntries = useMemo(() => {
+    const query = citekeyFilter.trim().toLowerCase();
+    if (!query) return parsed.entries;
+    return parsed.entries.filter((entry) => entry.citekey.toLowerCase().includes(query));
+  }, [citekeyFilter, parsed.entries]);
+  const visibleEntries = useMemo(() => filteredEntries.slice(0, TABLE_ROW_LIMIT), [filteredEntries]);
   const visibleUnusedEntries = useMemo(() => unusedEntries.slice(0, REVIEW_ITEM_LIMIT), [unusedEntries]);
   const visibleDuplicateGroups = useMemo(() => duplicateGroups.slice(0, REVIEW_ITEM_LIMIT), [duplicateGroups]);
 
@@ -225,14 +242,14 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
 
   const handleRemoveUnused = useCallback(async () => {
     const keys = usedCitekeys ?? await scanDocumentUsage();
-    const kept = parsed.entries.filter((entry) => keys.has(entry.citekey));
-    const removed = parsed.entries.length - kept.length;
+    const entriesToRemove = parsed.entries.filter((entry) => !keys.has(entry.citekey));
+    const removed = entriesToRemove.length;
     if (removed === 0) {
       flash("미사용 항목 없음");
       return;
     }
-    await saveRaw(kept.map((entry) => entry.raw.trim()).join("\n\n"), `${removed}개 미사용 항목 제거됨`);
-  }, [flash, parsed.entries, saveRaw, scanDocumentUsage, usedCitekeys]);
+    await saveRaw(removeEntriesFromBibtex(content, entriesToRemove), `${removed}개 미사용 항목 제거됨`);
+  }, [content, flash, parsed.entries, saveRaw, scanDocumentUsage, usedCitekeys]);
 
   const handleRemoveDuplicateGroups = useCallback(async () => {
     const duplicateStarts = new Set<number>();
@@ -243,9 +260,21 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
       flash("중복 후보 없음");
       return;
     }
-    const kept = parsed.entries.filter((entry) => !duplicateStarts.has(entry.start));
-    await saveRaw(kept.map((entry) => entry.raw.trim()).join("\n\n"), `${duplicateStarts.size}개 duplicate 후보 제거됨`);
-  }, [duplicateGroups, flash, parsed.entries, saveRaw]);
+    const entriesToRemove = parsed.entries.filter((entry) => duplicateStarts.has(entry.start));
+    await saveRaw(removeEntriesFromBibtex(content, entriesToRemove), `${duplicateStarts.size}개 duplicate 후보 제거됨`);
+  }, [content, duplicateGroups, flash, parsed.entries, saveRaw]);
+
+  const handleRemoveEntry = useCallback(async (entry: BibtexEntry) => {
+    if (!window.confirm(`'${entry.citekey}' entry를 references.bib에서 제거할까요?`)) return;
+    await saveRaw(removeEntriesFromBibtex(content, [entry]), `'${entry.citekey}' 제거됨`);
+  }, [content, saveRaw]);
+
+  const handleRemoveFilteredEntries = useCallback(async () => {
+    if (!citekeyFilter.trim() || filteredEntries.length === 0) return;
+    if (!window.confirm(`현재 citekey 필터와 일치하는 ${filteredEntries.length}개 entry를 제거할까요?`)) return;
+    await saveRaw(removeEntriesFromBibtex(content, filteredEntries), `${filteredEntries.length}개 filtered entry 제거됨`);
+    setCitekeyFilter("");
+  }, [citekeyFilter, content, filteredEntries, saveRaw]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
@@ -317,12 +346,40 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
 
         {view === "entries" && (
           <div className="max-w-6xl mx-auto p-4">
-            <div className="mb-3 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
               <span>{parsed.entries.length} entries</span>
+              {citekeyFilter.trim() && <span>{filteredEntries.length} matched</span>}
               <span>{duplicateGroups.length} duplicate groups</span>
               {usedCitekeys && <span>{unusedEntries.length} unused</span>}
               {parsed.issues.length > 0 && <span className="text-red-400">{parsed.issues.length} parse issues</span>}
-              {parsed.entries.length > visibleEntries.length && <span>{visibleEntries.length} shown</span>}
+              {filteredEntries.length > visibleEntries.length && <span>{visibleEntries.length} shown</span>}
+              <div className="ml-auto flex min-w-[260px] items-center gap-2">
+                <input
+                  value={citekeyFilter}
+                  onChange={(e) => setCitekeyFilter(e.target.value)}
+                  placeholder="Filter citekey..."
+                  className="h-8 flex-1 rounded border border-border bg-muted/40 px-2 font-mono text-xs text-foreground outline-none focus:border-primary"
+                  aria-label="Filter BibTeX entries by citekey"
+                />
+                {citekeyFilter && (
+                  <button
+                    onClick={() => setCitekeyFilter("")}
+                    className="h-8 px-2 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                    title="citekey filter clear"
+                  >
+                    Clear
+                  </button>
+                )}
+                <button
+                  onClick={handleRemoveFilteredEntries}
+                  disabled={!citekeyFilter.trim() || filteredEntries.length === 0}
+                  className="flex h-8 items-center gap-1 rounded px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+                  title="현재 citekey 필터 결과 제거"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  filtered 제거
+                </button>
+              </div>
             </div>
             <div className="overflow-auto rounded-md border border-border">
               <table className="w-full text-xs">
@@ -333,9 +390,17 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
                     <th className="px-3 py-2 text-left font-medium">Title</th>
                     <th className="px-3 py-2 text-left font-medium">DOI</th>
                     <th className="px-3 py-2 text-left font-medium">Status</th>
+                    <th className="px-3 py-2 text-right font-medium">Remove</th>
                   </tr>
                 </thead>
                 <tbody>
+                  {visibleEntries.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="border-t border-border/70 px-3 py-8 text-center text-muted-foreground">
+                        citekey filter와 일치하는 entry가 없습니다.
+                      </td>
+                    </tr>
+                  )}
                   {visibleEntries.map((entry) => {
                     const isUnused = usedCitekeys ? !usedCitekeys.has(entry.citekey) : false;
                     const isDuplicate = duplicateGroups.some((group) => group.includes(entry));
@@ -350,15 +415,25 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
                             {isUnused ? "unused" : isDuplicate ? "duplicate" : "ok"}
                           </span>
                         </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => handleRemoveEntry(entry)}
+                            className="inline-flex items-center gap-1 rounded px-2 py-1 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400"
+                            title={`${entry.citekey} 제거`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            제거
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
-            {parsed.entries.length > visibleEntries.length && (
+            {filteredEntries.length > visibleEntries.length && (
               <p className="mt-2 text-xs text-muted-foreground">
-                Showing first {visibleEntries.length} entries. Review cleanup still applies to the full file.
+                Showing first {visibleEntries.length} matching entries. Review cleanup still applies to the full file.
               </p>
             )}
           </div>
