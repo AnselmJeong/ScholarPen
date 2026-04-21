@@ -23,9 +23,12 @@ interface SettingsPageProps {
 }
 
 const CLAUDE_MODELS = [
-  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { value: "default", label: "Default" },
+  { value: "sonnet", label: "Sonnet (latest)" },
+  { value: "opus", label: "Opus (latest)" },
+  { value: "haiku", label: "Haiku (latest)" },
+  { value: "opusplan", label: "Opus Plan" },
+  { value: "sonnet[1m]", label: "Sonnet 1M context" },
 ];
 
 function SettingSection({ icon: Icon, title, children }: {
@@ -225,23 +228,36 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
             {backend === "claude" && (
               <SettingRow
                 label="Sidebar Agent Model"
-                description="Claude Code CLI를 직접 사용할 때의 모델"
+                description="Claude Code alias 또는 full model ID"
               >
-                <Select
-                  value={settings.claudeModel ?? "claude-sonnet-4-6"}
-                  onValueChange={(v) => updateSetting("claudeModel", v)}
-                >
-                  <SelectTrigger className="text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CLAUDE_MODELS.map(({ value, label }) => (
-                      <SelectItem key={value} value={value} className="text-xs">
-                        {label}
+                <div className="space-y-1.5">
+                  <Select
+                    value={CLAUDE_MODELS.some(({ value }) => value === settings.claudeModel) ? settings.claudeModel : "custom"}
+                    onValueChange={(v) => {
+                      if (v !== "custom") updateSetting("claudeModel", v);
+                    }}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CLAUDE_MODELS.map(({ value, label }) => (
+                        <SelectItem key={value} value={value} className="text-xs">
+                          {label}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="custom" className="text-xs">
+                        Custom model ID
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={settings.claudeModel ?? "sonnet"}
+                    onChange={(e) => updateSetting("claudeModel", e.target.value)}
+                    placeholder="sonnet, opus, haiku, or claude-*"
+                    className="font-mono text-xs"
+                  />
+                </div>
               </SettingRow>
             )}
 

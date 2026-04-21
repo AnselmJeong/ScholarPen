@@ -44,7 +44,7 @@ export function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel" | "ollamaBaseUrl">>({
     aiBackend: "ollama",
-    claudeModel: "claude-sonnet-4-6",
+    claudeModel: "sonnet",
     ollamaBaseUrl: "http://localhost:11434",
   });
 
@@ -98,7 +98,7 @@ export function App() {
     rpc.getSettings()
       .then((s) => setAppSettings({
         aiBackend: s.aiBackend ?? "ollama",
-        claudeModel: s.claudeModel ?? "claude-sonnet-4-6",
+        claudeModel: s.claudeModel ?? "sonnet",
         ollamaBaseUrl: s.ollamaBaseUrl ?? "http://localhost:11434",
       }))
       .catch(console.error);
@@ -556,7 +556,7 @@ export function App() {
                   refreshProjects();
                   setAppSettings({
                     aiBackend: saved.aiBackend ?? "ollama",
-                    claudeModel: saved.claudeModel ?? "claude-sonnet-4-6",
+                    claudeModel: saved.claudeModel ?? "sonnet",
                     ollamaBaseUrl: saved.ollamaBaseUrl ?? "http://localhost:11434",
                   });
                 }}

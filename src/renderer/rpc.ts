@@ -129,7 +129,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       kbChunkOverlap: 64,
       kbTopK: 5,
       aiBackend: "ollama",
-      claudeModel: "claude-sonnet-4-6",
+      claudeModel: "sonnet",
       theme: "system",
     },
     getOllamaModels: [],

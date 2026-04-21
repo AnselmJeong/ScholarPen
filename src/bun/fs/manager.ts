@@ -17,7 +17,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   kbTopK: 5,
   openAlexApiKey: "",
   aiBackend: "ollama",
-  claudeModel: "claude-sonnet-4-6",
+  claudeModel: "sonnet",
   theme: "system",
 };
 

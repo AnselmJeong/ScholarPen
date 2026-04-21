@@ -337,7 +337,7 @@ async function main() {
           const settings = await fileSystem.getSettings();
           const backend = settings.aiBackend ?? "ollama";
           const model = backend === "claude"
-            ? (settings.claudeModel || "claude-sonnet-4-6")
+            ? (settings.claudeModel || "sonnet")
             : (settings.ollamaDefaultModel || "qwen3.5:cloud");
 
           let enrichedMessage = message;

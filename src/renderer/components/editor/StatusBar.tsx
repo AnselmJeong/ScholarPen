@@ -19,7 +19,7 @@ export function StatusBar({ ollamaStatus, aiBackend = "ollama", claudeModel, wor
   const connected = isClaude ? true : ollamaStatus.connected;
   const label = isClaude ? "Claude" : "Ollama";
   const modelLabel = isClaude
-    ? (claudeModel ?? "claude-sonnet-4-6")
+    ? (claudeModel ?? "sonnet")
     : ollamaStatus.activeModel;
 
   return (
