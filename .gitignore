@@ -4,3 +4,4 @@ node_modules
 .vscode
 Knowledge_Base/
 artifacts/
+.claude/worktrees/
