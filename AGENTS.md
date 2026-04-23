@@ -71,7 +71,7 @@ Transport hot-swapping on Ollama reconnect is handled via TanStack Store closure
 
 ## File System & Project Layout
 
-Projects live in `~/ScholarPen/projects/<name>/`:
+Projects live under the configured projects root. The default root is `~/ScholarPen`, where `settings.json` is stored beside project folders:
 ```
 my-paper/
 ├── manuscript.scholarpen.json   # BlockNote JSON (auto-saved every ~2s)

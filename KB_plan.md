@@ -11,7 +11,7 @@ KB는 프로젝트별 서브폴더(`knowledge-base/`)로 존재하며, 검색은
 ## KB 디렉터리 구조 (읽기 전용, ScholarPen 관점)
 
 ```
-~/ScholarPen/projects/my-paper/
+~/ScholarPen/my-paper/
 └── knowledge-base/
     ├── raw/                           # 원문 PDF (scholarwiki가 관리)
     ├── summaries/                     # 논문별 요약 (YAML frontmatter + Markdown)

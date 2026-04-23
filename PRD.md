@@ -182,16 +182,16 @@ win.defineRpc({
 
 ```
 ~/ScholarPen/
-└── projects/
-    └── my-paper/
-        ├── manuscript.scholarpen.json   # BlockNote JSON document
-        ├── references.bib              # BibTeX file
-        ├── knowledge-base/             # PDFs, notes for RAG
-        │   ├── papers/
-        │   └── notes/
-        ├── figures/
-        ├── exports/                    # Generated .md, .qmd, .docx
-        └── .lance/                     # LanceDB vector store
+├── settings.json
+└── my-paper/
+    ├── manuscript.scholarpen.json   # BlockNote JSON document
+    ├── references.bib              # BibTeX file
+    ├── knowledge-base/             # PDFs, notes for RAG
+    │   ├── papers/
+    │   └── notes/
+    ├── figures/
+    ├── exports/                    # Generated .md, .qmd, .docx
+    └── .lance/                     # LanceDB vector store
 ```
 
 ### 5.2 AI Features (P0 — MVP)

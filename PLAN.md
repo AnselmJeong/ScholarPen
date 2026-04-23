@@ -80,7 +80,7 @@ scholarpen/
 - [x] `figureBlock` (이미지 + 캡션 + 번호)
 - [x] `abstractBlock` (구조화 섹션)
 - [x] `footnoteInline` (인라인 각주, hover tooltip)
-- [x] 프로젝트 파일 시스템 RPC (~/ScholarPen/projects/)
+- [x] 프로젝트 파일 시스템 RPC (settings-configured project root; default `~/ScholarPen`)
 - [x] `manuscript.scholarpen.json` 자동 저장 (2초 debounce)
 - [x] 3-pane 레이아웃 (Project Sidebar / Editor / AI Sidebar)
 - [x] Status bar (Ollama 상태, 모델명, 단어수)

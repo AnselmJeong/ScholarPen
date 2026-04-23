@@ -6,9 +6,10 @@ import { deduplicateBibtex } from "../../shared/bibtex-utils";
 
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
+const LEGACY_PROJECTS_ROOT = join(SCHOLARPEN_BASE, "projects");
 
 const DEFAULT_SETTINGS: AppSettings = {
-  projectsRootDir: join(SCHOLARPEN_BASE, "projects"),
+  projectsRootDir: SCHOLARPEN_BASE,
   ollamaBaseUrl: "http://localhost:11434",
   ollamaDefaultModel: "qwen3.5:cloud",
   ollamaEmbedModel: "nomic-embed-text",
@@ -337,6 +338,25 @@ class FileSystemManager {
     }
   }
 
+  private async hasProjectDirectories(rootDir: string): Promise<boolean> {
+    try {
+      const entries = await readdir(rootDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const projectPath = join(rootDir, entry.name);
+        try {
+          await stat(join(projectPath, "documents"));
+          return true;
+        } catch {}
+        try {
+          await stat(join(projectPath, "manuscript.scholarpen.json"));
+          return true;
+        } catch {}
+      }
+    } catch {}
+    return false;
+  }
+
   async ensureBaseDir(): Promise<void> {
     const rootDir = await this.getProjectsRootDir();
     await mkdir(rootDir, { recursive: true });
@@ -641,7 +661,14 @@ class FileSystemManager {
     try {
       const raw = await readFile(SETTINGS_FILE, "utf-8");
       const parsed = JSON.parse(raw);
-      return { ...DEFAULT_SETTINGS, ...parsed };
+      const settings = { ...DEFAULT_SETTINGS, ...parsed };
+      if (
+        settings.projectsRootDir === LEGACY_PROJECTS_ROOT &&
+        !(await this.hasProjectDirectories(LEGACY_PROJECTS_ROOT))
+      ) {
+        return { ...settings, projectsRootDir: SCHOLARPEN_BASE };
+      }
+      return settings;
     } catch {
       return { ...DEFAULT_SETTINGS };
     }
