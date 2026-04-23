@@ -545,6 +545,7 @@ export function App() {
             onActiveEditorChange={handleEditorReady}
             onWordCountChange={setWordCount}
             onSaveStatusChange={setSaveStatus}
+            onBibtexSaved={() => setBibReloadTrigger(n => n + 1)}
           />
 
           {currentView === "settings" && (

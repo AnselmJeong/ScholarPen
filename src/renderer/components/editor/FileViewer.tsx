@@ -13,6 +13,8 @@ import { useTextFind } from "../../hooks/useTextFind";
 interface FileViewerProps {
   file: FileNode;
   reloadTrigger?: number;
+  onSaveReady?: (saveNow: (() => void) | null) => void;
+  onBibtexSaved?: () => void;
 }
 
 const PdfViewer = lazy(() => import("./PdfViewer").then((m) => ({ default: m.PdfViewer })));
@@ -36,7 +38,7 @@ function getExt(name: string): string {
 const FONT_SIZES = [13, 15, 17, 19, 22] as const;
 const FONT_SIZE_KEY = "fileviewer-font-size";
 
-export function FileViewer({ file, reloadTrigger = 0 }: FileViewerProps) {
+export function FileViewer({ file, reloadTrigger = 0, onSaveReady, onBibtexSaved }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -148,7 +150,15 @@ export function FileViewer({ file, reloadTrigger = 0 }: FileViewerProps) {
   }
 
   if (isBibtex) {
-    return <BibtexEditor file={file} initialContent={content} reloadTrigger={reloadTrigger} />;
+    return (
+      <BibtexEditor
+        file={file}
+        initialContent={content}
+        reloadTrigger={reloadTrigger}
+        onSaveReady={onSaveReady}
+        onSaved={onBibtexSaved}
+      />
+    );
   }
 
   return (

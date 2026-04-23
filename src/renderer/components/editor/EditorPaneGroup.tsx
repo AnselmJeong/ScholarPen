@@ -43,6 +43,7 @@ interface EditorPaneGroupProps {
   onActiveEditorChange: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onWordCountChange: (count: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
+  onBibtexSaved: () => void;
 }
 
 // ── Drag tracking (outside React — never causes stale closures) ────────────
@@ -69,6 +70,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       onActiveEditorChange,
       onWordCountChange,
       onSaveStatusChange,
+      onBibtexSaved,
     },
     ref
   ) {
@@ -87,6 +89,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const leftPaneRef = useRef(leftPane);
     const rightPaneRef = useRef<PaneState | null>(null);
     const editorMapRef = useRef<Map<string, BlockNoteEditor<any, any, any>>>(new Map());
+    const saveHandlerMapRef = useRef<Map<string, () => void>>(new Map());
     const containerRef = useRef<HTMLDivElement>(null);
     const dragTrackRef = useRef<DragTrack | null>(null);
 
@@ -119,6 +122,11 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         : (rightPaneRef.current ?? leftPaneRef.current);
       const tab = pane.tabs.find((t) => t.id === pane.activeTabId);
       if (!tab) return;
+      const saveHandler = saveHandlerMapRef.current.get(tab.id);
+      if (saveHandler) {
+        saveHandler();
+        return;
+      }
       const editor = editorMapRef.current.get(tab.id);
       if (editor) (editor as any).__scholarpenSaveNow?.();
     }, []);
@@ -156,6 +164,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         const closeFrom = (pane: PaneState): PaneState => {
           const idx = pane.tabs.findIndex((t) => t.file.path === filePath);
           if (idx === -1) return pane;
+          saveHandlerMapRef.current.delete(pane.tabs[idx].id);
+          editorMapRef.current.delete(pane.tabs[idx].id);
           const newTabs = pane.tabs.filter((_, i) => i !== idx);
           const newActiveId =
             pane.activeTabId === pane.tabs[idx].id
@@ -193,6 +203,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       const doClose = (pane: PaneState): PaneState => {
         const idx = pane.tabs.findIndex((t) => t.id === tabId);
         if (idx === -1) return pane;
+        saveHandlerMapRef.current.delete(tabId);
+        editorMapRef.current.delete(tabId);
         const newTabs = pane.tabs.filter((t) => t.id !== tabId);
         const newActiveId =
           pane.activeTabId === tabId
@@ -429,6 +441,14 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                 key={activeTab.id}
                 file={activeTab.file}
                 reloadTrigger={activeTab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}
+                onSaveReady={(saveNow) => {
+                  if (saveNow) {
+                    saveHandlerMapRef.current.set(activeTab.id, saveNow);
+                  } else {
+                    saveHandlerMapRef.current.delete(activeTab.id);
+                  }
+                }}
+                onBibtexSaved={onBibtexSaved}
               />
             )}
           </div>

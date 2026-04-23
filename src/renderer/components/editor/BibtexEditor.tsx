@@ -28,6 +28,8 @@ interface BibtexEditorProps {
   file: FileNode;
   initialContent: string;
   reloadTrigger?: number;
+  onSaveReady?: (saveNow: (() => void) | null) => void;
+  onSaved?: () => void;
 }
 
 function tokenizeBibtexLine(line: string): Token[] {
@@ -144,7 +146,7 @@ function removeEntriesFromBibtex(source: string, entriesToRemove: BibtexEntry[])
   return next.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function BibtexEditor({ file, initialContent, reloadTrigger = 0 }: BibtexEditorProps) {
+export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveReady, onSaved }: BibtexEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [savedContent, setSavedContent] = useState(initialContent);
   const [message, setMessage] = useState<string | null>(null);
@@ -199,8 +201,9 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0 }: Bibtex
     await rpc.saveBibtexRaw(projectPath, next);
     setContent(next);
     setSavedContent(next);
+    onSaved?.();
     flash(text);
-  }, [flash, projectPath]);
+  }, [flash, onSaved, projectPath]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -215,6 +218,14 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0 }: Bibtex
       setSaving(false);
     }
   }, [content, saveRaw]);
+
+  useEffect(() => {
+    if (!onSaveReady) return;
+    onSaveReady(() => {
+      void handleSave();
+    });
+    return () => onSaveReady(null);
+  }, [handleSave, onSaveReady]);
 
   const scanDocumentUsage = useCallback(async (): Promise<Set<string>> => {
     setUsageLoading(true);

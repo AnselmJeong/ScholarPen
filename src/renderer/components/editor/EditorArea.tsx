@@ -151,6 +151,7 @@ export function EditorArea({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
+  const citekeysRef = useRef<string[]>([]);
   const [doiDialogOpen, setDoiDialogOpen] = useState(false);
   const [doiLoading, setDoiLoading] = useState(false);
   const [doiError, setDoiError] = useState<string | null>(null);
@@ -193,6 +194,10 @@ export function EditorArea({
       .then((bibtex) => setCitekeys(parseCitekeys(bibtex ?? "")))
       .catch(() => setCitekeys([]));
   }, [project?.path, bibReloadTrigger]);
+
+  useEffect(() => {
+    citekeysRef.current = citekeys;
+  }, [citekeys]);
 
   // Load document when project or file switches
   useEffect(() => {
@@ -499,7 +504,7 @@ export function EditorArea({
             <SuggestionMenuController
               triggerCharacter="@"
               getItems={async (query) => {
-                const filtered = citekeys.filter((k) =>
+                const filtered = citekeysRef.current.filter((k) =>
                   k.toLowerCase().includes(query.toLowerCase())
                 );
                 if (filtered.length === 0) return [];
