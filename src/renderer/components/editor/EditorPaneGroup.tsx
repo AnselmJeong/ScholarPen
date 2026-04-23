@@ -425,7 +425,11 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                 }}
               />
             ) : (
-              <FileViewer key={activeTab.id} file={activeTab.file} />
+              <FileViewer
+                key={activeTab.id}
+                file={activeTab.file}
+                reloadTrigger={activeTab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}
+              />
             )}
           </div>
         </div>

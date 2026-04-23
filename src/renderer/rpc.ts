@@ -21,6 +21,24 @@ type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string, s
 type AiChunkHandler = (content: string, done: boolean) => void;
 type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 
+const mutatingMethods = new Set([
+  "createProject",
+  "openProject",
+  "openProjectByPath",
+  "saveDocument",
+  "createDocument",
+  "saveManuscript",
+  "saveBibtex",
+  "saveBibtexRaw",
+  "exportFile",
+  "renameFile",
+  "deleteFile",
+  "saveSettings",
+  "rebuildKBIndex",
+  "abortClaudeStream",
+  "abortAiStream",
+]);
+
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
 const electrobun = new Electroview({
@@ -146,6 +164,10 @@ async function call<T>(method: string, params?: unknown): Promise<T> {
     const result = await (electrobun.rpc as any)?.request?.[method](params);
     return result as T;
   } catch (err) {
+    if (mutatingMethods.has(method)) {
+      console.error(`[RPC] Electrobun RPC failed for ${method}:`, err);
+      throw err;
+    }
     console.warn(`[RPC] Electrobun RPC failed for ${method}, using mock:`, err);
     return mockRpc(method, []) as T;
   }

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, BookOpen, Eye, FilterX, List, Pencil, RotateCcw, Save, SearchCheck, Trash2 } from "lucide-react";
 import type { FileNode } from "../../../shared/rpc-types";
 import {
@@ -27,6 +27,7 @@ interface Token {
 interface BibtexEditorProps {
   file: FileNode;
   initialContent: string;
+  reloadTrigger?: number;
 }
 
 function tokenizeBibtexLine(line: string): Token[] {
@@ -143,7 +144,7 @@ function removeEntriesFromBibtex(source: string, entriesToRemove: BibtexEntry[])
   return next.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
+export function BibtexEditor({ file, initialContent, reloadTrigger = 0 }: BibtexEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [savedContent, setSavedContent] = useState(initialContent);
   const [message, setMessage] = useState<string | null>(null);
@@ -158,6 +159,13 @@ export function BibtexEditor({ file, initialContent }: BibtexEditorProps) {
   const find = useTextFind(contentRef, file.path);
   const projectPath = file.path.substring(0, file.path.lastIndexOf("/"));
   const dirty = content !== savedContent;
+
+  useEffect(() => {
+    if (content !== savedContent) return;
+    setContent(initialContent);
+    setSavedContent(initialContent);
+    setUsedCitekeys(null);
+  }, [content, file.path, initialContent, reloadTrigger, savedContent]);
 
   const parsed = useMemo(() => parseBibtexEntries(content), [content]);
   const duplicateGroups = useMemo(() => findDuplicateBibtexGroups(parsed.entries), [parsed.entries]);

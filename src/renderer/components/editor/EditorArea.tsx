@@ -309,8 +309,15 @@ export function EditorArea({
       const effectiveCitekey = existingCitekey ?? meta.citekey;
 
       if (!existingCitekey && !parseBibtexCitekeys(existing ?? "").includes(meta.citekey)) {
+        if (!meta.bibtex.trim()) {
+          throw new Error(`Resolved DOI ${meta.doi} but no BibTeX entry was returned.`);
+        }
         const updated = existing ? `${existing.trimEnd()}\n\n${meta.bibtex}` : meta.bibtex;
         await rpc.saveBibtex(project.path, updated);
+        const saved = await rpc.loadBibtex(project.path);
+        if (!parseBibtexCitekeys(saved ?? "").includes(meta.citekey)) {
+          throw new Error(`Could not verify '${meta.citekey}' in references.bib after saving.`);
+        }
         setCitekeys((prev) =>
           prev.includes(meta.citekey) ? prev : [...prev, meta.citekey]
         );

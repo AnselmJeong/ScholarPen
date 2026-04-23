@@ -12,6 +12,7 @@ import { useTextFind } from "../../hooks/useTextFind";
 
 interface FileViewerProps {
   file: FileNode;
+  reloadTrigger?: number;
 }
 
 const PdfViewer = lazy(() => import("./PdfViewer").then((m) => ({ default: m.PdfViewer })));
@@ -35,7 +36,7 @@ function getExt(name: string): string {
 const FONT_SIZES = [13, 15, 17, 19, 22] as const;
 const FONT_SIZE_KEY = "fileviewer-font-size";
 
-export function FileViewer({ file }: FileViewerProps) {
+export function FileViewer({ file, reloadTrigger = 0 }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +68,7 @@ export function FileViewer({ file }: FileViewerProps) {
     setFindOpen(false);
     find.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file.path]);
+  }, [file.path, reloadTrigger]);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +90,7 @@ export function FileViewer({ file }: FileViewerProps) {
       });
 
     return () => { cancelled = true; };
-  }, [file.path]);
+  }, [file.path, reloadTrigger]);
 
   const ext = getExt(file.name).toLowerCase();
   const isMarkdown = [".md", ".qmd", ".markdown"].includes(ext);
@@ -147,7 +148,7 @@ export function FileViewer({ file }: FileViewerProps) {
   }
 
   if (isBibtex) {
-    return <BibtexEditor file={file} initialContent={content} />;
+    return <BibtexEditor file={file} initialContent={content} reloadTrigger={reloadTrigger} />;
   }
 
   return (

@@ -213,13 +213,15 @@ async function main() {
           // Suppress file watcher to avoid triggering a document reload
           recentlySavedFiles.add("references.bib");
           setTimeout(() => recentlySavedFiles.delete("references.bib"), 3000);
-          return fileSystem.saveBibtex(projectPath, bibtex);
+          await fileSystem.saveBibtex(projectPath, bibtex);
+          sendProjectUpdated?.({ projectPath, filePath: join(projectPath, "references.bib") });
         },
 
         saveBibtexRaw: async ({ projectPath, bibtex }) => {
           recentlySavedFiles.add("references.bib");
           setTimeout(() => recentlySavedFiles.delete("references.bib"), 3000);
-          return fileSystem.saveBibtexRaw(projectPath, bibtex);
+          await fileSystem.saveBibtexRaw(projectPath, bibtex);
+          sendProjectUpdated?.({ projectPath, filePath: join(projectPath, "references.bib") });
         },
 
         loadBibtex: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
