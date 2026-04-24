@@ -215,7 +215,7 @@ function AssistantHeader({
       <div className="flex items-center gap-2">
         <Bot className="h-4 w-4 text-primary" />
         <div>
-          <p className="text-sm font-semibold text-foreground">Scholar Agent</p>
+          <p className="text-sm font-semibold text-foreground">Scholar Assistant</p>
           <p className="text-xs text-muted-foreground">
             {assistantLabel(provider)} · {model}
           </p>
@@ -224,9 +224,9 @@ function AssistantHeader({
       <div className="flex items-center gap-1.5">
         <span
           className="hidden sm:inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-          title="Scholar Agent is read-only by default. No Claude wrapper is used."
+          title="Scholar Assistant is read-only by default. No Claude wrapper is used."
         >
-          Agent
+          Assistant
         </span>
         <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-semibold">
           {(["ko", "en"] as const).map((value) => (
@@ -278,12 +278,12 @@ function AssistantThread({
           <div className="mt-6 px-2 space-y-3">
             <div className="text-center">
               <Bot className="h-7 w-7 mx-auto text-muted-foreground/30 mb-2" />
-              <p className="text-xs text-muted-foreground leading-relaxed">Scholar Agent가 연결되어 있습니다.</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">Scholar Assistant가 연결되어 있습니다.</p>
             </div>
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">사용법</p>
               {[
-                { prefix: "/", label: "skill 실행  (/ + Tab으로 선택)" },
+                { prefix: "/", label: "instruction 적용  (/ + Tab으로 선택)" },
                 { prefix: "@", label: "파일 지정  (@ + 파일명)" },
                 { prefix: "↵", label: "전송 · Shift+↵ 줄바꿈" },
               ].map(({ prefix, label }) => (
@@ -294,7 +294,7 @@ function AssistantThread({
               ))}
             </div>
             {slashCommands.length > 0 && (
-              <p className="text-xs text-muted-foreground/60 text-center">{slashCommands.length}개 skill 로드됨</p>
+              <p className="text-xs text-muted-foreground/60 text-center">{slashCommands.length}개 instruction 로드됨</p>
             )}
           </div>
         </ThreadPrimitive.Empty>
@@ -625,7 +625,7 @@ function AssistantComposer({
           rows={3}
           submitMode="enter"
           onKeyDown={handleKeyDown}
-          placeholder={loading ? "응답 수신 중..." : "Scholar Agent에게 질문 · / skill · @ 파일"}
+          placeholder={loading ? "응답 수신 중..." : "Scholar Assistant에게 질문 · / instruction · @ 파일"}
           disabled={loading}
           className="w-full resize-none rounded-md border border-input bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
         />

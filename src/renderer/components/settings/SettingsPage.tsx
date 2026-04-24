@@ -4,6 +4,7 @@ import { applyTheme } from "../../main";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -324,6 +325,34 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                     onRefresh={() => fetchProviderModels(provider, settings)}
                     onChange={updateProviderModel}
                   />
+                </SettingRow>
+
+                <SettingRow
+                  label="Ollama API Key"
+                  description="ollama.com web search API에 사용됩니다"
+                >
+                  <Input
+                    type="password"
+                    value={settings.ollamaApiKey}
+                    onChange={(e) => updateSetting("ollamaApiKey", e.target.value)}
+                    placeholder="ollama_..."
+                    className="font-mono text-xs"
+                  />
+                </SettingRow>
+
+                <SettingRow
+                  label="Web Search"
+                  description="AISidebar 질문마다 Ollama web search 결과를 context에 추가합니다"
+                >
+                  <div className="flex items-center justify-end gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {settings.ollamaWebSearchEnabled ? "Enabled" : "Disabled"}
+                    </span>
+                    <Switch
+                      checked={settings.ollamaWebSearchEnabled}
+                      onCheckedChange={(checked) => updateSetting("ollamaWebSearchEnabled", checked)}
+                    />
+                  </div>
                 </SettingRow>
               </>
             )}

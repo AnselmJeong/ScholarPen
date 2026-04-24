@@ -122,7 +122,7 @@ export interface AgentSkill {
   id: string;
   name: string;
   kind: "skill" | "command";
-  source: "codex" | "agents" | "project" | "claude-legacy";
+  source: "scholarpen" | "project";
   sourcePath: string;
   description?: string;
 }
@@ -172,6 +172,8 @@ export interface AppSettings {
   sidebarAgentModel: string;
   modelProviders: Record<LLMProvider, ModelProviderSettings>;
   ollamaBaseUrl: string;
+  ollamaApiKey: string;
+  ollamaWebSearchEnabled: boolean;
   ollamaDefaultModel: string;
   ollamaEmbedModel: string;
   anthropicApiKey: string;

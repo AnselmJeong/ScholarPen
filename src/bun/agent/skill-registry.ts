@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from "fs/promises";
 import { basename, join } from "path";
-import { homedir } from "os";
 import type { AgentSkill } from "../../shared/rpc-types";
+import { APP_COMMANDS_DIR, APP_SKILLS_DIR, seedAppInstructions } from "./app-skills";
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -61,23 +61,18 @@ function parseDescription(content: string): string | undefined {
 }
 
 export async function listAgentSkills(projectPath?: string): Promise<AgentSkill[]> {
-  const home = homedir();
+  await seedAppInstructions();
   const groups = await Promise.all([
-    scanSkillDirs(join(home, ".codex", "skills"), "codex"),
-    scanSkillDirs(join(home, ".agents", "skills"), "agents"),
+    scanSkillDirs(APP_SKILLS_DIR, "scholarpen"),
+    scanCommandDir(APP_COMMANDS_DIR, "scholarpen"),
     projectPath ? scanSkillDirs(join(projectPath, ".scholarpen", "skills"), "project") : Promise.resolve([]),
     projectPath ? scanCommandDir(join(projectPath, ".scholarpen", "commands"), "project") : Promise.resolve([]),
-    scanSkillDirs(join(home, ".claude", "skills"), "claude-legacy"),
-    scanCommandDir(join(home, ".claude", "commands"), "claude-legacy"),
-    projectPath ? scanCommandDir(join(projectPath, ".claude", "commands"), "claude-legacy") : Promise.resolve([]),
   ]);
 
   const byName = new Map<string, AgentSkill>();
   const priority: Record<AgentSkill["source"], number> = {
     project: 0,
-    codex: 1,
-    agents: 2,
-    "claude-legacy": 3,
+    scholarpen: 1,
   };
 
   for (const skill of groups.flat().sort((a, b) => priority[a.source] - priority[b.source])) {

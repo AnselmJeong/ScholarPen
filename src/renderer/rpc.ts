@@ -150,6 +150,8 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     getSettings: {
       projectsRootDir: "",
       ollamaBaseUrl: "http://localhost:11434",
+      ollamaApiKey: "",
+      ollamaWebSearchEnabled: false,
       ollamaDefaultModel: "qwen3.5:cloud",
       ollamaEmbedModel: "nomic-embed-text",
       sidebarAgentProvider: "ollama",

@@ -3,6 +3,7 @@ import { join, extname, basename, dirname, resolve, relative, isAbsolute } from 
 import { homedir } from "os";
 import type { ProjectInfo, ProjectFile, FileNode, FileNodeKind, AppSettings, AppSettingsUpdate } from "../../shared/rpc-types";
 import { deduplicateBibtex } from "../../shared/bibtex-utils";
+import { seedAppInstructions } from "../agent/app-skills";
 
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
@@ -38,6 +39,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     },
   },
   ollamaBaseUrl: "http://localhost:11434",
+  ollamaApiKey: "",
+  ollamaWebSearchEnabled: false,
   ollamaDefaultModel: "qwen3.5:cloud",
   ollamaEmbedModel: "nomic-embed-text",
   anthropicApiKey: "",
@@ -103,6 +106,8 @@ function normalizeSettings(parsed: Partial<AppSettings>): AppSettings {
     sidebarAgentProvider,
     sidebarAgentModel,
     modelProviders,
+    ollamaApiKey: parsed.ollamaApiKey ?? DEFAULT_SETTINGS.ollamaApiKey,
+    ollamaWebSearchEnabled: parsed.ollamaWebSearchEnabled ?? DEFAULT_SETTINGS.ollamaWebSearchEnabled,
     anthropicDefaultModel: parsed.anthropicDefaultModel ?? legacyClaudeModel,
     deepseekBaseUrl: parsed.deepseekBaseUrl ?? DEFAULT_SETTINGS.deepseekBaseUrl,
     deepseekDefaultModel: parsed.deepseekDefaultModel ?? DEFAULT_SETTINGS.deepseekDefaultModel,
@@ -747,6 +752,7 @@ class FileSystemManager {
 
   async getSettings(): Promise<AppSettings> {
     await mkdir(SCHOLARPEN_BASE, { recursive: true });
+    await seedAppInstructions();
     try {
       const raw = await readFile(SETTINGS_FILE, "utf-8");
       const parsed = JSON.parse(raw);

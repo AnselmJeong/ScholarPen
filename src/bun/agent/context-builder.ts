@@ -3,6 +3,7 @@ import { findKBRoot, getKBEngine, type KBSearchResult } from "../kb/search";
 import { buildReferenceList } from "./references";
 import { loadAgentSkill } from "./skill-registry";
 import { resolveMentionedFiles } from "./mention-resolver";
+import { searchWebWithOllama, type WebSearchResult } from "./web-search";
 
 const HISTORY_MESSAGE_LIMIT = 4_000;
 const HISTORY_TOTAL_LIMIT = 16_000;
@@ -48,6 +49,15 @@ function kbContext(results: KBSearchResult[]): string {
   return `<kb_context>\n${items.join("\n\n")}\n</kb_context>`;
 }
 
+function webContext(results: WebSearchResult[]): string {
+  if (results.length === 0) return "";
+  const items = results.map((r, index) => {
+    const excerpt = r.content.replace(/\n+/g, " ").trim().slice(0, 900);
+    return `[W${index + 1}] ${r.title}\nURL: ${r.url}\n${excerpt}`;
+  });
+  return `<web_search_context>\n${items.join("\n\n")}\n</web_search_context>`;
+}
+
 export async function buildAgentMessages(
   params: AgentStreamParams,
   settings: AppSettings,
@@ -74,19 +84,32 @@ export async function buildAgentMessages(
     }
   }
 
+  const webSearchAvailable = settings.ollamaWebSearchEnabled && Boolean(settings.ollamaApiKey.trim());
+  let webResults: WebSearchResult[] = [];
+  if (webSearchAvailable) {
+    try {
+      webResults = await searchWebWithOllama(params.message, settings, 5);
+    } catch (err) {
+      console.warn("[Agent] Web search failed:", err);
+    }
+  }
+
   const systemParts = [
     "<scholarpen_system>",
     "You are ScholarPen's research writing assistant.",
-    "Use only the project files, selected skills, and KB references that are explicitly provided in this request.",
+    "Use only the project files, selected instructions, KB references, and web search results that are explicitly provided in this request.",
     "Do not claim to have read files that were not provided.",
     params.kbEnabled
       ? "KB search is ON. Use KB references only when <kb_context> is present."
       : "KB search is OFF. No Knowledge_Base content is provided in this request.",
+    webSearchAvailable
+      ? "Web search is ON. Use web results only when <web_search_context> is present, cite them as [W1], [W2], etc. with URLs."
+      : "Web search is OFF. No live internet search content is provided in this request.",
     mentionedFiles.length > 0
       ? "The user designated project files for this request; you may discuss those provided files."
       : "No project file content is provided in this request. Do not say that you reviewed current project files.",
     "When a user designates @files, prioritize those files.",
-    "When a skill is selected with /skill, follow the skill instructions within ScholarPen's safety limits.",
+    "When an instruction is selected with /, follow that instruction within ScholarPen's safety limits.",
     "For academic writing, preserve nuance and cite provided KB references when used.",
     "You are read-only unless the user explicitly accepts a proposed write action.",
     languageRule(params.lang),
@@ -101,6 +124,7 @@ export async function buildAgentMessages(
         `<mentioned_file path="${file.displayPath}" truncated="${file.truncated ? "true" : "false"}">\n${file.content}\n</mentioned_file>`
     ),
     kbContext(kbResults),
+    webContext(webResults),
   ].filter(Boolean);
 
   const references = kbResults.length > 0 ? buildReferenceList(kbResults) : "";
