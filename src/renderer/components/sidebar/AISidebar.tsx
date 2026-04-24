@@ -1,19 +1,30 @@
-import React, {
-  useState,
-  useRef,
-  useCallback,
-  useEffect,
-  useMemo,
-  type ChangeEvent,
-  type KeyboardEvent,
-} from "react";
-import { X, RotateCcw, Copy, Send, StopCircle, Bot, ChevronRight, Clipboard, BookOpen } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
-import type { OllamaStatus, ProjectInfo, FileNode, KBStatus } from "@shared/rpc-types";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  AssistantRuntimeProvider,
+  ComposerPrimitive,
+  ThreadPrimitive,
+  useAui,
+  useAuiState,
+  useLocalRuntime,
+  type MessageState,
+  type ThreadMessageLike,
+} from "@assistant-ui/react";
+import { BookOpen, Bot, ChevronRight, Clipboard, Copy, MessageSquare, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { rpc, onClaudeChunk } from "../../rpc";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import type {
+  AgentMentionableFile,
+  AgentSkill,
+  AgentThread,
+  AgentThreadMessage,
+  AppSettings,
+  KBStatus,
+  OllamaStatus,
+  ProjectInfo,
+} from "@shared/rpc-types";
+import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
+import { rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -22,282 +33,487 @@ import "katex/dist/katex.min.css";
 
 interface AISidebarProps {
   project: ProjectInfo | null;
-  ollamaStatus: OllamaStatus; // kept for API compat (editor AI status)
+  ollamaStatus: OllamaStatus;
+  appSettings?: Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl">;
   editor: BlockNoteEditor<any, any, any> | null;
   onClose: () => void;
   width?: number;
   onOpenKBFile?: (filePath: string) => void;
 }
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
-
 type DropdownMode = "slash" | "file" | null;
 
-// ── Text extraction ───────────────────────────────────────────────────────────
-function blocksToText(blocks: unknown[]): string {
-  function extract(node: unknown): string {
-    if (!node || typeof node !== "object") return "";
-    if (Array.isArray(node)) return node.map(extract).join("\n");
-    const obj = node as Record<string, unknown>;
-    if (typeof obj.text === "string") return obj.text;
-    const parts: string[] = [];
-    if (Array.isArray(obj.content)) parts.push(extract(obj.content));
-    if (Array.isArray(obj.children)) parts.push(extract(obj.children));
-    return parts.join("\n");
-  }
-  return blocks.map(extract).join("\n\n");
+function savedMessagesToThreadMessages(messages: AgentThreadMessage[]): ThreadMessageLike[] {
+  return messages.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: new Date(message.createdAt),
+    status:
+      message.role === "assistant"
+        ? message.status === "aborted"
+          ? { type: "incomplete", reason: "cancelled" }
+          : { type: "complete", reason: "stop" }
+        : undefined,
+    metadata: message.metadata ? { custom: message.metadata } : undefined,
+  }));
 }
 
-// ── Flatten FileNode tree into a flat list ────────────────────────────────────
-function flattenFiles(nodes: FileNode[]): FileNode[] {
-  const result: FileNode[] = [];
-  function walk(n: FileNode) {
-    if (!n.isDirectory) result.push(n);
-    n.children?.forEach(walk);
-  }
-  nodes.forEach(walk);
-  return result;
+function formatThreadTime(value: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
-// ── Input analysis ────────────────────────────────────────────────────────────
 function analyzeInput(value: string): { mode: DropdownMode; query: string } {
-  if (value.startsWith("/")) {
-    return { mode: "slash", query: value.slice(1).toLowerCase() };
-  }
-  // detect @mention as the last word
+  if (value.startsWith("/")) return { mode: "slash", query: value.slice(1).toLowerCase() };
   const lastWord = value.split(/\s+/).at(-1) ?? "";
-  if (lastWord.startsWith("@")) {
-    return { mode: "file", query: lastWord.slice(1).toLowerCase() };
-  }
+  if (lastWord.startsWith("@")) return { mode: "file", query: lastWord.slice(1).toLowerCase() };
   return { mode: null, query: "" };
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AISidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [slashCommands, setSlashCommands] = useState<string[]>([]);
-  const [fileList, setFileList] = useState<FileNode[]>([]);
-  const [dropdownIndex, setDropdownIndex] = useState(0);
-  const [kbStatus, setKbStatus] = useState<KBStatus | null>(null);
-  const [kbEnabled, setKbEnabled] = useState(true);
-  const [lang, setLang] = useState<"ko" | "en">("ko");
+function messageText(message: MessageState): string {
+  return message.content
+    .filter((part) => part.type === "text")
+    .map((part) => ("text" in part ? part.text : ""))
+    .join("\n");
+}
 
-  const abortedRef = useRef(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+function assistantLabel(provider: AppSettings["sidebarAgentProvider"]): string {
+  if (provider === "anthropic") return "Claude";
+  if (provider === "deepseek") return "DeepSeek";
+  if (provider === "openai") return "OpenAI";
+  return "Ollama";
+}
 
-  const scrollToBottom = useCallback(() => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
-  }, []);
+function AssistantMessage({
+  message,
+  onOpenKBFile,
+}: {
+  message: MessageState;
+  onOpenKBFile?: (filePath: string) => void;
+}) {
+  const text = messageText(message);
+  const isUser = message.role === "user";
+  const isStreaming = message.status?.type === "running";
 
-  // ── Chunk listener ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    return onClaudeChunk((
-      content: string,
-      done: boolean,
-      newSessionId?: string,
-      newSlashCommands?: string[]
-    ) => {
-      if (abortedRef.current && !done) return;
+  if (isUser) {
+    return (
+      <div className="flex justify-end w-full overflow-hidden">
+        <div className="max-w-[84%] min-w-0 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground shadow-sm whitespace-pre-wrap break-words overflow-hidden">
+          {text}
+        </div>
+      </div>
+    );
+  }
 
-      // Received slash command list from system init event
-      if (newSlashCommands && newSlashCommands.length > 0) {
-        setSlashCommands(newSlashCommands);
-        return;
-      }
-
-      if (done) {
-        if (newSessionId) setSessionId(newSessionId);
-        setLoading(false);
-        scrollToBottom();
-        return;
-      }
-
-      if (content) {
-        setMessages((prev) => {
-          const updated = [...prev];
-          const last = updated.at(-1);
-          if (last?.role === "assistant") {
-            updated[updated.length - 1] = {
-              role: "assistant",
-              content: last.content + content,
-            };
-          }
-          return updated;
-        });
-        scrollToBottom();
-      }
-    });
-  }, [scrollToBottom]);
-
-  // ── Pre-fetch slash commands and KB status whenever the project changes ─────
-  useEffect(() => {
-    rpc.getClaudeSlashCommands(project?.path ?? undefined)
-      .then((cmds) => { if (cmds.length > 0) setSlashCommands(cmds); })
-      .catch(console.error);
-
-    if (project?.path) {
-      rpc.getKBStatus(project.path)
-        .then((status) => {
-          setKbStatus(status);
-          // Auto-enable KB when it exists
-          if (status.exists) setKbEnabled(true);
-        })
-        .catch(console.error);
-    } else {
-      setKbStatus(null);
-    }
-  }, [project?.path]);
-
-  // ── Dropdown computation ────────────────────────────────────────────────────
-  const { mode: dropdownMode, query: dropdownQuery } = useMemo(
-    () => analyzeInput(input),
-    [input]
+  return (
+    <div className="space-y-1.5 w-full min-w-0 overflow-hidden">
+      <div className="w-full min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none
+        [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
+        [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
+        [&_code]:text-xs [&_code]:bg-muted [&_code]:text-foreground [&_code]:px-1 [&_code]:rounded
+        [&_pre]:text-xs [&_pre]:bg-muted [&_pre]:text-foreground [&_pre]:p-2 [&_pre]:rounded-md [&_pre]:overflow-x-auto
+        [&_blockquote]:border-l [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:italic
+        [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5">
+        {text ? (
+          <>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[rehypeKatex]}
+              urlTransform={(url) => url}
+              components={{
+                a: ({ href, children }) => {
+                  const SP_FILE_REF = "https://x-sp-ref";
+                  if (href?.startsWith(SP_FILE_REF)) {
+                    const filePath = decodeURIComponent(href.slice(SP_FILE_REF.length));
+                    return (
+                      <a
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onOpenKBFile?.(filePath);
+                        }}
+                        className="cursor-pointer text-primary underline hover:text-primary/80"
+                      >
+                        {children}
+                      </a>
+                    );
+                  }
+                  return (
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (href) rpc.openExternal(href);
+                      }}
+                      className="cursor-pointer text-blue-400 underline hover:text-blue-300"
+                    >
+                      {children}
+                    </a>
+                  );
+                },
+              }}
+            >
+              {text}
+            </ReactMarkdown>
+            {isStreaming && <TypingDots />}
+          </>
+        ) : (
+          <TypingDots />
+        )}
+      </div>
+      {text && !isStreaming && (
+        <button
+          onClick={() => navigator.clipboard.writeText(text)}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
+        >
+          <Copy className="h-2.5 w-2.5" />
+          복사
+        </button>
+      )}
+    </div>
   );
+}
+
+function TypingDots() {
+  return (
+    <span className="flex items-center gap-1 py-1">
+      {[0, 1, 2].map((j) => (
+        <span
+          key={j}
+          className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
+          style={{ animation: "kb-bounce 1.2s ease-in-out infinite", animationDelay: `${j * 0.2}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function AssistantHeader({
+  provider,
+  model,
+  lang,
+  setLang,
+  onClose,
+  onResetContext,
+}: {
+  provider: AppSettings["sidebarAgentProvider"];
+  model: string;
+  lang: "ko" | "en";
+  setLang: (lang: "ko" | "en") => void;
+  onClose: () => void;
+  onResetContext: () => void;
+}) {
+  const aui = useAui();
+
+  return (
+    <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Bot className="h-4 w-4 text-primary" />
+        <div>
+          <p className="text-sm font-semibold text-foreground">Scholar Agent</p>
+          <p className="text-xs text-muted-foreground">
+            {assistantLabel(provider)} · {model}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span
+          className="hidden sm:inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+          title="Scholar Agent is read-only by default. No Claude wrapper is used."
+        >
+          Agent
+        </span>
+        <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-semibold">
+          {(["ko", "en"] as const).map((value) => (
+            <button
+              key={value}
+              onClick={() => setLang(value)}
+              className={cn(
+                "px-2 py-0.5 transition-colors",
+                lang === value
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent",
+              )}
+            >
+              {value.toUpperCase()}
+            </button>
+          ))}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6"
+          onClick={() => {
+            aui.thread().reset();
+            onResetContext();
+          }}
+          title="대화 초기화"
+        >
+          <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
+          <X className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function AssistantThread({
+  slashCommands,
+  onOpenKBFile,
+}: {
+  slashCommands: AgentSkill[];
+  onOpenKBFile?: (filePath: string) => void;
+}) {
+  return (
+    <ThreadPrimitive.Root className="flex-1 min-h-0 overflow-hidden">
+      <ThreadPrimitive.Viewport className="h-full overflow-y-auto bg-background p-3">
+        <ThreadPrimitive.Empty>
+          <div className="mt-6 px-2 space-y-3">
+            <div className="text-center">
+              <Bot className="h-7 w-7 mx-auto text-muted-foreground/30 mb-2" />
+              <p className="text-xs text-muted-foreground leading-relaxed">Scholar Agent가 연결되어 있습니다.</p>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">사용법</p>
+              {[
+                { prefix: "/", label: "skill 실행  (/ + Tab으로 선택)" },
+                { prefix: "@", label: "파일 지정  (@ + 파일명)" },
+                { prefix: "↵", label: "전송 · Shift+↵ 줄바꿈" },
+              ].map(({ prefix, label }) => (
+                <div key={prefix} className="flex items-center gap-2 px-1 py-0.5">
+                  <span className="text-xs font-mono bg-muted rounded px-1 text-primary w-5 text-center">{prefix}</span>
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                </div>
+              ))}
+            </div>
+            {slashCommands.length > 0 && (
+              <p className="text-xs text-muted-foreground/60 text-center">{slashCommands.length}개 skill 로드됨</p>
+            )}
+          </div>
+        </ThreadPrimitive.Empty>
+        <div className="space-y-4 w-full overflow-hidden">
+          <ThreadPrimitive.Messages>
+            {({ message }) => <AssistantMessage message={message} onOpenKBFile={onOpenKBFile} />}
+          </ThreadPrimitive.Messages>
+        </div>
+      </ThreadPrimitive.Viewport>
+    </ThreadPrimitive.Root>
+  );
+}
+
+function ProjectContextBar({
+  project,
+  kbStatus,
+  kbEnabled,
+  setKbEnabled,
+  onResetContext,
+}: {
+  project: ProjectInfo;
+  kbStatus: KBStatus | null;
+  kbEnabled: boolean;
+  setKbEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  onResetContext: () => void;
+}) {
+  const aui = useAui();
+
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
+      <p className="text-xs text-muted-foreground truncate">
+        <span className="font-medium text-foreground/80">{project.name}</span>
+      </p>
+      {kbStatus?.exists && (
+        <button
+          onClick={() => {
+            setKbEnabled((v) => !v);
+            aui.thread().reset();
+            onResetContext();
+          }}
+          title={kbEnabled ? `KB 활성 (${kbStatus.pageCount}개 페이지)` : "KB 비활성"}
+          className={cn(
+            "flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium transition-colors",
+            kbEnabled
+              ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
+              : "bg-muted text-muted-foreground hover:bg-muted/80",
+          )}
+        >
+          <BookOpen className="h-2.5 w-2.5" />
+          KB {kbEnabled ? "ON" : "OFF"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ThreadRuntimeSync({
+  messages,
+  resetKey,
+}: {
+  messages: ThreadMessageLike[];
+  resetKey: string;
+}) {
+  const aui = useAui();
+
+  useEffect(() => {
+    aui.thread().reset(messages);
+  }, [aui, messages, resetKey]);
+
+  return null;
+}
+
+function ThreadHistoryPanel({
+  threads,
+  activeThreadId,
+  onNewThread,
+  onSelectThread,
+  onDeleteThread,
+}: {
+  threads: AgentThread[];
+  activeThreadId: string | null;
+  onNewThread: () => void;
+  onSelectThread: (threadId: string) => void;
+  onDeleteThread: (threadId: string) => void;
+}) {
+  return (
+    <div className="border-b border-border bg-background">
+      <div className="flex items-center justify-between px-3 py-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <MessageSquare className="h-3.5 w-3.5" />
+          Threads
+        </div>
+        <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onNewThread} title="새 thread">
+          <Plus className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      {threads.length > 0 && (
+        <div className="max-h-40 overflow-y-auto px-2 pb-2 space-y-1">
+          {threads.map((thread) => (
+            <div
+              key={thread.id}
+              className={cn(
+                "group flex items-center gap-1 rounded-md border px-2 py-1.5",
+                activeThreadId === thread.id
+                  ? "border-primary/30 bg-primary/10"
+                  : "border-transparent hover:bg-muted/60",
+              )}
+            >
+              <button type="button" onClick={() => onSelectThread(thread.id)} className="min-w-0 flex-1 text-left">
+                <p className="truncate text-xs font-medium text-foreground">{thread.title}</p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {thread.provider} · {thread.model} · {formatThreadTime(thread.updatedAt)}
+                </p>
+              </button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                onClick={() => onDeleteThread(thread.id)}
+                title="thread 삭제"
+              >
+                <Trash2 className="h-3 w-3 text-muted-foreground" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssistantComposer({
+  editor,
+  project,
+  slashCommands,
+  files,
+  selectedSkillIds,
+  selectedFilePaths,
+  setSelectedSkillIds,
+  setSelectedFilePaths,
+}: {
+  editor: BlockNoteEditor<any, any, any> | null;
+  project: ProjectInfo | null;
+  slashCommands: AgentSkill[];
+  files: AgentMentionableFile[];
+  selectedSkillIds: string[];
+  selectedFilePaths: string[];
+  setSelectedSkillIds: React.Dispatch<React.SetStateAction<string[]>>;
+  setSelectedFilePaths: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  const aui = useAui();
+  const input = useAuiState((s) => s.composer.text);
+  const isEmpty = useAuiState((s) => s.composer.isEmpty);
+  const loading = useAuiState((s) => s.thread.isRunning);
+  const [dropdownIndex, setDropdownIndex] = useState(0);
+
+  const { mode: dropdownMode, query: dropdownQuery } = useMemo(() => analyzeInput(input), [input]);
 
   const dropdownItems = useMemo(() => {
     if (dropdownMode === "slash") {
-      if (!dropdownQuery) return slashCommands.slice(0, 20);
-      return slashCommands
-        .filter((cmd) => cmd.toLowerCase().includes(dropdownQuery))
-        .slice(0, 30);
+      const items = dropdownQuery
+        ? slashCommands.filter((cmd) => cmd.name.toLowerCase().includes(dropdownQuery))
+        : slashCommands;
+      return items.slice(0, 30);
     }
     if (dropdownMode === "file") {
-      const flat = flattenFiles(fileList);
-      // Group files by base name (without extension) to show related files together
-      if (!dropdownQuery) return flat.slice(0, 50);
-      const filtered = flat.filter((f) => f.name.toLowerCase().includes(dropdownQuery));
-      // Sort: prioritize files that start with the query, then by name
-      const sorted = filtered.sort((a, b) => {
-        const aStarts = a.name.toLowerCase().startsWith(dropdownQuery);
-        const bStarts = b.name.toLowerCase().startsWith(dropdownQuery);
-        if (aStarts && !bStarts) return -1;
-        if (!aStarts && bStarts) return 1;
-        return a.name.localeCompare(b.name);
-      });
-      return sorted.slice(0, 30);
+      const items = dropdownQuery
+        ? files.filter((file) => file.displayPath.toLowerCase().includes(dropdownQuery) || file.name.toLowerCase().includes(dropdownQuery))
+        : files;
+      return items
+        .sort((a, b) => {
+          const aStarts = a.name.toLowerCase().startsWith(dropdownQuery);
+          const bStarts = b.name.toLowerCase().startsWith(dropdownQuery);
+          if (aStarts && !bStarts) return -1;
+          if (!aStarts && bStarts) return 1;
+          return a.displayPath.localeCompare(b.displayPath);
+        })
+        .slice(0, 30);
     }
     return [];
-  }, [dropdownMode, dropdownQuery, slashCommands, fileList]);
+  }, [dropdownMode, dropdownQuery, slashCommands, files]);
 
-  // Load file list when @ is triggered and not yet loaded
-  useEffect(() => {
-    if (dropdownMode === "file" && project && fileList.length === 0) {
-      rpc.listProjectFiles(project.path).then(setFileList).catch(console.error);
-    }
-  }, [dropdownMode, project, fileList.length]);
-
-  // Reset dropdown index when items change
   useEffect(() => {
     setDropdownIndex(0);
   }, [dropdownMode, dropdownQuery]);
 
-  // ── Dropdown selection ──────────────────────────────────────────────────────
-  const selectDropdownItem = useCallback(
-    (item: string | FileNode) => {
+  const replaceCurrentToken = useCallback(
+    (replacement: string) => {
       if (dropdownMode === "slash") {
-        setInput("/" + (item as string) + " ");
-      } else if (dropdownMode === "file") {
-        const file = item as FileNode;
-        const words = input.split(/(\s+)/);
-        // Replace the last @-word with the file name
-        for (let i = words.length - 1; i >= 0; i--) {
-          if (words[i].startsWith("@")) {
-            words[i] = "@" + file.name;
-            break;
-          }
-        }
-        setInput(words.join("") + " ");
+        aui.composer().setText(`${replacement} `);
+        return;
       }
-      setTimeout(() => textareaRef.current?.focus(), 0);
+      const words = input.split(/(\s+)/);
+      for (let i = words.length - 1; i >= 0; i--) {
+        if (words[i].startsWith("@")) {
+          words[i] = replacement;
+          break;
+        }
+      }
+      aui.composer().setText(`${words.join("")} `);
     },
-    [dropdownMode, input]
+    [aui, dropdownMode, input],
   );
 
-  // ── Send ────────────────────────────────────────────────────────────────────
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || loading) return;
-
-    const userMessage = input.trim();
-    setInput("");
-    abortedRef.current = false;
-
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
-    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
-    setLoading(true);
-    scrollToBottom();
-
-    try {
-      await rpc.claudeStream(
-        userMessage,
-        sessionId,
-        project?.path ?? null,
-        kbStatus?.exists ? kbEnabled : false,
-        lang
-      );
-    } catch (err) {
-      if (!abortedRef.current) {
-        setMessages((prev) => {
-          const updated = [...prev];
-          updated[updated.length - 1] = {
-            role: "assistant",
-            content: `오류: ${(err as Error).message}`,
-          };
-          return updated;
-        });
-        setLoading(false);
+  const selectDropdownItem = useCallback(
+    (item: AgentSkill | AgentMentionableFile) => {
+      if (dropdownMode === "slash") {
+        const skill = item as AgentSkill;
+        replaceCurrentToken(`/${skill.name}`);
+        setSelectedSkillIds((prev) => (prev.includes(skill.id) ? prev : [...prev, skill.id]));
+      } else if (dropdownMode === "file") {
+        const file = item as AgentMentionableFile;
+        replaceCurrentToken(`@${file.name}`);
+        setSelectedFilePaths((prev) => (prev.includes(file.path) ? prev : [...prev, file.path]));
       }
-    }
-  }, [input, loading, sessionId, project, scrollToBottom, kbStatus, kbEnabled, lang]);
+    },
+    [dropdownMode, replaceCurrentToken, setSelectedFilePaths, setSelectedSkillIds],
+  );
 
-  const handleStop = useCallback(() => {
-    abortedRef.current = true;
-    rpc.abortClaudeStream().catch((err) => {
-      console.error("[AISidebar] Failed to abort Claude stream:", err);
-    });
-    setLoading(false);
-    setMessages((prev) => {
-      const updated = [...prev];
-      const last = updated.at(-1);
-      if (last?.role === "assistant" && last.content) {
-        updated[updated.length - 1] = {
-          ...last,
-          content: last.content + "\n\n*(중단됨)*",
-        };
-      }
-      return updated;
-    });
-  }, []);
-
-  const handlePasteSelection = useCallback(() => {
-    const selected = window.getSelection()?.toString().trim();
-    if (!selected) return;
-    setInput((prev) => {
-      const base = prev.trim() ? selected + "\n\n" + prev : selected + "\n\n";
-      return base;
-    });
-    setTimeout(() => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = ta.value.length;
-    }, 0);
-  }, []);
-
-  const handleReset = useCallback(() => {
-    setMessages([]);
-    setSessionId(null);
-    setLoading(false);
-    abortedRef.current = false;
-  }, []);
-
-  // ── Keyboard handling ───────────────────────────────────────────────────────
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (dropdownItems.length > 0 && dropdownMode) {
@@ -311,320 +527,107 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
           setDropdownIndex((i) => Math.max(i - 1, 0));
           return;
         }
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || e.key === "Tab") {
           e.preventDefault();
           const item = dropdownItems[dropdownIndex];
-          if (item) selectDropdownItem(item);
+          if (item) selectDropdownItem(item as AgentSkill | AgentMentionableFile);
           return;
         }
-        if (e.key === "Escape") {
-          setInput("");
-          return;
-        }
-        if (e.key === "Tab") {
-          e.preventDefault();
-          const item = dropdownItems[dropdownIndex];
-          if (item) selectDropdownItem(item);
-          return;
-        }
-      }
-
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
       }
     },
-    [dropdownMode, dropdownItems, dropdownIndex, selectDropdownItem, handleSend]
+    [dropdownItems, dropdownIndex, dropdownMode, selectDropdownItem],
   );
 
-  const handleInputChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-  }, []);
+  const handlePasteSelection = useCallback(() => {
+    const selected = window.getSelection()?.toString().trim();
+    if (!selected) return;
+    aui.composer().setText(input.trim() ? `${selected}\n\n${input}` : `${selected}\n\n`);
+  }, [aui, input]);
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  const selectedSkills = selectedSkillIds
+    .map((id) => slashCommands.find((skill) => skill.id === id))
+    .filter((skill): skill is AgentSkill => Boolean(skill));
+  const selectedFiles = selectedFilePaths
+    .map((path) => files.find((file) => file.path === path))
+    .filter((file): file is AgentMentionableFile => Boolean(file));
+
   return (
-    <div
-      className="flex-shrink-0 flex flex-col h-full relative backdrop-blur-xl"
-      style={{ width: width ?? 576, background: "rgba(229, 231, 253, 0.85)", boxShadow: "-10px 0 30px -10px rgba(46, 49, 69, 0.08)" }}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Bot className="h-4 w-4 text-primary" />
-          <div>
-            <p className="text-sm font-semibold text-foreground">Claude</p>
-            {sessionId && (
-              <p className="text-xs text-emerald-500">세션 활성</p>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span
-            className="hidden sm:inline-flex rounded-full border border-amber-300/70 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200"
-            title="Agent mode can read, edit, and write project files and use web tools."
-          >
-            Agent
-          </span>
-          {/* Language toggle */}
-          <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-semibold">
+    <div className="relative space-y-2 border-t border-border bg-background p-3">
+      {(selectedSkills.length > 0 || selectedFiles.length > 0) && (
+        <div className="flex flex-wrap gap-1">
+          {selectedSkills.map((skill) => (
             <button
-              onClick={() => setLang("ko")}
-              className={cn(
-                "px-2 py-0.5 transition-colors",
-                lang === "ko"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
-              )}
+              key={skill.id}
+              onClick={() => setSelectedSkillIds((prev) => prev.filter((id) => id !== skill.id))}
+              className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] text-primary hover:bg-primary/20"
             >
-              KO
+              /{skill.name} ×
             </button>
+          ))}
+          {selectedFiles.map((file) => (
             <button
-              onClick={() => setLang("en")}
-              className={cn(
-                "px-2 py-0.5 transition-colors",
-                lang === "en"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
-              )}
+              key={file.path}
+              onClick={() => setSelectedFilePaths((prev) => prev.filter((path) => path !== file.path))}
+              className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/80"
             >
-              EN
+              @{file.name} ×
             </button>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={handleReset}
-            title="대화 초기화"
-          >
-            <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
-          </Button>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
-            <X className="h-3.5 w-3.5 text-muted-foreground" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Project context badge + KB toggle */}
-      {project && (
-        <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ background: "rgba(229, 231, 253, 0.5)" }}>
-          <p className="text-xs text-muted-foreground truncate">
-            <span className="font-medium text-foreground/80">{project.name}</span>
-          </p>
-          {kbStatus?.exists && (
-            <button
-              onClick={() => setKbEnabled((v) => !v)}
-              title={
-                kbEnabled
-                  ? `KB 활성 (${kbStatus.pageCount}개 페이지) — 클릭하여 비활성화`
-                  : "KB 비활성 — 클릭하여 활성화"
-              }
-              className={cn(
-                "flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium transition-colors",
-                kbEnabled
-                  ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              )}
-            >
-              <BookOpen className="h-2.5 w-2.5" />
-              KB {kbEnabled ? "ON" : "OFF"}
-            </button>
-          )}
+          ))}
         </div>
       )}
 
-      {/* Chat history */}
-      <ScrollArea className="flex-1 overflow-hidden">
-        <div className="p-3 space-y-4 w-full overflow-hidden">
-          {messages.length === 0 && (
-            <div className="mt-6 px-2 space-y-3">
-              <div className="text-center">
-                <Bot className="h-7 w-7 mx-auto text-muted-foreground/30 mb-2" />
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Claude Code가 연결되어 있습니다.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">사용법</p>
-                {[
-                  { prefix: "/", label: "skill 실행  (/ + Tab으로 선택)" },
-                  { prefix: "@", label: "파일 멘션  (@ + 파일명)" },
-                  { prefix: "↵", label: "전송 · Shift+↵ 줄바꿈" },
-                ].map(({ prefix, label }) => (
-                  <div key={prefix} className="flex items-center gap-2 px-1 py-0.5">
-                    <span className="text-xs font-mono bg-muted rounded px-1 text-primary w-5 text-center">{prefix}</span>
-                    <span className="text-xs text-muted-foreground">{label}</span>
-                  </div>
-                ))}
-              </div>
-              {slashCommands.length > 0 && (
-                <p className="text-xs text-muted-foreground/60 text-center">
-                  {slashCommands.length}개 skill 로드됨
-                </p>
-              )}
-            </div>
-          )}
-
-          {messages.map((msg, i) => {
-            const isStreaming = loading && i === messages.length - 1 && msg.role === "assistant";
-            return (
-              <div key={i} className="space-y-1 w-full min-w-0 overflow-hidden">
-                {msg.role === "user" ? (
-                  <div className="flex justify-end w-full overflow-hidden">
-                    <div className="max-w-[88%] min-w-0 rounded-2xl rounded-tr-sm bg-primary/10 border border-primary/20 px-3 py-2 text-sm text-foreground shadow-sm whitespace-pre-wrap break-all overflow-hidden">
-                      {msg.content}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5 w-full min-w-0 overflow-hidden">
-                    <div className="w-full min-w-0 rounded-2xl rounded-tl-sm bg-muted px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none
-                      [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
-                      [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
-                      [&_code]:text-xs [&_code]:bg-gray-200 [&_code]:dark:bg-gray-700 [&_code]:text-gray-800 [&_code]:dark:text-gray-200 [&_code]:px-1 [&_code]:rounded
-                      [&_pre]:text-xs [&_pre]:bg-gray-200 [&_pre]:dark:bg-gray-700 [&_pre]:text-gray-800 [&_pre]:dark:text-gray-200 [&_pre]:p-2 [&_pre]:rounded [&_pre]:overflow-x-auto
-                      [&_blockquote]:border-l-2 [&_blockquote]:border-primary/40 [&_blockquote]:pl-2 [&_blockquote]:italic
-                      [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5">
-                      {msg.content ? (
-                        <>
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm, remarkMath]}
-                            rehypePlugins={[rehypeKatex]}
-                            urlTransform={(url) => url}
-                            components={{
-                              a: ({ href, children }) => {
-                                // KB reference links use https://x-sp-ref<path> prefix
-                                // (plain custom schemes like file-ref:// get stripped by react-markdown)
-                                const SP_FILE_REF = "https://x-sp-ref";
-                                if (href?.startsWith(SP_FILE_REF)) {
-                                  const rawPath = href.slice(SP_FILE_REF.length);
-                                  const filePath = decodeURIComponent(rawPath);
-                                  return (
-                                    <a
-                                      href="#"
-                                      onClick={(e) => { e.preventDefault(); onOpenKBFile?.(filePath); }}
-                                      className="cursor-pointer text-primary underline hover:text-primary/80"
-                                    >
-                                      {children}
-                                    </a>
-                                  );
-                                }
-                                return (
-                                  <a
-                                    href="#"
-                                    onClick={(e) => { e.preventDefault(); if (href) rpc.openExternal(href); }}
-                                    className="cursor-pointer text-blue-400 underline hover:text-blue-300"
-                                  >
-                                    {children}
-                                  </a>
-                                );
-                              },
-                            }}
-                          >
-                            {msg.content}
-                          </ReactMarkdown>
-                          {isStreaming && (
-                            <span className="flex items-center gap-1 mt-2">
-                              {[0, 1, 2].map((j) => (
-                                <span
-                                  key={j}
-                                  className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
-                                  style={{
-                                    animation: "kb-bounce 1.2s ease-in-out infinite",
-                                    animationDelay: `${j * 0.2}s`,
-                                  }}
-                                />
-                              ))}
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="flex items-center gap-1 py-1">
-                          {[0, 1, 2].map((j) => (
-                            <span
-                              key={j}
-                              className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
-                              style={{
-                                animation: "kb-bounce 1.2s ease-in-out infinite",
-                                animationDelay: `${j * 0.2}s`,
-                              }}
-                            />
-                          ))}
-                        </span>
-                      )}
-                    </div>
-                    {msg.content && !isStreaming && (
-                      <button
-                        onClick={() => navigator.clipboard.writeText(msg.content)}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
-                      >
-                        <Copy className="h-2.5 w-2.5" />
-                        복사
-                      </button>
-                    )}
-                  </div>
+      {dropdownMode && dropdownItems.length > 0 && (
+        <div className="absolute bottom-full left-3 right-3 z-50 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+          {dropdownMode === "slash" &&
+            (dropdownItems as AgentSkill[]).map((cmd, idx) => (
+              <button
+                key={cmd.id}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  selectDropdownItem(cmd);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent transition-colors",
+                  idx === dropdownIndex && "bg-accent",
                 )}
-              </div>
-            );
-          })}
-          <div ref={bottomRef} />
-        </div>
-      </ScrollArea>
-
-      {/* Input area */}
-      <div className="p-3 space-y-2 relative" style={{ background: "rgba(229, 231, 253, 0.6)" }}>
-        {/* Dropdown — positioned above input */}
-        {dropdownMode && dropdownItems.length > 0 && (
-          <div className="absolute bottom-full left-3 right-3 mb-1 bg-popover border border-border rounded-lg shadow-lg overflow-hidden z-50 max-h-64 overflow-y-auto">
-            {/* Slash commands */}
-            {dropdownMode === "slash" &&
-              (dropdownItems as string[]).map((cmd, idx) => (
-                <button
-                  key={cmd}
-                  onMouseDown={(e) => { e.preventDefault(); selectDropdownItem(cmd); }}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent transition-colors",
-                    idx === dropdownIndex && "bg-accent"
-                  )}
-                >
-                  <ChevronRight className="h-3 w-3 text-primary flex-shrink-0" />
-                  <span className="text-sm font-mono text-primary font-medium">/{cmd}</span>
-                </button>
-              ))}
-
-            {/* File list */}
-            {dropdownMode === "file" &&
-              (dropdownItems as FileNode[]).map((file, idx) => (
-                <button
-                  key={file.path}
-                  onMouseDown={(e) => { e.preventDefault(); selectDropdownItem(file); }}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent transition-colors",
-                    idx === dropdownIndex && "bg-accent"
-                  )}
-                >
-                  <span className="text-sm font-mono text-muted-foreground flex-shrink-0">@</span>
-                  <span className="text-sm text-foreground truncate">{file.name}</span>
-                </button>
-              ))}
-
-            {/* Hint */}
-            <div className="px-3 py-1.5" style={{ background: "rgba(229, 231, 253, 0.5)" }}>
-              <p className="text-[11px] text-muted-foreground">
-                ↑↓ 탐색 · Enter/Tab 선택 · Esc 닫기
-              </p>
-            </div>
+              >
+                <ChevronRight className="h-3 w-3 text-primary flex-shrink-0" />
+                <span className="text-sm font-mono text-primary font-medium">/{cmd.name}</span>
+                <span className="text-[11px] text-muted-foreground truncate">{cmd.source}</span>
+              </button>
+            ))}
+          {dropdownMode === "file" &&
+            (dropdownItems as AgentMentionableFile[]).map((file, idx) => (
+              <button
+                key={file.path}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  selectDropdownItem(file);
+                }}
+                className={cn(
+                  "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent transition-colors",
+                  idx === dropdownIndex && "bg-accent",
+                )}
+              >
+                <span className="text-sm font-mono text-muted-foreground flex-shrink-0">@</span>
+                <span className="text-sm text-foreground truncate">{file.name}</span>
+                <span className="text-[11px] text-muted-foreground truncate">{file.displayPath}</span>
+              </button>
+            ))}
+          <div className="border-t border-border bg-muted/40 px-3 py-1.5">
+            <p className="text-[11px] text-muted-foreground">↑↓ 탐색 · Enter/Tab 선택</p>
           </div>
-        )}
+        </div>
+      )}
 
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
+      <ComposerPrimitive.Root className="space-y-2">
+        <ComposerPrimitive.Input
           rows={3}
-          placeholder={loading ? "응답 수신 중…" : "Claude에게 질문 · / skill · @ 파일"}
+          submitMode="enter"
+          onKeyDown={handleKeyDown}
+          placeholder={loading ? "응답 수신 중..." : "Scholar Agent에게 질문 · / skill · @ 파일"}
           disabled={loading}
-          className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          className="w-full resize-none rounded-md border border-input bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
         />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
@@ -633,32 +636,276 @@ export function AISidebar({ project, editor, onClose, width, onOpenKBFile }: AIS
               variant="ghost"
               className="h-6 w-6"
               onClick={handlePasteSelection}
-              title="선택한 텍스트 붙여넣기"
+              title={editor ? "선택한 텍스트 붙여넣기" : "선택한 텍스트 붙여넣기"}
               disabled={loading}
+              type="button"
             >
               <Clipboard className="h-3 w-3 text-muted-foreground" />
             </Button>
-            {dropdownMode === "slash" && slashCommands.length > 0 && (
-              <span className="text-xs text-muted-foreground">{slashCommands.length} skills</span>
-            )}
+            {project && <span className="text-xs text-muted-foreground">{project.name}</span>}
           </div>
           {loading ? (
-            <Button size="icon" variant="destructive" className="h-7 w-7" onClick={handleStop}>
-              <StopCircle className="h-3.5 w-3.5" />
-            </Button>
+            <ComposerPrimitive.Cancel asChild>
+              <Button
+                size="icon"
+                variant="destructive"
+              className="h-8 w-8"
+                onClick={() => rpc.abortAgentStream().catch(console.error)}
+                type="button"
+              >
+                <StopCircle className="h-3.5 w-3.5" />
+              </Button>
+            </ComposerPrimitive.Cancel>
           ) : (
-            <Button
-              size="icon"
-              className="h-7 w-7"
-              onClick={handleSend}
-              disabled={!input.trim()}
-            >
-              <Send className="h-3.5 w-3.5" />
-            </Button>
+            <ComposerPrimitive.Send asChild>
+              <Button size="icon" className="h-8 w-8" disabled={isEmpty} type="submit">
+                <Send className="h-3.5 w-3.5" />
+              </Button>
+            </ComposerPrimitive.Send>
           )}
         </div>
-      </div>
-
+      </ComposerPrimitive.Root>
     </div>
+  );
+}
+
+export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, editor, onClose, width, onOpenKBFile }: AISidebarProps) {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [slashCommands, setSlashCommands] = useState<AgentSkill[]>([]);
+  const [mentionableFiles, setMentionableFiles] = useState<AgentMentionableFile[]>([]);
+  const [threads, setThreads] = useState<AgentThread[]>([]);
+  const [activeThread, setActiveThread] = useState<AgentThread | null>(null);
+  const [loadedMessages, setLoadedMessages] = useState<ThreadMessageLike[]>([]);
+  const [threadResetKey, setThreadResetKey] = useState("empty");
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
+  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
+  const [kbStatus, setKbStatus] = useState<KBStatus | null>(null);
+  const [kbEnabled, setKbEnabled] = useState(true);
+  const [lang, setLang] = useState<"ko" | "en">("ko");
+  const modelKeyRef = useRef<string | null>(null);
+
+  const activeProvider = appSettings?.sidebarAgentProvider ?? settings?.sidebarAgentProvider ?? "ollama";
+  const activeModel =
+    appSettings?.sidebarAgentModel ||
+    settings?.sidebarAgentModel ||
+    settings?.modelProviders?.[activeProvider]?.model ||
+    settings?.ollamaDefaultModel ||
+    "qwen3.5:cloud";
+  const modelKey = `${activeProvider}:${activeModel}`;
+
+  const refreshThreads = useCallback(async () => {
+    if (!project?.path) {
+      setThreads([]);
+      return;
+    }
+    const nextThreads = await rpc.listAgentThreads(project.path);
+    setThreads(nextThreads);
+  }, [project?.path]);
+
+  const startNewThread = useCallback(() => {
+    setActiveThread(null);
+    setLoadedMessages([]);
+    setThreadResetKey(`new-${Date.now()}`);
+    setSelectedSkillIds([]);
+    setSelectedFilePaths([]);
+  }, []);
+
+  const loadThread = useCallback(
+    async (threadId: string) => {
+      if (!project?.path) return;
+      const data = await rpc.getAgentThread(project.path, threadId);
+      setActiveThread(data.thread);
+      setLoadedMessages(savedMessagesToThreadMessages(data.messages));
+      setThreadResetKey(`thread-${threadId}-${data.thread.updatedAt}`);
+      setSelectedSkillIds([]);
+      setSelectedFilePaths([]);
+    },
+    [project?.path],
+  );
+
+  const deleteThread = useCallback(
+    async (threadId: string) => {
+      if (!project?.path) return;
+      await rpc.deleteAgentThread(project.path, threadId);
+      if (activeThread?.id === threadId) startNewThread();
+      await refreshThreads();
+    },
+    [activeThread?.id, project?.path, refreshThreads, startNewThread],
+  );
+
+  const assistantAdapter = useMemo(
+    () =>
+      createScholarAgentAdapter(async (_messages, message) => {
+        const fallbackSkillIds = slashCommands
+          .filter((skill) => message.trimStart().startsWith(`/${skill.name}`))
+          .map((skill) => skill.id);
+        const skillIds = selectedSkillIds.length > 0 ? selectedSkillIds : fallbackSkillIds;
+        const filePaths = selectedFilePaths;
+        const projectPath = project?.path ?? null;
+        const canReuseThread =
+          Boolean(activeThread) &&
+          activeThread?.projectPath === projectPath &&
+          activeThread?.provider === activeProvider &&
+          activeThread?.model === activeModel;
+        let runThread = canReuseThread ? activeThread : null;
+
+        if (selectedSkillIds.length > 0 || selectedFilePaths.length > 0) {
+          queueMicrotask(() => {
+            setSelectedSkillIds([]);
+            setSelectedFilePaths([]);
+          });
+        }
+
+        if (projectPath) {
+          if (!runThread) {
+            runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, message);
+            setActiveThread(runThread);
+          }
+          await rpc.saveAgentThreadMessage(projectPath, runThread.id, "user", message, "complete", {
+            provider: activeProvider,
+            model: activeModel,
+            kbEnabled: kbStatus?.exists ? kbEnabled : false,
+            selectedSkillIds: skillIds,
+            selectedFilePaths: filePaths,
+            lang,
+          });
+          refreshThreads().catch(console.error);
+        }
+
+        return {
+          projectPath,
+          provider: activeProvider,
+          model: activeModel,
+          selectedSkillIds: skillIds,
+          selectedFilePaths: filePaths,
+          kbEnabled: kbStatus?.exists ? kbEnabled : false,
+          lang,
+          ignoreHistory: !canReuseThread,
+          onComplete: async (assistantMessage, status) => {
+            if (!projectPath || !runThread || !assistantMessage.trim()) return;
+            await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", assistantMessage, status, {
+              provider: activeProvider,
+              model: activeModel,
+              kbEnabled: kbStatus?.exists ? kbEnabled : false,
+              selectedSkillIds: skillIds,
+              selectedFilePaths: filePaths,
+              lang,
+            });
+            await refreshThreads();
+          },
+        };
+      }),
+    [
+      activeProvider,
+      activeModel,
+      activeThread,
+      project?.path,
+      selectedSkillIds,
+      selectedFilePaths,
+      kbStatus?.exists,
+      kbEnabled,
+      lang,
+      slashCommands,
+      refreshThreads,
+    ],
+  );
+  const assistantRuntime = useLocalRuntime(assistantAdapter);
+
+  useEffect(() => {
+    rpc.getSettings().then(setSettings).catch(console.error);
+    rpc.listAgentSkills(project?.path ?? undefined).then(setSlashCommands).catch(console.error);
+    startNewThread();
+
+    if (project?.path) {
+      refreshThreads().catch(console.error);
+      rpc.listAgentMentionableFiles(project.path).then(setMentionableFiles).catch(console.error);
+      rpc.getKBStatus(project.path)
+        .then((status) => {
+          setKbStatus(status);
+          if (status.exists) setKbEnabled(true);
+        })
+        .catch(console.error);
+    } else {
+      setKbStatus(null);
+      setMentionableFiles([]);
+      setThreads([]);
+    }
+  }, [project?.path, refreshThreads, startNewThread]);
+
+  useEffect(() => {
+    if (modelKeyRef.current === null) {
+      modelKeyRef.current = modelKey;
+      return;
+    }
+    if (modelKeyRef.current !== modelKey) {
+      modelKeyRef.current = modelKey;
+      startNewThread();
+    }
+  }, [modelKey, startNewThread]);
+
+  const activeThreadUsesCurrentModel =
+    !activeThread || (activeThread.provider === activeProvider && activeThread.model === activeModel);
+
+  return (
+    <AssistantRuntimeProvider runtime={assistantRuntime}>
+      <ThreadRuntimeSync messages={loadedMessages} resetKey={threadResetKey} />
+      <div
+        className="relative flex h-full flex-shrink-0 flex-col border-l border-border bg-background"
+        style={{
+          width: width ?? 576,
+        }}
+      >
+        <AssistantHeader
+          provider={activeProvider}
+          model={activeModel}
+          lang={lang}
+          setLang={setLang}
+          onClose={onClose}
+          onResetContext={startNewThread}
+        />
+
+        {project && (
+          <ThreadHistoryPanel
+            threads={threads}
+            activeThreadId={activeThread?.id ?? null}
+            onNewThread={startNewThread}
+            onSelectThread={(threadId) => loadThread(threadId).catch(console.error)}
+            onDeleteThread={(threadId) => deleteThread(threadId).catch(console.error)}
+          />
+        )}
+
+        {project && (
+          <ProjectContextBar
+            project={project}
+            kbStatus={kbStatus}
+            kbEnabled={kbEnabled}
+            setKbEnabled={setKbEnabled}
+            onResetContext={() => {
+              setSelectedSkillIds([]);
+              setSelectedFilePaths([]);
+            }}
+          />
+        )}
+
+        {!activeThreadUsesCurrentModel && (
+          <div className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            현재 선택된 model이 이 thread와 달라 다음 질문은 새 thread로 저장됩니다.
+          </div>
+        )}
+
+        <AssistantThread slashCommands={slashCommands} onOpenKBFile={onOpenKBFile} />
+
+        <AssistantComposer
+          editor={editor}
+          project={project}
+          slashCommands={slashCommands}
+          files={mentionableFiles}
+          selectedSkillIds={selectedSkillIds}
+          selectedFilePaths={selectedFilePaths}
+          setSelectedSkillIds={setSelectedSkillIds}
+          setSelectedFilePaths={setSelectedFilePaths}
+        />
+      </div>
+    </AssistantRuntimeProvider>
   );
 }

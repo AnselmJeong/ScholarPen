@@ -1,67 +1,27 @@
 import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils } from "electrobun/bun";
-import { readFile } from "fs/promises";
 import { watch, type FSWatcher } from "fs";
-import { basename, extname, join } from "path";
+import { join } from "path";
 import { ollamaClient } from "./ollama/client";
-import { claudeClient, buildSubprocessEnv, getUnsupportedInteractiveCommand } from "./claude/client";
 import { citationClient } from "./citation/client";
 import { fileSystem } from "./fs/manager";
-import { findKBRoot, getKBEngine, type KBSearchResult } from "./kb/search";
+import { findKBRoot, getKBEngine } from "./kb/search";
 import { buildKBGraph } from "./kb/graph";
+import { listAgentSkills } from "./agent/skill-registry";
+import { listAgentMentionableFiles } from "./agent/mention-resolver";
+import { streamScholarAgent } from "./agent/service";
+import { listProviderModels } from "./agent/providers";
+import { getAgentThreadStore } from "./agent/thread-store";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 
 
-// Build KB context string to prepend to the user's message.
-// Uses XML-style tags — Claude understands these well and they
-// won't be mistaken for CLI option flags (unlike leading "---").
-function buildKBContext(results: KBSearchResult[], lang?: string): string {
-  const items = results.map((r, i) => {
-    const excerpt = r.excerpt
-      ? `\n    ${r.excerpt.replace(/\n+/g, " ").trim().slice(0, 300)}`
-      : "";
-    return `[${i + 1}] ${r.title || r.docId} (${r.docType})${excerpt}`;
-  });
-
-  // CRITICAL: Language rule MUST be followed - place it first
-  const langRule = lang === "ko"
-    ? "0. CRITICAL — LANGUAGE: 답변은 반드시 한국어(Korean)로만 작성하세요. 영어로 작성하면 안 됩니다."
-    : lang === "en"
-      ? "0. CRITICAL — LANGUAGE: Respond in English ONLY. Do not use any other language."
-      : "";
-
-  const formatRule = lang === "ko"
-    ? "6. 답변 구조: 먼저 질문에 대한 상세 설명을 작성하고, 각 주장 뒤에 [1], [2] 등으로 인용하세요. 설명 뒤에 References 목록이 자동으로 추가되므로 여기서는 생략하세요. 설명 없이 References만 적지 마세요."
-    : "6. Structure: First write a detailed explanation with inline citations [1], [2], etc. A References list will be appended automatically — do not include it. Never respond with only References.";
-
-  return [
-    "<kb_context>",
-    "STRICT RULES — follow exactly (highest priority first):",
-    langRule,
-    "1. Answer primarily from the references listed below using inline citations [1], [2], etc.",
-    "2. If the user explicitly references a specific file (e.g., '@filename.pdf'), use Read/Glob tools to access that file's full content.",
-    "3. Do not fabricate content absent from the references or the explicitly requested file.",
-    "4. Do NOT use WebSearch or WebFetch — only use local file tools (Read, Glob) when needed.",
-    "5. Cite every claim with [1], [2], etc. immediately after the sentence.",
-    formatRule,
-    "",
-    "References:",
-    ...items,
-    "</kb_context>",
-  ].filter(Boolean).join("\n");
-}
-
-// Append a formatted reference list after Claude's response.
-// Uses https://x-sp-ref<path> so react-markdown doesn't sanitize the URL away
-// (custom schemes like file-ref:// get stripped by the default URL sanitizer).
-function buildReferenceList(results: KBSearchResult[]): string {
-  const lines = results.map((r, i) => {
-    const title = r.title || r.docId;
-    const fileName = basename(r.filePath);
-    // Encode each path segment individually to preserve slashes
-    const encodedPath = r.filePath.split("/").map(encodeURIComponent).join("/");
-    return `${i + 1}. **[${title}](https://x-sp-ref${encodedPath})** — \`${fileName}\``;
-  });
-  return `\n\n**References (${results.length})**\n${lines.join("\n")}`;
+function buildSubprocessEnv(): Record<string, string> {
+  const currentPath = process.env.PATH ?? "";
+  const extraPaths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+  return {
+    ...process.env,
+    PATH: [...extraPaths, currentPath].filter(Boolean).join(":"),
+    HOME: process.env.HOME ?? "",
+  };
 }
 
 async function getMainViewUrl(): Promise<string> {
@@ -81,13 +41,13 @@ async function getMainViewUrl(): Promise<string> {
 }
 
 // Module-level refs — set after BrowserWindow is created
-let sendClaudeChunk: ((payload: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] }) => void) | null = null;
 let sendProjectUpdated: ((payload: { projectPath: string; filePath?: string }) => void) | null = null;
 let sendAiChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
+let sendAgentChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
 
 // Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
 let activeAiAbortController: AbortController | null = null;
-let activeClaudeAbortController: AbortController | null = null;
+let activeAgentAbortController: AbortController | null = null;
 
 function openValidatedExternalUrl(url: string): void {
   let parsed: URL;
@@ -314,106 +274,68 @@ async function main() {
           }
         },
 
-        // ── Claude CLI streaming ───────────────────────────
-        getClaudeSlashCommands: ({ projectPath }) => claudeClient.getSlashCommands(projectPath),
+        listProviderModels: async ({ provider, settings }) => {
+          const saved = await fileSystem.getSettings();
+          return listProviderModels(provider, { ...saved, ...(settings ?? {}) });
+        },
 
-        openExternal: ({ url }) => { openValidatedExternalUrl(url); },
+        listAgentSkills: ({ projectPath }) => listAgentSkills(projectPath),
 
-        // Fire-and-forget: return immediately so Electrobun can process
-        // outbound claudeChunk messages while Claude streams in background.
-        claudeStream: async ({ message, sessionId, projectPath, kbEnabled, lang }) => {
-          const unsupportedCommand = getUnsupportedInteractiveCommand(message);
-          if (unsupportedCommand) {
-            sendClaudeChunk?.({
-              content: `⚠️ \`${unsupportedCommand}\` 명령은 대화형 Claude CLI 명령이라 ScholarPen 채팅에서는 지원되지 않습니다.`,
-              done: false,
-            });
-            sendClaudeChunk?.({ content: "", done: true, sessionId: sessionId ?? undefined });
-            return;
-          }
+        listAgentMentionableFiles: ({ projectPath }) => listAgentMentionableFiles(projectPath),
 
-          activeClaudeAbortController?.abort();
+        listAgentThreads: async ({ projectPath }) => {
+          const store = await getAgentThreadStore(projectPath);
+          return store.listThreads();
+        },
+
+        createAgentThread: async ({ projectPath, provider, model, title, metadata }) => {
+          const store = await getAgentThreadStore(projectPath);
+          return store.createThread({ provider, model, title, metadata });
+        },
+
+        getAgentThread: async ({ projectPath, threadId }) => {
+          const store = await getAgentThreadStore(projectPath);
+          return store.getThread(threadId);
+        },
+
+        deleteAgentThread: async ({ projectPath, threadId }) => {
+          const store = await getAgentThreadStore(projectPath);
+          store.deleteThread(threadId);
+        },
+
+        saveAgentThreadMessage: async ({ projectPath, threadId, role, content, status, metadata }) => {
+          const store = await getAgentThreadStore(projectPath);
+          return store.saveMessage({ threadId, role, content, status, metadata });
+        },
+
+        agentStream: async (params) => {
+          activeAgentAbortController?.abort();
           const controller = new AbortController();
-          activeClaudeAbortController = controller;
+          activeAgentAbortController = controller;
 
-          const settings = await fileSystem.getSettings();
-          const backend = settings.aiBackend ?? "ollama";
-          const model = backend === "claude"
-            ? (settings.claudeModel || "sonnet")
-            : (settings.ollamaDefaultModel || "qwen3.5:cloud");
-
-          let enrichedMessage = message;
-          let kbResults: import("./kb/search").KBSearchResult[] = [];
-
-          // Slash commands (e.g. /kb-query, /lit-search) handle their own
-          // context via skill definitions and need full tool access (Read, Glob, etc.).
-          // Skip KB injection and tool restriction for them.
-          const isSlashCommand = message.trimStart().startsWith("/");
-
-          // Inject KB context when enabled and project has a KB
-          // Search uses the raw message (no language prefix) to keep FTS accurate
-          if (!isSlashCommand && kbEnabled !== false && projectPath) {
-            try {
-              const kbRoot = await findKBRoot(projectPath);
-              if (kbRoot) {
-                const engine = getKBEngine(kbRoot);
-                await engine.ensureIndexed();
-                const topK = settings.kbTopK || 5;
-                kbResults = engine.search(message, topK);
-                if (kbResults.length > 0) {
-                  enrichedMessage = buildKBContext(kbResults, lang) + "\n\n" + message;
-                }
-              }
-            } catch (err) {
-              console.warn("[KB] Context injection failed, proceeding without KB:", err);
-            }
-          }
-
-          // Append language instruction AFTER KB context injection so it
-          // does not pollute the FTS search query above.
-          // Add both before and after as reinforcement.
-          const hasKB = !isSlashCommand && kbResults.length > 0;
-          if (lang === "en") {
-            const langInstruction = "[CRITICAL: Respond in English ONLY. Do not use other languages.]";
-            enrichedMessage = langInstruction + "\n\n" + enrichedMessage + "\n\n" + langInstruction;
-          } else if (lang === "ko") {
-            const langInstruction = "[CRITICAL: 반드시 한국어로만 답변하세요. 영어로 답변하지 마세요.]";
-            enrichedMessage = langInstruction + "\n\n" + enrichedMessage + "\n\n" + langInstruction;
-          }
-
-          const usingKB = !isSlashCommand && kbResults.length > 0;
-
-          // KB mode: block external search tools (WebSearch, WebFetch); Normal mode: allow all tools
-          const KB_TOOLS = "Bash,Read,Edit,Glob,Grep,Write,AskUserQuestion,TaskCreate,TaskUpdate,TaskList,TaskGet";
-          const allowedTools = usingKB ? KB_TOOLS : undefined;
-
-          claudeClient.streamChat(enrichedMessage, sessionId, projectPath, model, {
-            onChunk: (text) => sendClaudeChunk?.({ content: text, done: false }),
-            onDone: (newSessionId) => {
-              try {
-                if (usingKB && kbResults.length > 0) {
-                  sendClaudeChunk?.({ content: buildReferenceList(kbResults), done: false });
-                }
-              } catch (err) {
-                console.error("[KB] buildReferenceList failed:", err);
-              }
-              sendClaudeChunk?.({ content: "", done: true, sessionId: newSessionId });
+          streamScholarAgent(
+            params,
+            {
+              onChunk: (text) => sendAgentChunk?.({ content: text, done: false }),
+              onDone: () => sendAgentChunk?.({ content: "", done: true }),
+              onError: (message) => {
+                sendAgentChunk?.({ content: `\n\n❌ ${message}`, done: false });
+                sendAgentChunk?.({ content: "", done: true });
+              },
             },
-            onInit: (slashCommands) =>
-              sendClaudeChunk?.({ content: "", done: false, slashCommands }),
-          }, backend, allowedTools, controller.signal).catch((err) => {
-            sendClaudeChunk?.({ content: `\n\n❌ 오류: ${err.message}`, done: false });
-            sendClaudeChunk?.({ content: "", done: true });
-          }).finally(() => {
-            if (activeClaudeAbortController === controller) {
-              activeClaudeAbortController = null;
+            controller.signal,
+          ).finally(() => {
+            if (activeAgentAbortController === controller) {
+              activeAgentAbortController = null;
             }
           });
         },
 
-        abortClaudeStream: () => {
-          activeClaudeAbortController?.abort();
+        abortAgentStream: () => {
+          activeAgentAbortController?.abort();
         },
+
+        openExternal: ({ url }) => { openValidatedExternalUrl(url); },
 
         // Proxy Ollama chat to the renderer via aiChunk messages.
         // Fire-and-forget: return immediately so Electrobun can flush outbound
@@ -453,6 +375,9 @@ async function main() {
         aiChunk: (payload) => {
           console.log("[Bun] aiChunk message:", payload);
         },
+        agentChunk: (payload) => {
+          console.log("[Bun] agentChunk message:", payload);
+        },
       },
     },
   });
@@ -471,9 +396,9 @@ async function main() {
   });
 
   // ── Wire up message senders ──────────────────────────────────
-  sendClaudeChunk = (payload) => win.webview.rpc?.send.claudeChunk(payload);
   sendProjectUpdated = (payload) => win.webview.rpc?.send.projectUpdated(payload);
   sendAiChunk = (payload) => win.webview.rpc?.send.aiChunk(payload);
+  sendAgentChunk = (payload) => win.webview.rpc?.send.agentChunk(payload);
 
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {

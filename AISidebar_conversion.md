@@ -1,130 +1,322 @@
-# AISidebar Conversion Plan: Ollama-Native Scholar Agent
+# AISidebar Conversion Plan: assistant-ui Multi-Provider Scholar Agent
 
 ## Goal
 
-Replace the current Claude Code wrapper path in `AISidebar` with a first-party ScholarPen agent that talks directly to Ollama, while preserving the workflows that matter:
+Remove the current Claude Code wrapper path from `AISidebar` and replace it with a first-party ScholarPen chat agent built on [`assistant-ui`](https://github.com/assistant-ui/assistant-ui).
 
+The new sidebar must support:
+
+- provider/model selection across Ollama, Anthropic Claude API, DeepSeek API, and OpenAI API
 - `/` skill or command selection
-- `@` project file mention
+- `@` project file designation
 - KB-grounded answers with references
 - streaming chat responses
 - Korean/English response mode
-- optional fallback to the existing Claude Code wrapper
+- stop/abort
+- user-visible errors
 
-The new default should be faster and more predictable than the current `ollama launch claude -- ... claude -p ...` subprocess chain.
+The important product shift is this:
+
+- Do not run `claude -p`.
+- Do not run `ollama launch claude`.
+- Do not rely on Claude Code slash-command behavior.
+- Treat skills, files, KB, and tools as ScholarPen-owned context and actions.
+
+Claude remains supported as an LLM provider through the Anthropic API, not through the Claude Code CLI wrapper.
+
+## Implementation Status
+
+Started:
+
+- `@assistant-ui/react` is installed and `AISidebar` now renders through assistant-ui runtime, thread, and composer primitives.
+- `claudeStream`, `claudeChunk`, and `src/bun/claude/client.ts` have been removed.
+- `agentStream` is the sidebar streaming path.
+- Settings now expose Ollama, Claude/Anthropic, DeepSeek, and OpenAI provider/model fields.
+- `/` skill selection and `@` file designation are passed as structured agent context.
 
 ## Current State
 
-`src/renderer/components/sidebar/AISidebar.tsx` currently sends chat requests through `rpc.claudeStream(...)`.
+Before this conversion, `src/renderer/components/sidebar/AISidebar.tsx` sent chat requests through `rpc.claudeStream(...)`.
 
-`src/bun/index.ts` handles `claudeStream` by:
+The removed `src/bun/index.ts` `claudeStream` path handled requests by:
 
 1. reading app settings,
 2. optionally injecting KB context,
-3. choosing either direct Claude Code or `ollama launch claude`,
+3. choosing direct Claude Code or `ollama launch claude`,
 4. starting `claudeClient.streamChat(...)`,
 5. forwarding streamed chunks back through `claudeChunk`.
 
 `src/bun/claude/client.ts` then spawns a subprocess:
 
 - direct mode: `claude -p <message> ...`
-- Ollama mode: `ollama launch claude --model <model> -- -p <message> ...`
+- Ollama wrapper mode: `ollama launch claude --model <model> -- -p <message> ...`
 
-This gives access to Claude Code's slash commands and tools, but it adds several fragile layers:
+This path should be retired because it adds fragile layers:
 
 - subprocess startup overhead
 - nested CLI parsing
 - stream-json parsing
 - idle timeout handling
 - interactive command hangs
-- stderr/error recovery
-- session resume dependency
-- tool execution policy hidden inside Claude Code
+- hidden tool execution policy
+- Claude Code session dependency
+- provider lock-in through a wrapper rather than explicit provider adapters
 
 ## Target Architecture
 
-Add a ScholarPen-owned agent backend:
-
 ```text
-AISidebar
-  -> rpc.ollamaAgentStream(...)
-    -> ScholarAgentService
-      -> SkillRegistry
-      -> MentionResolver
-      -> KB context builder
-      -> Ollama /api/chat stream
-      -> optional tool loop
+AISidebarAssistant
+  -> @assistant-ui/react runtime
+    -> ScholarPenChatAdapter
+      -> rpc.agentStream(...)
+        -> ScholarAgentService
+          -> ModelRouter
+             -> OllamaProvider
+             -> AnthropicProvider
+             -> DeepSeekProvider
+             -> OpenAIProvider
+          -> SkillRegistry
+          -> MentionResolver
+          -> KB context builder
+          -> deterministic read-only tool layer
+          -> agentChunk stream
 ```
 
-Claude Code should remain available as a fallback backend, but the default sidebar path should become Ollama-native.
+Frontend responsibilities:
 
-## Scope For Version 1
+- render chat with `@assistant-ui/react`
+- keep sidebar-specific controls: provider/model selector, KB toggle, language toggle, context chips
+- provide `/` and `@` autocomplete UX around assistant-ui composer
+- pass resolved user input and UI-selected context to the agent adapter
 
-Version 1 should be read-oriented and stable.
+Bun main-process responsibilities:
 
-Include:
+- own API keys and provider calls
+- stream model output to renderer
+- resolve skill and file context
+- enforce context budgets
+- enforce read-only defaults and future write confirmations
 
-- stream chat through Ollama directly
-- discover `/` skills and commands without Claude Code
-- parse selected `/skill` or `/command`
-- read skill/command markdown and inject it into the prompt
-- resolve `@file` mentions to project file paths
-- read supported text files and inject bounded file context
-- keep the current KB toggle and reference list behavior
-- keep KO/EN language control
-- support stop/abort
-- show user-visible errors in the chat bubble
+## assistant-ui Integration
 
-Do not include in Version 1:
+Use `@assistant-ui/react` as the sidebar chat UI and runtime layer.
 
-- arbitrary shell execution
-- direct file writes
-- automatic source editing
-- web search
-- long multi-step task planning with persistent task state
-- exact Claude Code session compatibility
+Context7-checked implementation direction:
 
-These can come later behind explicit tools and UI confirmation.
+- install `@assistant-ui/react`
+- use `AssistantRuntimeProvider`
+- use a local runtime or custom model adapter for in-memory desktop chat state
+- implement a ScholarPen adapter whose `run(...)` calls `rpc.agentStream(...)` and yields streaming text chunks into assistant-ui
+- customize Thread, Message, and Composer primitives so the sidebar keeps ScholarPen's compact desktop layout
 
-## Files To Add
+Do not use assistant-ui as a generic iframe or separate web app. It should replace the hand-rolled message list/composer inside `src/renderer/components/sidebar/AISidebar.tsx`.
 
-### `src/bun/agent/skill-registry.ts`
+Suggested frontend files:
 
-Responsibilities:
+- `src/renderer/components/sidebar/AISidebar.tsx`
+- `src/renderer/components/sidebar/assistant/ScholarAssistantRuntime.tsx`
+- `src/renderer/components/sidebar/assistant/ScholarThread.tsx`
+- `src/renderer/components/sidebar/assistant/ScholarComposer.tsx`
+- `src/renderer/components/sidebar/assistant/context-autocomplete.ts`
+- `src/renderer/ai/scholar-agent-adapter.ts`
 
-- discover available skill and command names
-- load the selected skill or command markdown
-- return metadata for sidebar dropdowns
+Suggested adapter shape:
+
+```ts
+import type { ChatModelAdapter } from "@assistant-ui/react";
+
+export function createScholarAgentAdapter(options: ScholarAgentAdapterOptions): ChatModelAdapter {
+  return {
+    async *run({ messages, abortSignal }) {
+      // Convert assistant-ui messages to ScholarPen AgentMessage[].
+      // Start rpc.agentStream(...).
+      // Yield accumulated assistant text as chunks arrive.
+      // Respect abortSignal by calling rpc.abortAgentStream(...).
+    },
+  };
+}
+```
+
+If assistant-ui's exact adapter type changes, follow the current `@assistant-ui/react` API and keep this boundary: assistant-ui manages thread/composer state; ScholarPen owns provider routing and context assembly.
+
+## Model Provider Settings
+
+Update Settings so the sidebar agent is no longer a binary `ollama | claude` backend.
+
+Replace:
+
+```ts
+aiBackend: "ollama" | "claude";
+claudeModel: string;
+```
+
+With a provider-first schema:
+
+```ts
+export type LLMProvider = "ollama" | "anthropic" | "deepseek" | "openai";
+
+export interface ModelProviderSettings {
+  provider: LLMProvider;
+  model: string;
+  baseUrl?: string;
+  apiKeyRef?: string;
+  enabled: boolean;
+}
+
+export interface AppSettings {
+  projectsRootDir: string;
+
+  sidebarAgentProvider: LLMProvider;
+  sidebarAgentModel: string;
+  modelProviders: Record<LLMProvider, ModelProviderSettings>;
+
+  ollamaBaseUrl: string;
+  ollamaDefaultModel: string;
+  ollamaEmbedModel: string;
+
+  anthropicApiKey: string;
+  anthropicDefaultModel: string;
+
+  deepseekApiKey: string;
+  deepseekBaseUrl: string;
+  deepseekDefaultModel: string;
+
+  openaiApiKey: string;
+  openaiBaseUrl: string;
+  openaiDefaultModel: string;
+
+  kbChunkSize: number;
+  kbChunkOverlap: number;
+  kbTopK: number;
+  openAlexApiKey: string;
+  theme: "light" | "dark" | "system";
+}
+```
+
+Migration rule:
+
+- if old `aiBackend === "ollama"`, set `sidebarAgentProvider = "ollama"` and copy `ollamaDefaultModel`
+- if old `aiBackend === "claude"`, set `sidebarAgentProvider = "anthropic"` and map `claudeModel` to the closest Anthropic model ID
+- keep old fields temporarily optional during migration reads, but stop writing them after the new Settings UI ships
+
+Settings UI changes:
+
+- replace the two-button Backend toggle with a provider segmented control: Ollama, Claude, DeepSeek, OpenAI
+- show provider-specific fields below the selector
+- Ollama: base URL, installed model dropdown, manual model input fallback
+- Claude: API key, model select/manual model
+- DeepSeek: API key, base URL, model select/manual model
+- OpenAI: API key, base URL, model select/manual model
+- add a "Test connection" button per provider
+- show the active sidebar provider/model in `StatusBar`
+- update warning copy so it says the agent is read-only by default and no Claude wrapper is used
+
+Recommended default models:
+
+- Ollama: current `ollamaDefaultModel`, preferring available `qwen` models if no saved model exists
+- Claude: `claude-sonnet-4-5` or the latest configured Sonnet-family model available in Settings
+- DeepSeek: `deepseek-chat`
+- OpenAI: `gpt-5.2` or the user's configured current default
+
+Avoid hard-coding unstable cloud model lists in business logic. Put curated defaults in Settings UI constants and allow custom model IDs.
+
+## Provider Adapter Layer
+
+Add a provider-neutral model router in Bun.
+
+Suggested files:
+
+- `src/bun/agent/model-router.ts`
+- `src/bun/agent/providers/types.ts`
+- `src/bun/agent/providers/ollama-provider.ts`
+- `src/bun/agent/providers/anthropic-provider.ts`
+- `src/bun/agent/providers/deepseek-provider.ts`
+- `src/bun/agent/providers/openai-provider.ts`
+
+Provider interface:
+
+```ts
+export interface AgentModelMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface AgentStreamRequest {
+  provider: LLMProvider;
+  model: string;
+  messages: AgentModelMessage[];
+  temperature?: number;
+  signal?: AbortSignal;
+}
+
+export interface AgentProvider {
+  stream(request: AgentStreamRequest): AsyncGenerator<string>;
+  listModels?(): Promise<string[]>;
+  testConnection?(): Promise<void>;
+}
+```
+
+Provider notes:
+
+- Ollama uses local `ollamaBaseUrl` and `/api/chat` or OpenAI-compatible `/v1/chat/completions`
+- Anthropic uses an API key from settings and native streaming
+- DeepSeek can use OpenAI-compatible chat completions with `deepseekBaseUrl`
+- OpenAI uses OpenAI chat/responses-compatible streaming, selected by the current SDK/API choice used in the repo
+- API keys should stay in the Bun process and should not be exposed to the renderer except as masked presence indicators
+
+## `/` Skill And Command System
+
+`/` in the sidebar composer means "load a ScholarPen skill/command as instruction context."
+
+It must not depend on Claude Code.
 
 Search locations:
 
-- `~/.claude/skills/<name>/SKILL.md`
-- `~/.claude/commands/<name>.md`
-- `<projectPath>/.claude/commands/<name>.md`
-- optional future location: app-native ScholarPen skills
+- `~/.codex/skills/**/SKILL.md`
+- `~/.agents/skills/**/SKILL.md`
+- `<projectPath>/.scholarpen/skills/**/SKILL.md`
+- `<projectPath>/.scholarpen/commands/*.md`
+- legacy read-only import: `~/.claude/skills/<name>/SKILL.md`
+- legacy read-only import: `~/.claude/commands/<name>.md`
+- legacy read-only import: `<projectPath>/.claude/commands/<name>.md`
+
+Suggested file:
+
+- `src/bun/agent/skill-registry.ts`
 
 Suggested API:
 
 ```ts
-export interface AgentCommand {
+export interface AgentSkill {
+  id: string;
   name: string;
   kind: "skill" | "command";
+  source: "codex" | "agents" | "project" | "claude-legacy";
   sourcePath: string;
   description?: string;
 }
 
-export async function listAgentCommands(projectPath?: string): Promise<AgentCommand[]>;
-export async function loadAgentCommand(name: string, projectPath?: string): Promise<AgentCommand & { content: string }>;
+export async function listAgentSkills(projectPath?: string): Promise<AgentSkill[]>;
+export async function loadAgentSkill(id: string, projectPath?: string): Promise<AgentSkill & { content: string }>;
 ```
 
-### `src/bun/agent/mention-resolver.ts`
+Behavior:
 
-Responsibilities:
+- sidebar loads skill metadata on project change
+- typing `/` opens an assistant-ui-compatible autocomplete surface
+- selecting a skill inserts a visible chip and a stable hidden token
+- sending a message passes selected skill IDs separately from free text
+- if the user manually types `/name`, resolve it before sending
+- if duplicate names exist, prefer project skills, then Codex skills, then Agents skills, then Claude legacy imports
+- skill markdown is injected as guidance, not executed
 
-- parse `@filename` mentions from user input
-- resolve mentions against `fileSystem.listProjectFiles(projectPath)`
-- read supported file content
-- keep context bounded
+## `@` File Designation
+
+`@` in the sidebar composer means "include this project file as explicit model context."
+
+Suggested file:
+
+- `src/bun/agent/mention-resolver.ts`
 
 Supported first:
 
@@ -134,51 +326,73 @@ Supported first:
 - `.tex`
 - `.yaml`, `.yml`
 - `.csv`
+- current manuscript `.scholarpen.json` converted to readable markdown/text summary
 
 Later:
 
 - PDF text extraction
 - DOCX extraction
-- image summaries if vision models are configured
+- image summaries if a vision model is configured
 
 Suggested API:
 
 ```ts
 export interface MentionedFileContext {
-  mention: string;
+  token: string;
   filePath: string;
   fileName: string;
+  displayPath: string;
   content: string;
   truncated: boolean;
 }
 
-export async function resolveMentionedFiles(message: string, projectPath: string): Promise<MentionedFileContext[]>;
+export async function resolveMentionedFiles(params: {
+  message: string;
+  explicitFilePaths: string[];
+  projectPath: string;
+}): Promise<MentionedFileContext[]>;
 ```
 
-### `src/bun/agent/context-builder.ts`
+Behavior:
+
+- typing `@` opens project file autocomplete
+- file dropdown shows name plus parent folder to disambiguate duplicates
+- selected files are stored by absolute path, not just display name
+- composer displays a compact chip such as `@methods.qmd`
+- hidden send payload includes the exact path
+- manually typed `@filename` is resolved if unambiguous
+- ambiguous mentions produce a visible clarification error before model call
+- unsupported files produce a visible error chip/message
+
+## Context Builder
+
+Suggested file:
+
+- `src/bun/agent/context-builder.ts`
 
 Responsibilities:
 
 - build system prompt
 - inject language rule
+- inject provider/model capabilities when useful
 - inject current project facts
-- inject skill/command instructions
+- inject selected skill/command instructions
 - inject mentioned file context
 - inject KB context when enabled
 - keep context within practical bounds
 
-The context should use clear tags:
+Use explicit tags:
 
 ```xml
 <scholarpen_system>
 ...
 </scholarpen_system>
 
-<selected_skill name="...">
+<selected_skill id="..." name="..." source="...">
 ...
 </selected_skill>
 
-<mentioned_file path="...">
+<mentioned_file path="..." truncated="true|false">
 ...
 </mentioned_file>
 
@@ -189,119 +403,23 @@ The context should use clear tags:
 
 Important behavior:
 
-- skill instructions should be treated as task guidance, not as executable code
+- skill instructions are guidance, not executable code
 - mentioned file content should be cited by file name/path
-- KB references should continue using the existing numbered reference list pattern
-- if context was truncated, explicitly tell the model
+- KB references continue using the existing numbered reference list pattern
+- if context was truncated, explicitly tell the model and user-visible response
+- never claim access to files or KB snippets that were not injected or read by tools
 
-### `src/bun/agent/ollama-agent.ts`
-
-Responsibilities:
-
-- run a direct Ollama chat stream
-- maintain a simple per-sidebar conversation history
-- support abort via `AbortController`
-- optionally run a small tool loop later
-
-Version 1 can call Ollama once per user message with assembled context.
-
-Version 2 can add tool calling:
-
-- `read_file`
-- `search_project`
-- `list_project_files`
-- `search_kb`
-- `get_current_document_text`
-
-No write tools until there is a diff preview and confirmation UI.
-
-Suggested API:
-
-```ts
-export interface AgentStreamParams {
-  message: string;
-  projectPath: string | null;
-  history: AgentMessage[];
-  model?: string;
-  kbEnabled?: boolean;
-  lang?: "ko" | "en";
-}
-
-export async function streamOllamaAgent(
-  params: AgentStreamParams,
-  callbacks: {
-    onChunk: (text: string) => void;
-    onDone: () => void;
-    onError: (message: string) => void;
-  },
-  signal?: AbortSignal,
-): Promise<void>;
-```
-
-## RPC Changes
-
-Update `src/shared/scholar-rpc.ts`:
-
-- add `getAgentSlashCommands`
-- add `ollamaAgentStream`
-- add `abortOllamaAgentStream`
-- add `agentChunk` message
-
-Keep the existing Claude RPCs during migration.
-
-Update `src/renderer/rpc.ts`:
-
-- add `onAgentChunk`
-- add `rpc.getAgentSlashCommands(...)`
-- add `rpc.ollamaAgentStream(...)`
-- add `rpc.abortOllamaAgentStream()`
-
-Update `src/bun/index.ts`:
-
-- wire new RPC handlers
-- keep `activeAgentAbortController`
-- forward chunks through `agentChunk`
-
-## AISidebar Changes
-
-Modify `src/renderer/components/sidebar/AISidebar.tsx` in stages.
-
-Stage 1:
-
-- rename user-facing label from `Claude` to `Scholar Agent`
-- replace `onClaudeChunk` subscription with `onAgentChunk`
-- replace `rpc.getClaudeSlashCommands` with `rpc.getAgentSlashCommands`
-- replace `rpc.claudeStream` with `rpc.ollamaAgentStream`
-- replace `rpc.abortClaudeStream` with `rpc.abortOllamaAgentStream`
-- keep existing dropdown UI for `/` and `@`
-
-Stage 2:
-
-- store selected file path, not only `@file.name`
-- disambiguate duplicate file names in dropdown by showing folder path
-- render context chips for selected skills/files before sending
-- add visible error details for missing files or oversized context
-
-Stage 3:
-
-- support action buttons in assistant responses:
-  - insert into editor
-  - replace selection
-  - copy
-  - open referenced file
-
-## Prompt Design
-
-Base system prompt should be strict and app-specific:
+Base system prompt:
 
 ```text
-You are ScholarPen's local research writing assistant.
+You are ScholarPen's research writing assistant.
 Use the provided project files, selected skills, and KB references.
 Do not claim to have read files that were not provided.
-When a user mentions @file, prioritize that file.
-When a skill is selected with /skill, follow the skill instructions within the limits of ScholarPen.
+When a user designates @files, prioritize those files.
+When a skill is selected with /skill, follow the skill instructions within ScholarPen's safety limits.
 Answer in the requested language.
 For academic writing, preserve nuance and cite provided KB references when used.
+You are read-only unless the user explicitly accepts a proposed write action.
 ```
 
 For Korean mode:
@@ -320,7 +438,8 @@ Respond in English only.
 
 Initial conservative limits:
 
-- skill/command content: 12,000 characters
+- selected skill content: 12,000 characters each
+- all selected skills combined: 30,000 characters
 - each mentioned file: 20,000 characters
 - all mentioned files combined: 60,000 characters
 - KB snippets: existing `kbTopK`, each excerpt max 300 to 700 characters
@@ -330,26 +449,115 @@ If content exceeds the limit:
 
 - include the beginning and most relevant matched sections
 - mark it as truncated
-- tell the model that only partial content was provided
+- tell the model that partial content was provided
+- show the user which file/skill was truncated
+
+## RPC Changes
+
+Update `src/shared/scholar-rpc.ts`:
+
+- add `listAgentSkills`
+- add `listAgentMentionableFiles`
+- add `agentStream`
+- add `abortAgentStream`
+- add `testModelProvider`
+- add `listProviderModels`
+- add `agentChunk` webview message
+- keep `claudeStream` only during migration, then delete it with `src/bun/claude/client.ts`
+
+Suggested request shape:
+
+```ts
+export interface AgentStreamParams {
+  message: string;
+  projectPath: string | null;
+  history: AgentMessage[];
+  provider: LLMProvider;
+  model: string;
+  selectedSkillIds: string[];
+  selectedFilePaths: string[];
+  kbEnabled: boolean;
+  lang: "ko" | "en";
+}
+```
+
+Update `src/renderer/rpc.ts`:
+
+- add `onAgentChunk`
+- add `rpc.listAgentSkills(...)`
+- add `rpc.listAgentMentionableFiles(...)`
+- add `rpc.agentStream(...)`
+- add `rpc.abortAgentStream(...)`
+- add provider test/list-model calls
+
+Update `src/bun/index.ts`:
+
+- wire new RPC handlers
+- keep `activeAgentAbortController`
+- forward chunks through `agentChunk`
+- keep cloud provider API keys inside Bun process
+
+## AISidebar Changes
+
+Replace the hand-rolled chat body with assistant-ui components in stages.
+
+Stage 1: runtime and stream path
+
+- add assistant-ui dependency
+- create `ScholarAgentAdapter`
+- wrap the sidebar chat region with `AssistantRuntimeProvider`
+- bridge assistant-ui message submission to `rpc.agentStream`
+- bridge abort to `rpc.abortAgentStream`
+- render streamed chunks as assistant-ui assistant messages
+- preserve current KO/EN and KB toggle behavior
+
+Stage 2: provider/model controls
+
+- replace user-facing `Claude` labels with `Scholar Agent`
+- add provider/model picker tied to new Settings
+- show missing API key or disconnected provider before send
+- update `StatusBar` to display active provider/model
+
+Stage 3: `/` and `@`
+
+- build assistant-ui-compatible autocomplete for slash skills and file mentions
+- store selected skills/files as structured context, not text-only mentions
+- render context chips above the composer
+- allow removing chips before send
+- surface ambiguity/unsupported-file errors before model call
+
+Stage 4: response actions
+
+- copy
+- insert into editor
+- replace selection
+- open referenced file
+- save as note
+
+Do not add write actions until there is a preview/confirmation UI.
 
 ## Tool Calling Roadmap
-
-Ollama supports chat tools, but not every local model follows tool calling reliably. Treat tools as progressive enhancement, not a hard dependency.
 
 Version 1:
 
 - no model-driven tools
 - deterministic preprocessing for `/skill`, `@file`, KB context
+- read-only model response
 
 Version 2:
 
-- add read-only tools with a max-iteration loop of 3
+- add validated read-only tools with a max-iteration loop of 3:
+  - `read_file`
+  - `search_project`
+  - `list_project_files`
+  - `search_kb`
+  - `get_current_document_text`
 - tool calls are validated by name and JSON schema
-- tool results are injected back into the next Ollama call
+- tool results are injected into the next model call
 
 Version 3:
 
-- add write-capable tools behind explicit confirmation:
+- add write-capable actions behind explicit confirmation:
   - propose document patch
   - insert text at current cursor
   - replace selected text
@@ -364,8 +572,12 @@ Every failure should produce a useful chat-visible message.
 Examples:
 
 - Ollama disconnected
+- cloud provider API key missing
+- cloud provider authentication failed
 - selected model missing
+- provider rate limit
 - skill file missing
+- selected skill cannot be read
 - mentioned file ambiguous
 - mentioned file unsupported
 - context too large and truncated
@@ -376,12 +588,15 @@ Do not silently fail or leave the assistant bubble empty.
 
 ## Migration Strategy
 
-1. Add agent backend files and RPC schema.
-2. Add `agentChunk` stream path while leaving `claudeChunk` untouched.
-3. Switch `AISidebar` to the new agent path behind a feature flag or setting.
-4. Make Ollama-native the default after local validation.
-5. Keep Claude wrapper as an advanced fallback for full Claude Code behavior.
-6. Remove Claude wrapper only after the agent has read/write tools and stable user feedback.
+1. Add settings schema migration for provider-first model settings.
+2. Add provider router and provider adapters.
+3. Add `agentChunk` stream path while leaving `claudeChunk` untouched.
+4. Add `SkillRegistry`, `MentionResolver`, and `ContextBuilder`.
+5. Replace `AISidebar` chat UI with assistant-ui runtime/components.
+6. Switch send path from `claudeStream` to `agentStream`.
+7. Remove `src/bun/claude/client.ts` and Claude wrapper settings after validation.
+
+The wrapper should not remain as a product fallback. If Claude support is needed, it must go through the Anthropic provider adapter.
 
 ## Validation Plan
 
@@ -389,62 +604,81 @@ Manual validation:
 
 - open sidebar with no project
 - open sidebar with project
+- switch providers: Ollama, Claude, DeepSeek, OpenAI
+- test missing API key for cloud providers
+- test invalid API key for cloud providers
+- test missing Ollama server
+- test missing model
 - `/` dropdown loads skills
-- `@` dropdown loads files
+- selecting `/skill` creates a context chip
+- manually typed `/skill-name` resolves or errors clearly
+- `@` dropdown loads project files
+- selecting `@file` creates a context chip
+- mention duplicate file names and verify disambiguation
 - mention a `.bib` file and ask for summary
-- mention a `.md` file and ask for revision advice
+- mention a `.md` or `.qmd` file and ask for revision advice
 - enable KB and verify references appear
 - disable KB and verify no KB references are injected
 - stop generation mid-stream
 - switch KO/EN language
-- test missing Ollama server
-- test missing model
+- verify assistant-ui composer focus, send, abort, copy, and message scrolling
 
 Automated checks:
 
 - `bun x tsc --noEmit`
 - `bun x vite build`
 - unit tests for:
+  - settings migration
+  - provider routing
+  - provider missing-key errors
   - skill discovery
   - command discovery
   - mention parsing
   - file resolution with duplicate names
   - context truncation
   - prompt assembly
+  - assistant-ui adapter abort behavior
 
 ## Product Decisions
 
 Default behavior:
 
-- `Scholar Agent` uses Ollama-native backend.
-- Claude Code wrapper remains available in Settings as `Claude Code fallback`.
-- `/` means “load this skill/command as instruction context.”
-- `@` means “include this file content as explicit context.”
-- KB toggle remains separate from `@` mentions.
+- sidebar product name: `Scholar Agent`
+- default provider: Ollama when connected, otherwise the last configured provider
+- Claude support means Anthropic API, not Claude Code CLI
+- DeepSeek and OpenAI use explicit API settings
+- `/` means "load this skill/command as instruction context"
+- `@` means "include this file content as explicit context"
+- KB toggle remains separate from `@` mentions
 
 Security posture:
 
 - read-only by default
+- API keys stay in Bun process settings
 - explicit confirmation for future writes
-- no unrestricted Bash in the first implementation
+- no unrestricted Bash
 - no hidden file writes from a chat response
+- no automatic transmission of project files unless selected by `@`, KB toggle, or an explicit future tool action
 
 ## Open Questions
 
-- Should ScholarPen support app-native skills separate from `~/.claude/skills`?
-- Should command names be namespaced when user and project commands collide?
-- Should `@file` mentions use exact path tokens internally while showing short names in the UI?
-- Which model should be the default for agent mode: current `ollamaDefaultModel`, a code-oriented model, or a writing-oriented model?
+- Should provider API keys remain in `settings.json` for MVP, or move immediately to macOS Keychain?
+- Should assistant-ui thread history persist per project, per document, or only in memory for MVP?
+- Should app-native skills live under `.scholarpen/skills` only, or also import Codex/Agents skills by default?
+- Should `@file` support folder mentions later, with automatic file ranking inside that folder?
 - Should long files be chunk-searched before injection instead of truncated head/tail context?
+- Should OpenAI use the Responses API from day one, or start with Chat Completions compatibility to keep DeepSeek/OpenAI adapters aligned?
 
 ## Recommended First Implementation Slice
 
 Build this first:
 
-1. `SkillRegistry` discovery and load.
-2. `MentionResolver` for text-like files.
-3. `ContextBuilder` for skill, file, KB, and language context.
-4. `ollamaAgentStream` RPC using existing Ollama settings.
-5. `AISidebar` switch from Claude stream to agent stream.
+1. Settings schema migration and provider selector UI.
+2. Provider router with Ollama and one OpenAI-compatible cloud provider path.
+3. assistant-ui runtime wrapper and `ScholarAgentAdapter`.
+4. `SkillRegistry` discovery and selected skill injection.
+5. `MentionResolver` for text-like project files.
+6. `ContextBuilder` for skill, file, KB, and language context.
+7. `agentStream` RPC and `AISidebar` switch from Claude stream to agent stream.
 
-This slice gives the core user value without introducing write-tool risk.
+This slice removes the Claude wrapper, proves the assistant-ui architecture, and delivers the core `/` skill plus `@` file workflow without introducing write-tool risk.

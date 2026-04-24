@@ -76,6 +76,76 @@ export interface OllamaStatus {
   activeModel: string | null;
 }
 
+export type LLMProvider = "ollama" | "anthropic" | "deepseek" | "openai";
+
+export interface ModelProviderSettings {
+  provider: LLMProvider;
+  model: string;
+  baseUrl?: string;
+  apiKeyRef?: string;
+  enabled: boolean;
+}
+
+export interface AgentMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AgentThread {
+  id: string;
+  projectPath: string;
+  title: string;
+  provider: LLMProvider;
+  model: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt: number | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentThreadMessage {
+  id: string;
+  threadId: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+  status: "complete" | "error" | "aborted";
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentThreadWithMessages {
+  thread: AgentThread;
+  messages: AgentThreadMessage[];
+}
+
+export interface AgentSkill {
+  id: string;
+  name: string;
+  kind: "skill" | "command";
+  source: "codex" | "agents" | "project" | "claude-legacy";
+  sourcePath: string;
+  description?: string;
+}
+
+export interface AgentMentionableFile {
+  name: string;
+  path: string;
+  displayPath: string;
+  kind: FileNodeKind;
+}
+
+export interface AgentStreamParams {
+  message: string;
+  projectPath: string | null;
+  history: AgentMessage[];
+  provider: LLMProvider;
+  model: string;
+  selectedSkillIds: string[];
+  selectedFilePaths: string[];
+  kbEnabled: boolean;
+  lang: "ko" | "en";
+}
+
 export type FileNodeKind =
   | "document"
   | "reference"
@@ -98,16 +168,28 @@ export interface FileNode {
 
 export interface AppSettings {
   projectsRootDir: string;
+  sidebarAgentProvider: LLMProvider;
+  sidebarAgentModel: string;
+  modelProviders: Record<LLMProvider, ModelProviderSettings>;
   ollamaBaseUrl: string;
   ollamaDefaultModel: string;
   ollamaEmbedModel: string;
+  anthropicApiKey: string;
+  anthropicDefaultModel: string;
+  deepseekApiKey: string;
+  deepseekBaseUrl: string;
+  deepseekDefaultModel: string;
+  openaiApiKey: string;
+  openaiBaseUrl: string;
+  openaiDefaultModel: string;
   kbChunkSize: number;
   kbChunkOverlap: number;
   kbTopK: number;
   openAlexApiKey: string;
-  // AI backend selection
-  aiBackend: "ollama" | "claude";
-  claudeModel: string;
+  /** @deprecated Migrated to sidebarAgentProvider. */
+  aiBackend?: "ollama" | "claude";
+  /** @deprecated Migrated to anthropicDefaultModel/sidebarAgentModel. */
+  claudeModel?: string;
   // Theme
   theme: "light" | "dark" | "system";
 }

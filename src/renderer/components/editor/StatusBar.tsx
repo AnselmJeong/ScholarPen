@@ -1,26 +1,27 @@
 import React from "react";
-import type { OllamaStatus } from "../../../shared/rpc-types";
+import type { LLMProvider, OllamaStatus } from "../../../shared/rpc-types";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
 interface StatusBarProps {
   ollamaStatus: OllamaStatus;
-  aiBackend?: "ollama" | "claude";
-  claudeModel?: string;
+  sidebarAgentProvider?: LLMProvider;
+  sidebarAgentModel?: string;
   wordCount: number;
   onToggleAI: () => void;
   saveStatus?: SaveStatus;
 }
 
-export function StatusBar({ ollamaStatus, aiBackend = "ollama", claudeModel, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
-  const isClaude = aiBackend === "claude";
-
-  // For claude backend: always show as connected (auth errors surface in chat)
-  const connected = isClaude ? true : ollamaStatus.connected;
-  const label = isClaude ? "Claude" : "Ollama";
-  const modelLabel = isClaude
-    ? (claudeModel ?? "sonnet")
-    : ollamaStatus.activeModel;
+export function StatusBar({ ollamaStatus, sidebarAgentProvider = "ollama", sidebarAgentModel, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
+  const connected = sidebarAgentProvider === "ollama" ? ollamaStatus.connected : true;
+  const label = sidebarAgentProvider === "anthropic"
+    ? "Claude"
+    : sidebarAgentProvider === "deepseek"
+      ? "DeepSeek"
+      : sidebarAgentProvider === "openai"
+        ? "OpenAI"
+        : "Ollama";
+  const modelLabel = sidebarAgentModel || (sidebarAgentProvider === "ollama" ? ollamaStatus.activeModel : null);
 
   return (
     <div className="flex items-center justify-between px-4 py-1 bg-gray-800 text-gray-300 text-xs border-t border-gray-700 select-none">

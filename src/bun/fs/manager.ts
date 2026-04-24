@@ -10,17 +10,106 @@ const LEGACY_PROJECTS_ROOT = join(SCHOLARPEN_BASE, "projects");
 
 const DEFAULT_SETTINGS: AppSettings = {
   projectsRootDir: SCHOLARPEN_BASE,
+  sidebarAgentProvider: "ollama",
+  sidebarAgentModel: "qwen3.5:cloud",
+  modelProviders: {
+    ollama: {
+      provider: "ollama",
+      model: "qwen3.5:cloud",
+      baseUrl: "http://localhost:11434",
+      enabled: true,
+    },
+    anthropic: {
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      enabled: false,
+    },
+    deepseek: {
+      provider: "deepseek",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com",
+      enabled: false,
+    },
+    openai: {
+      provider: "openai",
+      model: "gpt-5.2",
+      baseUrl: "https://api.openai.com/v1",
+      enabled: false,
+    },
+  },
   ollamaBaseUrl: "http://localhost:11434",
   ollamaDefaultModel: "qwen3.5:cloud",
   ollamaEmbedModel: "nomic-embed-text",
+  anthropicApiKey: "",
+  anthropicDefaultModel: "claude-sonnet-4-5",
+  deepseekApiKey: "",
+  deepseekBaseUrl: "https://api.deepseek.com",
+  deepseekDefaultModel: "deepseek-chat",
+  openaiApiKey: "",
+  openaiBaseUrl: "https://api.openai.com/v1",
+  openaiDefaultModel: "gpt-5.2",
   kbChunkSize: 512,
   kbChunkOverlap: 64,
   kbTopK: 5,
   openAlexApiKey: "",
-  aiBackend: "ollama",
-  claudeModel: "sonnet",
   theme: "system",
 };
+
+function normalizeSettings(parsed: Partial<AppSettings>): AppSettings {
+  const legacyProvider = parsed.aiBackend === "claude" ? "anthropic" : "ollama";
+  const sidebarAgentProvider = parsed.sidebarAgentProvider ?? legacyProvider;
+  const legacyClaudeModel =
+    parsed.claudeModel && parsed.claudeModel !== "sonnet"
+      ? parsed.claudeModel
+      : DEFAULT_SETTINGS.anthropicDefaultModel;
+  const sidebarAgentModel =
+    parsed.sidebarAgentModel ??
+    (sidebarAgentProvider === "anthropic"
+      ? legacyClaudeModel
+      : parsed.ollamaDefaultModel ?? DEFAULT_SETTINGS.ollamaDefaultModel);
+
+  const modelProviders = {
+    ...DEFAULT_SETTINGS.modelProviders,
+    ...(parsed.modelProviders ?? {}),
+  };
+
+  modelProviders.ollama = {
+    ...modelProviders.ollama,
+    model: parsed.ollamaDefaultModel ?? modelProviders.ollama.model,
+    baseUrl: parsed.ollamaBaseUrl ?? modelProviders.ollama.baseUrl,
+    enabled: true,
+  };
+  modelProviders.anthropic = {
+    ...modelProviders.anthropic,
+    model: parsed.anthropicDefaultModel ?? legacyClaudeModel,
+    enabled: Boolean(parsed.anthropicApiKey) || modelProviders.anthropic.enabled,
+  };
+  modelProviders.deepseek = {
+    ...modelProviders.deepseek,
+    model: parsed.deepseekDefaultModel ?? modelProviders.deepseek.model,
+    baseUrl: parsed.deepseekBaseUrl ?? modelProviders.deepseek.baseUrl,
+    enabled: Boolean(parsed.deepseekApiKey) || modelProviders.deepseek.enabled,
+  };
+  modelProviders.openai = {
+    ...modelProviders.openai,
+    model: parsed.openaiDefaultModel ?? modelProviders.openai.model,
+    baseUrl: parsed.openaiBaseUrl ?? modelProviders.openai.baseUrl,
+    enabled: Boolean(parsed.openaiApiKey) || modelProviders.openai.enabled,
+  };
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...parsed,
+    sidebarAgentProvider,
+    sidebarAgentModel,
+    modelProviders,
+    anthropicDefaultModel: parsed.anthropicDefaultModel ?? legacyClaudeModel,
+    deepseekBaseUrl: parsed.deepseekBaseUrl ?? DEFAULT_SETTINGS.deepseekBaseUrl,
+    deepseekDefaultModel: parsed.deepseekDefaultModel ?? DEFAULT_SETTINGS.deepseekDefaultModel,
+    openaiBaseUrl: parsed.openaiBaseUrl ?? DEFAULT_SETTINGS.openaiBaseUrl,
+    openaiDefaultModel: parsed.openaiDefaultModel ?? DEFAULT_SETTINGS.openaiDefaultModel,
+  };
+}
 
 function extToKind(name: string, isDir: boolean): FileNodeKind {
   if (isDir) {
@@ -661,7 +750,7 @@ class FileSystemManager {
     try {
       const raw = await readFile(SETTINGS_FILE, "utf-8");
       const parsed = JSON.parse(raw);
-      const settings = { ...DEFAULT_SETTINGS, ...parsed };
+      const settings = normalizeSettings(parsed);
       if (
         settings.projectsRootDir === LEGACY_PROJECTS_ROOT &&
         !(await this.hasProjectDirectories(LEGACY_PROJECTS_ROOT))
@@ -670,7 +759,7 @@ class FileSystemManager {
       }
       return settings;
     } catch {
-      return { ...DEFAULT_SETTINGS };
+      return normalizeSettings({});
     }
   }
 

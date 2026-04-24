@@ -13,12 +13,18 @@ import type {
   AppSettingsUpdate,
   KBStatus,
   KBGraph,
+  AgentSkill,
+  AgentMentionableFile,
+  AgentStreamParams,
+  AgentThread,
+  AgentThreadMessage,
+  AgentThreadWithMessages,
 } from "../shared/rpc-types";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
-type ClaudeChunkHandler = (content: string, done: boolean, sessionId?: string, slashCommands?: string[]) => void;
 type AiChunkHandler = (content: string, done: boolean) => void;
+type AgentChunkHandler = (content: string, done: boolean) => void;
 type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 
 const mutatingMethods = new Set([
@@ -35,7 +41,10 @@ const mutatingMethods = new Set([
   "deleteFile",
   "saveSettings",
   "rebuildKBIndex",
-  "abortClaudeStream",
+  "createAgentThread",
+  "deleteAgentThread",
+  "saveAgentThreadMessage",
+  "abortAgentStream",
   "abortAiStream",
 ]);
 
@@ -55,11 +64,11 @@ const electrobun = new Electroview({
           console.log("[RPC] Received importMarkdownContent:", suggestedFilename);
           importMarkdownListeners.forEach((handler) => handler(content, suggestedFilename));
         },
-        claudeChunk: ({ content, done, sessionId, slashCommands }) => {
-          claudeChunkListeners.forEach((handler) => handler(content, done, sessionId, slashCommands));
-        },
         aiChunk: ({ content, done }) => {
           aiChunkListeners.forEach((handler) => handler(content, done));
+        },
+        agentChunk: ({ content, done }) => {
+          agentChunkListeners.forEach((handler) => handler(content, done));
         },
         projectUpdated: ({ projectPath, filePath }) => {
           projectUpdatedListeners.forEach((handler) => handler(projectPath, filePath));
@@ -69,11 +78,11 @@ const electrobun = new Electroview({
   }),
 });
 
-// ── Menu action, import, Claude chunk, and project update listeners ──
+// ── Menu action, import, stream chunk, and project update listeners ──
 const menuActionListeners: MenuActionHandler[] = [];
 const importMarkdownListeners: ImportMarkdownHandler[] = [];
-const claudeChunkListeners: ClaudeChunkHandler[] = [];
 const aiChunkListeners: AiChunkHandler[] = [];
+const agentChunkListeners: AgentChunkHandler[] = [];
 const projectUpdatedListeners: ProjectUpdatedHandler[] = [];
 
 export function onMenuAction(handler: MenuActionHandler) {
@@ -92,19 +101,19 @@ export function onImportMarkdown(handler: ImportMarkdownHandler) {
   };
 }
 
-export function onClaudeChunk(handler: ClaudeChunkHandler): () => void {
-  claudeChunkListeners.push(handler);
-  return () => {
-    const idx = claudeChunkListeners.indexOf(handler);
-    if (idx >= 0) claudeChunkListeners.splice(idx, 1);
-  };
-}
-
 export function onAiChunk(handler: AiChunkHandler): () => void {
   aiChunkListeners.push(handler);
   return () => {
     const idx = aiChunkListeners.indexOf(handler);
     if (idx >= 0) aiChunkListeners.splice(idx, 1);
+  };
+}
+
+export function onAgentChunk(handler: AgentChunkHandler): () => void {
+  agentChunkListeners.push(handler);
+  return () => {
+    const idx = agentChunkListeners.indexOf(handler);
+    if (idx >= 0) agentChunkListeners.splice(idx, 1);
   };
 }
 
@@ -143,14 +152,32 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       ollamaBaseUrl: "http://localhost:11434",
       ollamaDefaultModel: "qwen3.5:cloud",
       ollamaEmbedModel: "nomic-embed-text",
+      sidebarAgentProvider: "ollama",
+      sidebarAgentModel: "qwen3.5:cloud",
+      modelProviders: {
+        ollama: { provider: "ollama", model: "qwen3.5:cloud", baseUrl: "http://localhost:11434", enabled: true },
+        anthropic: { provider: "anthropic", model: "claude-sonnet-4-5", enabled: false },
+        deepseek: { provider: "deepseek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", enabled: false },
+        openai: { provider: "openai", model: "gpt-5.2", baseUrl: "https://api.openai.com/v1", enabled: false },
+      },
+      anthropicApiKey: "",
+      anthropicDefaultModel: "claude-sonnet-4-5",
+      deepseekApiKey: "",
+      deepseekBaseUrl: "https://api.deepseek.com",
+      deepseekDefaultModel: "deepseek-chat",
+      openaiApiKey: "",
+      openaiBaseUrl: "https://api.openai.com/v1",
+      openaiDefaultModel: "gpt-5.2",
       kbChunkSize: 512,
       kbChunkOverlap: 64,
       kbTopK: 5,
-      aiBackend: "ollama",
-      claudeModel: "sonnet",
       theme: "system",
     },
     getOllamaModels: [],
+    listProviderModels: [],
+    listAgentSkills: [],
+    listAgentMentionableFiles: [],
+    listAgentThreads: [],
     getKBGraph: { nodes: [], edges: [] },
   };
   return mocks[method] ?? null;
@@ -233,17 +260,37 @@ export const rpc = {
     call<KBGraph>("getKBGraph", { projectPath }),
   // ── Ollama model list ─────────────────────────────────
   getOllamaModels: () => call<string[]>("getOllamaModels"),
+  listProviderModels: (provider: AppSettings["sidebarAgentProvider"], settings?: AppSettingsUpdate) =>
+    call<string[]>("listProviderModels", { provider, settings }),
   openExternal: (url: string) => call<void>("openExternal", { url }),
-  // ── Claude CLI streaming ──────────────────────────────
-  getClaudeSlashCommands: (projectPath?: string) => call<string[]>("getClaudeSlashCommands", { projectPath }),
-  abortClaudeStream: () => call<void>("abortClaudeStream"),
-  claudeStream: (
-    message: string,
-    sessionId: string | null,
-    projectPath: string | null,
-    kbEnabled?: boolean,
-    lang?: "ko" | "en"
-  ) => call<void>("claudeStream", { message, sessionId, projectPath, kbEnabled, lang }),
+  // ── Scholar Agent streaming ───────────────────────────
+  listAgentSkills: (projectPath?: string) =>
+    call<AgentSkill[]>("listAgentSkills", { projectPath }),
+  listAgentMentionableFiles: (projectPath: string) =>
+    call<AgentMentionableFile[]>("listAgentMentionableFiles", { projectPath }),
+  listAgentThreads: (projectPath: string) =>
+    call<AgentThread[]>("listAgentThreads", { projectPath }),
+  createAgentThread: (
+    projectPath: string,
+    provider: AppSettings["sidebarAgentProvider"],
+    model: string,
+    title?: string,
+    metadata?: Record<string, unknown>,
+  ) => call<AgentThread>("createAgentThread", { projectPath, provider, model, title, metadata }),
+  getAgentThread: (projectPath: string, threadId: string) =>
+    call<AgentThreadWithMessages>("getAgentThread", { projectPath, threadId }),
+  deleteAgentThread: (projectPath: string, threadId: string) =>
+    call<void>("deleteAgentThread", { projectPath, threadId }),
+  saveAgentThreadMessage: (
+    projectPath: string,
+    threadId: string,
+    role: AgentThreadMessage["role"],
+    content: string,
+    status?: AgentThreadMessage["status"],
+    metadata?: Record<string, unknown>,
+  ) => call<AgentThreadMessage>("saveAgentThreadMessage", { projectPath, threadId, role, content, status, metadata }),
+  agentStream: (params: AgentStreamParams) => call<void>("agentStream", params),
+  abortAgentStream: () => call<void>("abortAgentStream"),
   // ── Streaming AI (Ollama, proxied through bun to bypass CORS) ──
   // Listen for chunks with `onAiChunk(...)`; this call is fire-and-forget.
   generateTextStream: (

@@ -9,6 +9,12 @@ import type {
   AppSettingsUpdate,
   KBStatus,
   KBGraph,
+  AgentSkill,
+  AgentMentionableFile,
+  AgentStreamParams,
+  AgentThread,
+  AgentThreadMessage,
+  AgentThreadWithMessages,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -62,24 +68,35 @@ type BunRequests = RPCSchema<{
     // Settings
     getSettings: { params: void; response: AppSettings };
     saveSettings: { params: { settings: AppSettingsUpdate }; response: void };
-    // Claude CLI streaming
-    claudeStream: {
-      params: {
-        message: string;
-        sessionId: string | null;
-        projectPath: string | null;
-        kbEnabled?: boolean;
-        lang?: "ko" | "en";
-      };
-      response: void;
+    listAgentSkills: { params: { projectPath?: string }; response: AgentSkill[] };
+    listAgentMentionableFiles: { params: { projectPath: string }; response: AgentMentionableFile[] };
+    listAgentThreads: { params: { projectPath: string }; response: AgentThread[] };
+    createAgentThread: {
+      params: { projectPath: string; provider: AppSettings["sidebarAgentProvider"]; model: string; title?: string; metadata?: Record<string, unknown> };
+      response: AgentThread;
     };
-    getClaudeSlashCommands: { params: { projectPath?: string }; response: string[] };
-    abortClaudeStream: { params: void; response: void };
+    getAgentThread: { params: { projectPath: string; threadId: string }; response: AgentThreadWithMessages };
+    deleteAgentThread: { params: { projectPath: string; threadId: string }; response: void };
+    saveAgentThreadMessage: {
+      params: {
+        projectPath: string;
+        threadId: string;
+        role: "user" | "assistant";
+        content: string;
+        status?: AgentThreadMessage["status"];
+        metadata?: Record<string, unknown>;
+      };
+      response: AgentThreadMessage;
+    };
+    agentStream: { params: AgentStreamParams; response: void };
+    abortAgentStream: { params: void; response: void };
     getOllamaModels: { params: void; response: string[] };
+    listProviderModels: { params: { provider: AppSettings["sidebarAgentProvider"]; settings?: AppSettingsUpdate }; response: string[] };
     openExternal: { params: { url: string }; response: void };
   };
   messages: {
     aiChunk: { content: string };
+    agentChunk: { content: string; done: boolean };
   };
 }>;
 
@@ -88,7 +105,7 @@ type WebviewRequests = RPCSchema<{
   requests: Record<never, { params: unknown; response: unknown }>;
   messages: {
     aiChunk: { content: string; done: boolean };
-    claudeChunk: { content: string; done: boolean; sessionId?: string; slashCommands?: string[] };
+    agentChunk: { content: string; done: boolean };
     projectUpdated: { projectPath: string; filePath?: string };
     menuAction: { action: string };
     importMarkdownContent: { content: string; suggestedFilename: string };

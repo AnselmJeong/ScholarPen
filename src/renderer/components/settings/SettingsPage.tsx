@@ -14,7 +14,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
-import type { OllamaStatus, AppSettings } from "@shared/rpc-types";
+import type { LLMProvider, OllamaStatus, AppSettings } from "@shared/rpc-types";
 
 interface SettingsPageProps {
   ollamaStatus: OllamaStatus;
@@ -22,14 +22,23 @@ interface SettingsPageProps {
   onSettingsSaved?: (saved: AppSettings) => void;
 }
 
-const CLAUDE_MODELS = [
-  { value: "default", label: "Default" },
-  { value: "sonnet", label: "Sonnet (latest)" },
-  { value: "opus", label: "Opus (latest)" },
-  { value: "haiku", label: "Haiku (latest)" },
-  { value: "opusplan", label: "Opus Plan" },
-  { value: "sonnet[1m]", label: "Sonnet 1M context" },
+const PROVIDERS: Array<{ value: LLMProvider; label: string }> = [
+  { value: "ollama", label: "Ollama" },
+  { value: "anthropic", label: "Claude" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "openai", label: "OpenAI" },
 ];
+
+const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama">, string[]> = {
+  anthropic: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  openai: ["gpt-5.2", "gpt-5.1", "gpt-4.1"],
+};
+
+const DEFAULT_PROVIDER_MODELS: Record<LLMProvider, string[]> = {
+  ollama: [],
+  ...MODEL_PRESETS,
+};
 
 function SettingSection({ icon: Icon, title, children }: {
   icon: React.ElementType;
@@ -63,33 +72,116 @@ function SettingRow({ label, description, children }: {
   );
 }
 
+function ProviderModelPicker({
+  models,
+  value,
+  placeholder,
+  loading,
+  error,
+  onRefresh,
+  onChange,
+}: {
+  models: string[];
+  value: string;
+  placeholder: string;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onChange: (model: string) => void;
+}) {
+  const hasValueInList = models.includes(value);
+
+  return (
+    <div className="space-y-1.5">
+      {models.length > 0 && (
+        <Select
+          value={hasValueInList ? value : "custom"}
+          onValueChange={(next) => {
+            if (next !== "custom") onChange(next);
+          }}
+        >
+          <SelectTrigger className="text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {models.map((model) => (
+              <SelectItem key={model} value={model} className="text-xs font-mono">
+                {model}
+              </SelectItem>
+            ))}
+            <SelectItem value="custom" className="text-xs">
+              Custom model ID
+            </SelectItem>
+          </SelectContent>
+        </Select>
+      )}
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="font-mono text-xs"
+      />
+      <div className="flex items-center justify-between gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-xs text-muted-foreground"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          <RefreshCw className={cn("h-3 w-3 mr-1", loading && "animate-spin")} />
+          모델 새로고침
+        </Button>
+        {models.length > 0 && <span className="text-[11px] text-muted-foreground">{models.length} models</span>}
+      </div>
+      {error && <p className="text-[11px] leading-relaxed text-destructive">{error}</p>}
+    </div>
+  );
+}
+
 export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: SettingsPageProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [providerModels, setProviderModels] = useState<Record<LLMProvider, string[]>>(DEFAULT_PROVIDER_MODELS);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [modelListError, setModelListError] = useState<string | null>(null);
 
   useEffect(() => {
     rpc.getSettings().then(setSettings).catch(console.error);
   }, []);
 
-  const fetchOllamaModels = useCallback(async () => {
+  const fetchProviderModels = useCallback(async (providerToFetch: LLMProvider, currentSettings = settings) => {
+    if (!currentSettings) return;
     setLoadingModels(true);
+    setModelListError(null);
     try {
-      const models = await rpc.getOllamaModels();
-      setOllamaModels(models);
+      const models = await rpc.listProviderModels(providerToFetch, currentSettings);
+      setProviderModels((prev) => ({ ...prev, [providerToFetch]: models }));
+      if (models.length > 0 && providerToFetch === currentSettings.sidebarAgentProvider) {
+        const activeModel = currentSettings.sidebarAgentModel;
+        if (!activeModel || !models.includes(activeModel)) {
+          updateProviderModelForSettings(providerToFetch, models[0], currentSettings);
+        }
+      }
+    } catch (err) {
+      setModelListError((err as Error).message);
     } finally {
       setLoadingModels(false);
     }
-  }, []);
+  }, [settings]);
 
   // Fetch ollama model list on mount (or when switching to ollama)
   useEffect(() => {
-    if (settings?.aiBackend !== "claude") {
-      fetchOllamaModels();
-    }
-  }, [settings?.aiBackend]);
+    if (!settings) return;
+    const provider = settings.sidebarAgentProvider ?? "ollama";
+    const hasCredentials =
+      provider === "ollama" ||
+      (provider === "anthropic" && settings.anthropicApiKey.trim()) ||
+      (provider === "deepseek" && settings.deepseekApiKey.trim()) ||
+      (provider === "openai" && settings.openaiApiKey.trim());
+    if (hasCredentials) fetchProviderModels(provider, settings);
+  }, [settings?.sidebarAgentProvider]);
 
   const updateSetting = useCallback(<K extends keyof AppSettings>(
     key: K,
@@ -128,7 +220,37 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
     );
   }
 
-  const backend = settings.aiBackend ?? "ollama";
+  const provider = settings.sidebarAgentProvider ?? "ollama";
+
+  const updateProviderModelForSettings = (targetProvider: LLMProvider, model: string, currentSettings = settings) => {
+    const nextProviders = {
+      ...currentSettings.modelProviders,
+      [targetProvider]: {
+        ...currentSettings.modelProviders[targetProvider],
+        model,
+      },
+    };
+    setSettings((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        sidebarAgentModel: model,
+        ollamaDefaultModel: targetProvider === "ollama" ? model : prev.ollamaDefaultModel,
+        anthropicDefaultModel: targetProvider === "anthropic" ? model : prev.anthropicDefaultModel,
+        deepseekDefaultModel: targetProvider === "deepseek" ? model : prev.deepseekDefaultModel,
+        openaiDefaultModel: targetProvider === "openai" ? model : prev.openaiDefaultModel,
+        modelProviders: nextProviders,
+      };
+    });
+    setSaved(false);
+  };
+
+  const updateProviderModel = (model: string) => {
+    updateProviderModelForSettings(provider, model);
+  };
+
+  const modelsForProvider = providerModels[provider] ?? [];
+  const currentModel = settings.sidebarAgentModel || settings.modelProviders[provider]?.model || settings.ollamaDefaultModel;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background">
@@ -147,123 +269,128 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
           {/* AI section */}
           <SettingSection icon={Bot} title="AI">
 
-            {/* Backend toggle */}
-            <SettingRow label="Backend" description="AI 응답 방식">
-              <div className="flex rounded-lg border border-border overflow-hidden">
-                {(["ollama", "claude"] as const).map((b) => (
+            {/* Provider toggle */}
+            <SettingRow label="Sidebar Provider" description="AISidebar에서 사용할 LLM provider">
+              <div className="grid grid-cols-4 rounded-md border border-border bg-muted/30 p-0.5">
+                {PROVIDERS.map((p) => (
                   <button
-                    key={b}
-                    onClick={() => updateSetting("aiBackend", b)}
+                    key={p.value}
+                    onClick={() => {
+                      const model = settings.modelProviders[p.value]?.model;
+                      updateSetting("sidebarAgentProvider", p.value);
+                      if (model) updateSetting("sidebarAgentModel", model);
+                    }}
                     className={cn(
-                      "flex-1 py-1.5 text-xs font-medium transition-colors",
-                      backend === b
+                      "rounded-[5px] px-2 py-1.5 text-[11px] font-medium transition-colors",
+                      provider === p.value
                         ? "bg-primary text-primary-foreground"
-                        : "bg-background text-muted-foreground hover:bg-muted"
+                        : "text-muted-foreground hover:bg-background hover:text-foreground"
                     )}
                   >
-                    {b === "ollama" ? "Ollama" : "Claude (직접)"}
+                    {p.label}
                   </button>
                 ))}
               </div>
             </SettingRow>
 
             {/* Ollama model */}
-            {backend === "ollama" && (
-              <SettingRow
-                label="Sidebar Agent Model"
-                description="Ollama를 통해 Claude wrapper를 launch할 때 사용할 모델"
-              >
-                <div className="space-y-1.5">
-                  {ollamaModels.length > 0 ? (
-                    <Select
-                      value={settings.ollamaDefaultModel}
-                      onValueChange={(v) => updateSetting("ollamaDefaultModel", v)}
-                    >
-                      <SelectTrigger className="text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ollamaModels.map((m) => (
-                          <SelectItem key={m} value={m} className="text-xs font-mono">
-                            {m}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input
-                      value={settings.ollamaDefaultModel}
-                      onChange={(e) => updateSetting("ollamaDefaultModel", e.target.value)}
-                      placeholder="glm-5.1:cloud"
-                      className="font-mono text-xs"
-                    />
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs text-muted-foreground"
-                    onClick={fetchOllamaModels}
-                    disabled={loadingModels}
-                  >
-                    <RefreshCw className={cn("h-3 w-3 mr-1", loadingModels && "animate-spin")} />
-                    목록 새로고침
-                  </Button>
-                </div>
-              </SettingRow>
-            )}
-
-            <SettingRow
-              label="Ollama Base URL"
-              description="Editor inline AI와 Ollama backend status/model lookup에 사용"
-            >
-              <Input
-                value={settings.ollamaBaseUrl}
-                onChange={(e) => updateSetting("ollamaBaseUrl", e.target.value)}
-                placeholder="http://localhost:11434"
-                className="font-mono text-xs"
-              />
-            </SettingRow>
-
-            {/* Claude direct model */}
-            {backend === "claude" && (
-              <SettingRow
-                label="Sidebar Agent Model"
-                description="Claude Code alias 또는 full model ID"
-              >
-                <div className="space-y-1.5">
-                  <Select
-                    value={CLAUDE_MODELS.some(({ value }) => value === settings.claudeModel) ? settings.claudeModel : "custom"}
-                    onValueChange={(v) => {
-                      if (v !== "custom") updateSetting("claudeModel", v);
-                    }}
-                  >
-                    <SelectTrigger className="text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CLAUDE_MODELS.map(({ value, label }) => (
-                        <SelectItem key={value} value={value} className="text-xs">
-                          {label}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="custom" className="text-xs">
-                        Custom model ID
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+            {provider === "ollama" && (
+              <>
+                <SettingRow
+                  label="Ollama Base URL"
+                  description="Ollama status, model lookup, sidebar agent에 사용"
+                >
                   <Input
-                    value={settings.claudeModel ?? "sonnet"}
-                    onChange={(e) => updateSetting("claudeModel", e.target.value)}
-                    placeholder="sonnet, opus, haiku, or claude-*"
+                    value={settings.ollamaBaseUrl}
+                    onChange={(e) => {
+                      updateSetting("ollamaBaseUrl", e.target.value);
+                      updateSetting("modelProviders", {
+                        ...settings.modelProviders,
+                        ollama: { ...settings.modelProviders.ollama, baseUrl: e.target.value },
+                      });
+                    }}
+                    placeholder="http://localhost:11434"
                     className="font-mono text-xs"
                   />
-                </div>
-              </SettingRow>
+                </SettingRow>
+
+                <SettingRow label="Sidebar Agent Model" description="Ollama에서 설치된 모델 목록을 불러옵니다">
+                  <ProviderModelPicker
+                    models={modelsForProvider}
+                    value={currentModel}
+                    placeholder="qwen3.5:cloud"
+                    loading={loadingModels}
+                    error={modelListError}
+                    onRefresh={() => fetchProviderModels(provider, settings)}
+                    onChange={updateProviderModel}
+                  />
+                </SettingRow>
+              </>
             )}
 
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-              Sidebar agent mode can read, edit, and write project files and can use web tools. Ollama launches the Claude wrapper through Ollama; Claude uses Claude Code directly.
-            </div>
+            {provider !== "ollama" && (
+              <>
+                <SettingRow
+                  label={`${PROVIDERS.find((p) => p.value === provider)?.label} API Key`}
+                  description="Bun main process에서만 사용됩니다"
+                >
+                  <Input
+                    type="password"
+                    value={
+                      provider === "anthropic"
+                        ? settings.anthropicApiKey
+                        : provider === "deepseek"
+                          ? settings.deepseekApiKey
+                          : settings.openaiApiKey
+                    }
+                    onChange={(e) => {
+                      if (provider === "anthropic") updateSetting("anthropicApiKey", e.target.value);
+                      if (provider === "deepseek") updateSetting("deepseekApiKey", e.target.value);
+                      if (provider === "openai") updateSetting("openaiApiKey", e.target.value);
+                    }}
+                    placeholder="Enter API key..."
+                    className="font-mono text-xs"
+                  />
+                </SettingRow>
+
+                {provider !== "anthropic" && (
+                  <SettingRow label="Base URL" description="OpenAI-compatible endpoint">
+                    <Input
+                      value={provider === "deepseek" ? settings.deepseekBaseUrl : settings.openaiBaseUrl}
+                      onChange={(e) => {
+                        if (provider === "deepseek") {
+                          updateSetting("deepseekBaseUrl", e.target.value);
+                          updateSetting("modelProviders", {
+                            ...settings.modelProviders,
+                            deepseek: { ...settings.modelProviders.deepseek, baseUrl: e.target.value },
+                          });
+                        }
+                        if (provider === "openai") {
+                          updateSetting("openaiBaseUrl", e.target.value);
+                          updateSetting("modelProviders", {
+                            ...settings.modelProviders,
+                            openai: { ...settings.modelProviders.openai, baseUrl: e.target.value },
+                          });
+                        }
+                      }}
+                      className="font-mono text-xs"
+                    />
+                  </SettingRow>
+                )}
+
+                <SettingRow label="Sidebar Agent Model" description="Provider API에서 모델 목록을 불러옵니다">
+                  <ProviderModelPicker
+                    models={modelsForProvider.length > 0 ? modelsForProvider : MODEL_PRESETS[provider]}
+                    value={currentModel}
+                    placeholder={MODEL_PRESETS[provider][0]}
+                    loading={loadingModels}
+                    error={modelListError}
+                    onRefresh={() => fetchProviderModels(provider, settings)}
+                    onChange={updateProviderModel}
+                  />
+                </SettingRow>
+              </>
+            )}
 
           </SettingSection>
 

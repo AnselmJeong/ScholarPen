@@ -42,9 +42,9 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "aiBackend" | "claudeModel" | "ollamaBaseUrl">>({
-    aiBackend: "ollama",
-    claudeModel: "sonnet",
+  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl">>({
+    sidebarAgentProvider: "ollama",
+    sidebarAgentModel: "qwen3.5:cloud",
     ollamaBaseUrl: "http://localhost:11434",
   });
 
@@ -97,8 +97,8 @@ export function App() {
   useEffect(() => {
     rpc.getSettings()
       .then((s) => setAppSettings({
-        aiBackend: s.aiBackend ?? "ollama",
-        claudeModel: s.claudeModel ?? "sonnet",
+        sidebarAgentProvider: s.sidebarAgentProvider ?? "ollama",
+        sidebarAgentModel: s.sidebarAgentModel ?? s.ollamaDefaultModel ?? "qwen3.5:cloud",
         ollamaBaseUrl: s.ollamaBaseUrl ?? "http://localhost:11434",
       }))
       .catch(console.error);
@@ -556,8 +556,8 @@ export function App() {
                 onSettingsSaved={(saved) => {
                   refreshProjects();
                   setAppSettings({
-                    aiBackend: saved.aiBackend ?? "ollama",
-                    claudeModel: saved.claudeModel ?? "sonnet",
+                    sidebarAgentProvider: saved.sidebarAgentProvider ?? "ollama",
+                    sidebarAgentModel: saved.sidebarAgentModel ?? saved.ollamaDefaultModel ?? "qwen3.5:cloud",
                     ollamaBaseUrl: saved.ollamaBaseUrl ?? "http://localhost:11434",
                   });
                 }}
@@ -577,6 +577,7 @@ export function App() {
               <AISidebar
                 project={activeProject}
                 ollamaStatus={ollamaStatus}
+                appSettings={appSettings}
                 editor={editorRef.current}
                 onClose={() => setAiSidebarOpen(false)}
                 width={aiSidebarWidth}
@@ -590,8 +591,8 @@ export function App() {
       {/* Bottom: Status Bar */}
       <StatusBar
         ollamaStatus={ollamaStatus}
-        aiBackend={appSettings.aiBackend}
-        claudeModel={appSettings.claudeModel}
+        sidebarAgentProvider={appSettings.sidebarAgentProvider}
+        sidebarAgentModel={appSettings.sidebarAgentModel}
         wordCount={wordCount}
         onToggleAI={() => setAiSidebarOpen(v => !v)}
         saveStatus={saveStatus}
