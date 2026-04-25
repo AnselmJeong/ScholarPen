@@ -9,9 +9,17 @@ import {
   type MessageState,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { BookOpen, Bot, ChevronRight, Clipboard, Copy, MessageSquare, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
+import { BookOpen, Bot, ChevronDown, ChevronRight, Clipboard, Copy, MessageSquare, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type {
   AgentMentionableFile,
@@ -311,41 +319,23 @@ function AssistantThread({
 function ProjectContextBar({
   project,
   kbStatus,
-  kbEnabled,
-  setKbEnabled,
-  onResetContext,
 }: {
   project: ProjectInfo;
   kbStatus: KBStatus | null;
-  kbEnabled: boolean;
-  setKbEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  onResetContext: () => void;
 }) {
-  const aui = useAui();
-
   return (
     <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
       <p className="text-xs text-muted-foreground truncate">
         <span className="font-medium text-foreground/80">{project.name}</span>
       </p>
       {kbStatus?.exists && (
-        <button
-          onClick={() => {
-            setKbEnabled((v) => !v);
-            aui.thread().reset();
-            onResetContext();
-          }}
-          title={kbEnabled ? `KB 활성 (${kbStatus.pageCount}개 페이지)` : "KB 비활성"}
-          className={cn(
-            "flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium transition-colors",
-            kbEnabled
-              ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25"
-              : "bg-muted text-muted-foreground hover:bg-muted/80",
-          )}
+        <span
+          title={`KB available (${kbStatus.pageCount} pages)`}
+          className="flex items-center gap-1 flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
         >
           <BookOpen className="h-2.5 w-2.5" />
-          KB {kbEnabled ? "ON" : "OFF"}
-        </button>
+          {kbStatus.pageCount} KB pages
+        </span>
       )}
     </div>
   );
@@ -380,48 +370,78 @@ function ThreadHistoryPanel({
   onSelectThread: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
 }) {
+  const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
+
   return (
-    <div className="border-b border-border bg-background">
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <MessageSquare className="h-3.5 w-3.5" />
-          Threads
-        </div>
-        <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onNewThread} title="새 thread">
+    <div className="border-b border-border bg-background px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              className="h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left"
+              title={activeThread?.title ?? "Thread 선택"}
+            >
+              <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                {activeThread?.title ?? "Threads"}
+              </span>
+              <span className="flex-shrink-0 text-[11px] text-muted-foreground">
+                {threads.length}
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-[min(520px,calc(100vw-2rem))] max-h-80 overflow-y-auto">
+            <DropdownMenuLabel>Threads</DropdownMenuLabel>
+            {threads.length === 0 ? (
+              <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                저장된 thread 없음
+              </DropdownMenuItem>
+            ) : (
+              threads.map((thread) => (
+                <DropdownMenuItem
+                  key={thread.id}
+                  onSelect={() => onSelectThread(thread.id)}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-md px-2 py-2",
+                    activeThreadId === thread.id && "bg-primary/10",
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-foreground">{thread.title}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {thread.provider} · {thread.model} · {formatThreadTime(thread.updatedAt)}
+                    </p>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 flex-shrink-0 opacity-60 hover:opacity-100"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onDeleteThread(thread.id);
+                    }}
+                    title="thread 삭제"
+                    type="button"
+                  >
+                    <Trash2 className="h-3 w-3 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuItem>
+              ))
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onNewThread} className="gap-2 text-xs">
+              <Plus className="h-3.5 w-3.5" />
+              새 thread
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button size="icon" variant="ghost" className="h-8 w-8 flex-shrink-0" onClick={onNewThread} title="새 thread">
           <Plus className="h-3.5 w-3.5" />
         </Button>
       </div>
-      {threads.length > 0 && (
-        <div className="max-h-40 overflow-y-auto px-2 pb-2 space-y-1">
-          {threads.map((thread) => (
-            <div
-              key={thread.id}
-              className={cn(
-                "group flex items-center gap-1 rounded-md border px-2 py-1.5",
-                activeThreadId === thread.id
-                  ? "border-primary/30 bg-primary/10"
-                  : "border-transparent hover:bg-muted/60",
-              )}
-            >
-              <button type="button" onClick={() => onSelectThread(thread.id)} className="min-w-0 flex-1 text-left">
-                <p className="truncate text-xs font-medium text-foreground">{thread.title}</p>
-                <p className="truncate text-[11px] text-muted-foreground">
-                  {thread.provider} · {thread.model} · {formatThreadTime(thread.updatedAt)}
-                </p>
-              </button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-6 w-6 opacity-0 group-hover:opacity-100 focus:opacity-100"
-                onClick={() => onDeleteThread(thread.id)}
-                title="thread 삭제"
-              >
-                <Trash2 className="h-3 w-3 text-muted-foreground" />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -429,19 +449,25 @@ function ThreadHistoryPanel({
 function AssistantComposer({
   editor,
   project,
+  kbStatus,
+  kbEnabled,
   slashCommands,
   files,
   selectedSkillIds,
   selectedFilePaths,
+  setKbEnabled,
   setSelectedSkillIds,
   setSelectedFilePaths,
 }: {
   editor: BlockNoteEditor<any, any, any> | null;
   project: ProjectInfo | null;
+  kbStatus: KBStatus | null;
+  kbEnabled: boolean;
   slashCommands: AgentSkill[];
   files: AgentMentionableFile[];
   selectedSkillIds: string[];
   selectedFilePaths: string[];
+  setKbEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setSelectedSkillIds: React.Dispatch<React.SetStateAction<string[]>>;
   setSelectedFilePaths: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
@@ -631,6 +657,29 @@ function AssistantComposer({
         />
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn(
+                "h-6 gap-1 rounded-full px-2 text-[11px] font-medium",
+                kbStatus?.exists && kbEnabled
+                  ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 hover:text-emerald-700"
+                  : "text-muted-foreground hover:bg-muted",
+              )}
+              onClick={() => setKbEnabled((v) => !v)}
+              title={
+                kbStatus?.exists
+                  ? kbEnabled
+                    ? `이번 질문에 KB 사용 (${kbStatus.pageCount} pages)`
+                    : "이번 질문에 KB 사용 안 함"
+                  : "이 프로젝트에 KB가 없습니다"
+              }
+              disabled={loading || !kbStatus?.exists}
+              type="button"
+            >
+              <BookOpen className="h-3 w-3" />
+              KB {kbStatus?.exists && kbEnabled ? "ON" : "OFF"}
+            </Button>
             <Button
               size="icon"
               variant="ghost"
@@ -878,12 +927,6 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
           <ProjectContextBar
             project={project}
             kbStatus={kbStatus}
-            kbEnabled={kbEnabled}
-            setKbEnabled={setKbEnabled}
-            onResetContext={() => {
-              setSelectedSkillIds([]);
-              setSelectedFilePaths([]);
-            }}
           />
         )}
 
@@ -898,10 +941,13 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
         <AssistantComposer
           editor={editor}
           project={project}
+          kbStatus={kbStatus}
+          kbEnabled={kbEnabled}
           slashCommands={slashCommands}
           files={mentionableFiles}
           selectedSkillIds={selectedSkillIds}
           selectedFilePaths={selectedFilePaths}
+          setKbEnabled={setKbEnabled}
           setSelectedSkillIds={setSelectedSkillIds}
           setSelectedFilePaths={setSelectedFilePaths}
         />

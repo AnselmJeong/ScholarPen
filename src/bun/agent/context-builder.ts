@@ -1,9 +1,10 @@
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
 import { findKBRoot, getKBEngine, type KBSearchResult } from "../kb/search";
-import { buildReferenceList } from "./references";
+import { buildReferenceList, buildWebReferenceList } from "./references";
 import { loadAgentSkill } from "./skill-registry";
 import { resolveMentionedFiles } from "./mention-resolver";
-import { searchWebWithOllama, type WebSearchResult } from "./web-search";
+import { searchAndFetchWebWithOllama, type WebSearchResult } from "./web-search";
+import { shouldUseWebSearch } from "./web-search-decision";
 
 const HISTORY_MESSAGE_LIMIT = 4_000;
 const HISTORY_TOTAL_LIMIT = 16_000;
@@ -84,11 +85,22 @@ export async function buildAgentMessages(
     }
   }
 
-  const webSearchAvailable = settings.ollamaWebSearchEnabled && Boolean(settings.ollamaApiKey.trim());
+  const webSearchAvailable =
+    !params.kbEnabled &&
+    settings.ollamaWebSearchEnabled &&
+    Boolean(settings.ollamaApiKey.trim());
   let webResults: WebSearchResult[] = [];
   if (webSearchAvailable) {
     try {
-      webResults = await searchWebWithOllama(params.message, settings, 5);
+      const useWebSearch = await shouldUseWebSearch(
+        params,
+        settings,
+        params.provider,
+        params.model,
+      );
+      if (useWebSearch) {
+        webResults = await searchAndFetchWebWithOllama(params.message, settings, 5);
+      }
     } catch (err) {
       console.warn("[Agent] Web search failed:", err);
     }
@@ -102,9 +114,11 @@ export async function buildAgentMessages(
     params.kbEnabled
       ? "KB search is ON. Use KB references only when <kb_context> is present."
       : "KB search is OFF. No Knowledge_Base content is provided in this request.",
-    webSearchAvailable
-      ? "Web search is ON. Use web results only when <web_search_context> is present, cite them as [W1], [W2], etc. with URLs."
-      : "Web search is OFF. No live internet search content is provided in this request.",
+    params.kbEnabled
+      ? "Web search is OFF because KB search is ON."
+      : webResults.length > 0
+        ? "Web search was used for this request. Cite specific web sources inline as [W1], [W2], etc.; do not cite broad ranges like [W1]-[W5] unless every listed source supports the same sentence. A Web Sources list will be appended automatically."
+        : "Web search was not used for this request. No live internet search content is provided in this request.",
     mentionedFiles.length > 0
       ? "The user designated project files for this request; you may discuss those provided files."
       : "No project file content is provided in this request. Do not say that you reviewed current project files.",
@@ -127,7 +141,10 @@ export async function buildAgentMessages(
     webContext(webResults),
   ].filter(Boolean);
 
-  const references = kbResults.length > 0 ? buildReferenceList(kbResults) : "";
+  const references = [
+    kbResults.length > 0 ? buildReferenceList(kbResults) : "",
+    webResults.length > 0 ? buildWebReferenceList(webResults) : "",
+  ].filter(Boolean).join("");
   const systemContent = trimMiddle(
     systemParts.join("\n\n"),
     SYSTEM_CONTEXT_LIMIT,

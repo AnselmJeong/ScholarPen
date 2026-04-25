@@ -327,33 +327,6 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                   />
                 </SettingRow>
 
-                <SettingRow
-                  label="Ollama API Key"
-                  description="ollama.com web search API에 사용됩니다"
-                >
-                  <Input
-                    type="password"
-                    value={settings.ollamaApiKey}
-                    onChange={(e) => updateSetting("ollamaApiKey", e.target.value)}
-                    placeholder="ollama_..."
-                    className="font-mono text-xs"
-                  />
-                </SettingRow>
-
-                <SettingRow
-                  label="Web Search"
-                  description="AISidebar 질문마다 Ollama web search 결과를 context에 추가합니다"
-                >
-                  <div className="flex items-center justify-end gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {settings.ollamaWebSearchEnabled ? "Enabled" : "Disabled"}
-                    </span>
-                    <Switch
-                      checked={settings.ollamaWebSearchEnabled}
-                      onCheckedChange={(checked) => updateSetting("ollamaWebSearchEnabled", checked)}
-                    />
-                  </div>
-                </SettingRow>
               </>
             )}
 
@@ -420,6 +393,34 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                 </SettingRow>
               </>
             )}
+
+            <SettingRow
+              label="Ollama API Key"
+              description="ollama.com web search/fetch에 사용됩니다. 다른 provider를 선택해도 web context는 이 키로 가져옵니다."
+            >
+              <Input
+                type="password"
+                value={settings.ollamaApiKey}
+                onChange={(e) => updateSetting("ollamaApiKey", e.target.value)}
+                placeholder="ollama_..."
+                className="font-mono text-xs"
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Web Search"
+              description="KB OFF일 때만 모델 판단 후 Ollama web search/fetch context를 추가합니다"
+            >
+              <div className="flex items-center justify-end gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {settings.ollamaWebSearchEnabled ? "Enabled" : "Disabled"}
+                </span>
+                <Switch
+                  checked={settings.ollamaWebSearchEnabled}
+                  onCheckedChange={(checked) => updateSetting("ollamaWebSearchEnabled", checked)}
+                />
+              </div>
+            </SettingRow>
 
           </SettingSection>
 
