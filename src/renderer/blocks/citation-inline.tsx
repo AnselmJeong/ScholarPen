@@ -1,6 +1,54 @@
 import React from "react";
 import { createReactInlineContentSpec } from "@blocknote/react";
 
+export interface CitationHoverMetadata {
+  firstAuthor: string;
+  year: string;
+  title: string;
+}
+
+let citationHoverMetadata = new Map<string, CitationHoverMetadata>();
+const citationHoverListeners = new Set<() => void>();
+
+export function setCitationHoverMetadata(metadata: Map<string, CitationHoverMetadata>) {
+  citationHoverMetadata = new Map(metadata);
+  citationHoverListeners.forEach((listener) => listener());
+}
+
+function subscribeCitationHoverMetadata(listener: () => void) {
+  citationHoverListeners.add(listener);
+  return () => {
+    citationHoverListeners.delete(listener);
+  };
+}
+
+function getCitationHoverSnapshot() {
+  return citationHoverMetadata;
+}
+
+function CitationBadge({ citekey, locator }: { citekey: string; locator?: string }) {
+  const metadata = React.useSyncExternalStore(
+    subscribeCitationHoverMetadata,
+    getCitationHoverSnapshot,
+    getCitationHoverSnapshot
+  );
+  const label = locator ? `${citekey}, ${locator}` : citekey;
+  const details = metadata.get(citekey);
+  const title = details
+    ? `${details.firstAuthor}, ${details.year}. ${details.title}`
+    : citekey;
+
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:border-amber-700/50 cursor-default select-none mx-0.5"
+      title={title}
+      data-citekey={citekey}
+    >
+      [{label}]
+    </span>
+  );
+}
+
 // ── Citation Inline ─────────────────────────────────────────────────────────
 // Renders an inline citation badge like [@Smith2020].
 // The citekey prop is set when the citation is inserted.
@@ -18,16 +66,7 @@ export const citationInline = createReactInlineContentSpec(
   {
     render: ({ inlineContent }) => {
       const { citekey, locator } = inlineContent.props;
-      const label = locator ? `${citekey}, ${locator}` : citekey;
-      return (
-        <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-900/25 dark:text-amber-300 dark:border-amber-700/50 cursor-default select-none mx-0.5"
-          title={`Citation: ${citekey}`}
-          data-citekey={citekey}
-        >
-          [{label}]
-        </span>
-      );
+      return <CitationBadge citekey={citekey} locator={locator} />;
     },
   }
 );

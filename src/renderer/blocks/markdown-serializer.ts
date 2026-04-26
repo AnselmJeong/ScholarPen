@@ -29,6 +29,22 @@ function extractInlineText(content: unknown): string {
   return "";
 }
 
+function inlineProp(obj: Record<string, unknown>, key: string): unknown {
+  const props = obj.props as Record<string, unknown> | undefined;
+  return props?.[key] ?? obj[key];
+}
+
+function containsCustomInline(content: unknown): boolean {
+  if (!content) return false;
+  if (Array.isArray(content)) return content.some(containsCustomInline);
+  if (typeof content === "object" && content !== null) {
+    const obj = content as Record<string, unknown>;
+    if (obj.type === "citation" || obj.type === "footnote" || obj.type === "inlineMath") return true;
+    return containsCustomInline(obj.content);
+  }
+  return false;
+}
+
 /**
  * Convert inline content to Markdown with styling preserved.
  */
@@ -42,6 +58,28 @@ function inlineContentToMarkdown(content: unknown): string {
     const text = typeof obj.text === "string" ? obj.text : "";
     const styles = (obj.styles || {}) as Record<string, unknown>;
 
+    // Citation inline: [@citekey]
+    if (obj.type === "citation") {
+      const citekey = inlineProp(obj, "citekey");
+      const locator = inlineProp(obj, "locator");
+      if (typeof citekey === "string" && citekey.trim()) {
+        return locator && typeof locator === "string" && locator.trim()
+          ? `[@${citekey}, ${locator}]`
+          : `[@${citekey}]`;
+      }
+    }
+
+    // Footnote inline: [^N]
+    if (obj.type === "footnote") {
+      const index = inlineProp(obj, "index") ?? inlineProp(obj, "number");
+      if (typeof index === "number" || typeof index === "string") return `[^${index}]`;
+    }
+
+    if (obj.type === "inlineMath") {
+      const formula = inlineProp(obj, "formula");
+      if (typeof formula === "string") return `$${formula}$`;
+    }
+
     let result = text;
 
     // Apply styles
@@ -54,16 +92,6 @@ function inlineContentToMarkdown(content: unknown): string {
     // Links
     if (obj.type === "link" && typeof obj.href === "string") {
       return `[${result}](${obj.href})`;
-    }
-
-    // Citation inline: [@citekey]
-    if (obj.type === "citation" && typeof obj.citekey === "string") {
-      return `[@${obj.citekey}]`;
-    }
-
-    // Footnote inline: [^N]
-    if (obj.type === "footnote" && typeof obj.number === "number") {
-      return `[^${obj.number}]`;
     }
 
     return result;
@@ -122,6 +150,19 @@ async function blockToMarkdown(
       return abstractBlockToMarkdown(block, format);
 
     default:
+      if (containsCustomInline(block.content)) {
+        const custom = standardBlockToMarkdown(block, depth);
+        if (block.children && block.children.length > 0) {
+          const childLines: string[] = [];
+          for (const child of block.children) {
+            const childMd = await blockToMarkdown(editor, child, format, depth + 1);
+            childLines.push(childMd);
+          }
+          return custom + "\n" + childLines.join("\n");
+        }
+        return custom;
+      }
+
       // Standard blocks: delegate to BlockNote's built-in converter
       try {
         const md = await editor.blocksToMarkdownLossy([block as any]);
@@ -144,6 +185,38 @@ async function blockToMarkdown(
         const text = extractInlineText(block.content);
         return indent + text;
       }
+  }
+}
+
+function standardBlockToMarkdown(block: Block, depth: number): string {
+  const indent = depth > 0 ? "  ".repeat(depth) : "";
+  const text = inlineContentToMarkdown(block.content);
+
+  switch (block.type) {
+    case "heading": {
+      const level = typeof block.props.level === "number" ? block.props.level : 1;
+      return `${indent}${"#".repeat(Math.max(1, Math.min(level, 6)))} ${text}`;
+    }
+    case "bulletListItem":
+      return `${indent}- ${text}`;
+    case "numberedListItem":
+      return `${indent}1. ${text}`;
+    case "checkListItem": {
+      const checked = block.props.checked === true ? "x" : " ";
+      return `${indent}- [${checked}] ${text}`;
+    }
+    case "quote":
+      return text
+        .split("\n")
+        .map((line) => `${indent}> ${line}`)
+        .join("\n");
+    case "codeBlock":
+    case "code": {
+      const language = typeof block.props.language === "string" ? block.props.language : "";
+      return `${indent}\`\`\`${language}\n${text}\n${indent}\`\`\``;
+    }
+    default:
+      return `${indent}${text}`;
   }
 }
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { parseBibtexCitekeys, parseBibtexDOIMap } from "../../../shared/bibtex-utils";
+import { parseBibtexCitekeys, parseBibtexDOIMap, parseBibtexEntries } from "../../../shared/bibtex-utils";
 import { useIsDark } from "../../main";
 import {
   useCreateBlockNote,
@@ -43,12 +43,45 @@ import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-tran
 import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
 import { DOIInputDialog } from "./DOIInputDialog";
 import { FindReplacePanel } from "./FindReplacePanel";
+import { setCitationHoverMetadata, type CitationHoverMetadata } from "../../blocks/citation-inline";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
 // Extract @type{citekey, ...} keys from a BibTeX string
 function parseCitekeys(bibtex: string): string[] {
   return parseBibtexCitekeys(bibtex);
+}
+
+function cleanBibtexText(value: string | undefined): string {
+  return (value ?? "")
+    .replace(/[{}]/g, "")
+    .replace(/\\[a-zA-Z]+\s*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstAuthorName(authorField: string | undefined): string {
+  const first = cleanBibtexText(authorField).split(/\s+and\s+/i)[0] ?? "";
+  if (first.includes(",")) return first.split(",")[0].trim();
+  const parts = first.split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1] : first;
+}
+
+function buildCitationHoverMetadata(bibtex: string): Map<string, CitationHoverMetadata> {
+  const metadata = new Map<string, CitationHoverMetadata>();
+  for (const entry of parseBibtexEntries(bibtex).entries) {
+    const firstAuthor = firstAuthorName(entry.fields.author);
+    const year = cleanBibtexText(entry.fields.year);
+    const title = cleanBibtexText(entry.fields.title);
+    if (firstAuthor || year || title) {
+      metadata.set(entry.citekey, {
+        firstAuthor: firstAuthor || entry.citekey,
+        year: year || "n.d.",
+        title: title || "Untitled",
+      });
+    }
+  }
+  return metadata;
 }
 
 interface EditorAreaProps {
@@ -158,6 +191,11 @@ export function EditorArea({
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
 
+  const applyBibtexState = useCallback((bibtex: string) => {
+    setCitekeys(parseCitekeys(bibtex));
+    setCitationHoverMetadata(buildCitationHoverMetadata(bibtex));
+  }, []);
+
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
     onEditorReady(editor);
@@ -189,11 +227,18 @@ export function EditorArea({
 
   // Load citekeys from references.bib when project changes
   useEffect(() => {
-    if (!project) { setCitekeys([]); return; }
+    if (!project) {
+      setCitekeys([]);
+      setCitationHoverMetadata(new Map());
+      return;
+    }
     rpc.loadBibtex(project.path)
-      .then((bibtex) => setCitekeys(parseCitekeys(bibtex ?? "")))
-      .catch(() => setCitekeys([]));
-  }, [project?.path, bibReloadTrigger]);
+      .then((bibtex) => applyBibtexState(bibtex ?? ""))
+      .catch(() => {
+        setCitekeys([]);
+        setCitationHoverMetadata(new Map());
+      });
+  }, [project?.path, bibReloadTrigger, applyBibtexState]);
 
   useEffect(() => {
     citekeysRef.current = citekeys;
@@ -323,9 +368,7 @@ export function EditorArea({
         if (!parseBibtexCitekeys(saved ?? "").includes(meta.citekey)) {
           throw new Error(`Could not verify '${meta.citekey}' in references.bib after saving.`);
         }
-        setCitekeys((prev) =>
-          prev.includes(meta.citekey) ? prev : [...prev, meta.citekey]
-        );
+        applyBibtexState(saved ?? "");
       }
 
       // Close dialog first, then restore editor focus before inserting
@@ -343,7 +386,7 @@ export function EditorArea({
     } finally {
       setDoiLoading(false);
     }
-  }, [editor, project]);
+  }, [applyBibtexState, editor, project]);
 
   // ── AI inline edit (selection-scoped) ────────────────────────────────────
   // Called from the custom AI Edit button in the FormattingToolbar.
