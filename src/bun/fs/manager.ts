@@ -8,6 +8,7 @@ import { seedAppInstructions } from "../agent/app-skills";
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
 const LEGACY_PROJECTS_ROOT = join(SCHOLARPEN_BASE, "projects");
+const APP_SUPPORT_DIRS = new Set(["commands", "skills"]);
 
 const DEFAULT_SETTINGS: AppSettings = {
   projectsRootDir: SCHOLARPEN_BASE,
@@ -129,6 +130,12 @@ function extToKind(name: string, isDir: boolean): FileNodeKind {
   if ([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"].includes(ext)) return "figure";
   if ([".md", ".qmd", ".txt"].includes(ext)) return "note";
   return "unknown";
+}
+
+function isProjectDirectoryCandidate(name: string): boolean {
+  if (!name || name.startsWith(".")) return false;
+  if (APP_SUPPORT_DIRS.has(name)) return false;
+  return true;
 }
 
 // ── Knowledge Base Templates ────────────────────────────────────────────────────
@@ -466,37 +473,20 @@ class FileSystemManager {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      if (!isProjectDirectoryCandidate(entry.name)) continue;
+
       const projectPath = join(rootDir, entry.name);
+      const info = await stat(projectPath);
 
-      // Migrate legacy projects (manuscript at root → documents/)
+      // Any top-level research folder in the projects root can become a project.
       await this.migrateProject(projectPath);
-
-      // Check for documents/ directory as indicator of a valid project
-      try {
-        const docsDir = join(projectPath, "documents");
-        const info = await stat(docsDir);
-        this.markProjectPath(projectPath);
-        projects.push({
-          name: entry.name,
-          path: projectPath,
-          files: [],
-          lastModified: info.mtimeMs,
-        });
-      } catch {
-        // Also accept projects with legacy manuscript at root
-        try {
-          const info = await stat(join(projectPath, "manuscript.scholarpen.json"));
-          this.markProjectPath(projectPath);
-          projects.push({
-            name: entry.name,
-            path: projectPath,
-            files: [],
-            lastModified: info.mtimeMs,
-          });
-        } catch {
-          // skip directories without any document
-        }
-      }
+      this.markProjectPath(projectPath);
+      projects.push({
+        name: entry.name,
+        path: projectPath,
+        files: [],
+        lastModified: info.mtimeMs,
+      });
     }
 
     return projects.sort((a, b) => b.lastModified - a.lastModified);
@@ -780,22 +770,30 @@ class FileSystemManager {
 
   // ── Migration ───────────────────────────────────────────────
 
-  /** Migrate legacy projects: move root manuscript.scholarpen.json → documents/ */
+  /** Initialize loose research folders and migrate legacy root manuscripts. */
   private async migrateProject(projectPath: string): Promise<void> {
     const oldPath = join(projectPath, "manuscript.scholarpen.json");
     const docsDir = join(projectPath, "documents");
     const newPath = join(docsDir, "manuscript.scholarpen.json");
+    const referencesPath = join(projectPath, "references.bib");
+
+    await mkdir(docsDir, { recursive: true });
 
     try {
       await stat(oldPath);
       // Legacy file exists at root — migrate it
-      await mkdir(docsDir, { recursive: true });
       const content = await readFile(oldPath, "utf-8");
       await writeFile(newPath, content);
       await unlink(oldPath);
       console.log(`[Migration] Moved ${oldPath} → ${newPath}`);
     } catch {
       // No legacy file — already migrated or never existed
+    }
+
+    try {
+      await stat(referencesPath);
+    } catch {
+      await writeFile(referencesPath, "");
     }
   }
 
