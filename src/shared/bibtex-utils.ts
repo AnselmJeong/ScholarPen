@@ -79,6 +79,10 @@ export function parseBibtexEntries(bibtex: string): BibtexParseResult {
         }
         continue;
       }
+      if (ch === "\\") {
+        pos++;
+        continue;
+      }
       if (ch === "\"") quote = true;
       else if (ch === "{") depth++;
       else if (ch === "}") {
@@ -134,6 +138,10 @@ function findTopLevelComma(text: string): number {
       else if (ch === "\"") quote = false;
       continue;
     }
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
     if (ch === "\"") quote = true;
     else if (ch === "{") depth++;
     else if (ch === "}") depth--;
@@ -169,7 +177,9 @@ function readFieldValue(text: string, start: number): { value: string; next: num
     let depth = 1;
     let i = start + 1;
     for (; i < text.length; i++) {
-      if (text[i] === "{") depth++;
+      if (text[i] === "\\") {
+        i++;
+      } else if (text[i] === "{") depth++;
       else if (text[i] === "}") {
         depth--;
         if (depth === 0) break;
