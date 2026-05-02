@@ -4,7 +4,7 @@ export default {
   app: {
     name: "ScholarPen",
     identifier: "dev.scholarpen.app",
-    version: "0.3.1",
+    version: "1.0.0",
   },
   build: {
     // Vite builds to dist/, Electrobun copies to views/

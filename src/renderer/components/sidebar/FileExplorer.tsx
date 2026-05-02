@@ -114,7 +114,7 @@ interface TreeNodeProps {
 }
 
 function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu, renamingNode, onRenameSubmit, onRenameCancel }: TreeNodeProps) {
-  const [isOpen, setIsOpen] = useState(depth === 0);
+  const [isOpen, setIsOpen] = useState(depth === 0 && node.name === "documents");
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
   const name = displayName(node);
