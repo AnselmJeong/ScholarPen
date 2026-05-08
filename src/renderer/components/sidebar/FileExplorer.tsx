@@ -20,6 +20,7 @@ import {
   Download,
   Upload,
   FilePlus,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -266,6 +267,7 @@ export function FileExplorer({
   const [renamingNode, setRenamingNode] = useState<FileNode | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<FileNode | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const newProjectInputRef = useRef<HTMLInputElement>(null);
   const newDocInputRef = useRef<HTMLInputElement>(null);
 
@@ -387,6 +389,16 @@ export function FileExplorer({
     onExportDocument();
   }, [onExportDocument]);
 
+  const handleRefreshExplorer = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefreshTree();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefreshTree, refreshing]);
+
   // ── Context menu items ──────────────────────────────────
   const getContextMenuItems = (node: FileNode) => {
     const items: { label: string; icon: React.ReactNode; action: () => void; className?: string }[] = [];
@@ -471,13 +483,23 @@ export function FileExplorer({
               Explorer
             </p>
             {activeProject && (
-              <button
-                onClick={() => setNewDocDialogOpen(true)}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                title="New Document"
-              >
-                <FilePlus className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleRefreshExplorer}
+                  disabled={refreshing}
+                  className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+                  title="Reload explorer"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+                </button>
+                <button
+                  onClick={() => setNewDocDialogOpen(true)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="New Document"
+                >
+                  <FilePlus className="h-3.5 w-3.5" />
+                </button>
+              </div>
             )}
           </div>
 

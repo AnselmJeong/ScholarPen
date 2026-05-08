@@ -78,8 +78,10 @@ function replaceEntryInBibtex(source: string, entry: BibtexEntry, nextRaw: strin
   return [before, nextRaw.trim(), after].filter(Boolean).join("\n\n");
 }
 
-function appendEntryToBibtex(source: string, rawEntry: string): string {
-  return [source.trim(), rawEntry.trim()].filter(Boolean).join("\n\n");
+function appendEntriesToBibtex(source: string, rawEntries: BibtexEntry[]): string {
+  return [source.trim(), rawEntries.map((entry) => entry.raw.trim()).join("\n\n")]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function validateSingleEntry(raw: string): { entry?: BibtexEntry; error?: string } {
@@ -87,6 +89,13 @@ function validateSingleEntry(raw: string): { entry?: BibtexEntry; error?: string
   if (parsed.issues.length > 0) return { error: parsed.issues[0].message };
   if (parsed.entries.length !== 1) return { error: "BibTeX entry를 하나만 입력하세요." };
   return { entry: parsed.entries[0] };
+}
+
+function validateMultipleEntries(raw: string): { entries?: BibtexEntry[]; error?: string } {
+  const parsed = parseBibtexEntries(raw);
+  if (parsed.issues.length > 0) return { error: parsed.issues[0].message };
+  if (parsed.entries.length === 0) return { error: "BibTeX entry를 입력하세요." };
+  return { entries: parsed.entries };
 }
 
 function findDuplicateForEntry(entries: BibtexEntry[], candidate: BibtexEntry, ignoreStart?: number): string | null {
@@ -235,27 +244,33 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
   }, [content, editDraft, parsed.entries, saveRaw, selectedEntry]);
 
   const handleAppendEntry = useCallback(async () => {
-    const validation = validateSingleEntry(addDraft);
-    if (validation.error || !validation.entry) {
+    const validation = validateMultipleEntries(addDraft);
+    if (validation.error || !validation.entries) {
       setSaveMsg(validation.error ?? "BibTeX entry를 확인하세요.");
       return;
     }
-    const duplicate = findDuplicateForEntry(parsed.entries, validation.entry);
-    if (duplicate) {
-      setSaveMsg(duplicate);
-      return;
+    const pendingEntries: BibtexEntry[] = [];
+    for (const entry of validation.entries) {
+      const duplicate = findDuplicateForEntry([...parsed.entries, ...pendingEntries], entry);
+      if (duplicate) {
+        setSaveMsg(duplicate);
+        return;
+      }
+      pendingEntries.push(entry);
     }
 
     setSaving(true);
     setSaveMsg(null);
     try {
-      const next = appendEntryToBibtex(content, addDraft);
-      await saveRaw(next, `'${validation.entry.citekey}' 추가됨`);
-      const savedEntry = parseBibtexEntries(next).entries.find((entry) => entry.citekey === validation.entry?.citekey);
+      const next = appendEntriesToBibtex(content, pendingEntries);
+      const count = pendingEntries.length;
+      await saveRaw(next, count === 1 ? `'${pendingEntries[0].citekey}' 추가됨` : `${count}개 BibTeX entries 추가됨`);
+      const lastCitekey = pendingEntries.at(-1)?.citekey;
+      const savedEntry = parseBibtexEntries(next).entries.find((entry) => entry.citekey === lastCitekey);
       setSelectedStart(savedEntry?.start ?? null);
       setEditDraft(savedEntry?.raw ?? "");
       setAddDraft("");
-      setSaveMsg("추가됨");
+      setSaveMsg(count === 1 ? "추가됨" : `${count}개 추가됨`);
       setTimeout(() => setSaveMsg(null), 2500);
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : "추가 실패");
@@ -542,7 +557,7 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
                 <textarea
                   value={addDraft}
                   onChange={(e) => setAddDraft(e.target.value)}
-                  placeholder="@article{citekey,...}"
+                  placeholder={"@article{citekey,...}\n\n@book{anotherkey,...}"}
                   spellCheck={false}
                   className="min-h-0 flex-1 resize-none bg-transparent p-3 font-mono text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground/50"
                   aria-label="New BibTeX entry editor"

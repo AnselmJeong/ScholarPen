@@ -90,6 +90,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const rightPaneRef = useRef<PaneState | null>(null);
     const editorMapRef = useRef<Map<string, BlockNoteEditor<any, any, any>>>(new Map());
     const saveHandlerMapRef = useRef<Map<string, () => void>>(new Map());
+    const scrollPositionMapRef = useRef<Map<string, number>>(new Map());
     const containerRef = useRef<HTMLDivElement>(null);
     const dragTrackRef = useRef<DragTrack | null>(null);
 
@@ -166,6 +167,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
           if (idx === -1) return pane;
           saveHandlerMapRef.current.delete(pane.tabs[idx].id);
           editorMapRef.current.delete(pane.tabs[idx].id);
+          scrollPositionMapRef.current.delete(pane.tabs[idx].id);
           const newTabs = pane.tabs.filter((_, i) => i !== idx);
           const newActiveId =
             pane.activeTabId === pane.tabs[idx].id
@@ -205,6 +207,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         if (idx === -1) return pane;
         saveHandlerMapRef.current.delete(tabId);
         editorMapRef.current.delete(tabId);
+        scrollPositionMapRef.current.delete(tabId);
         const newTabs = pane.tabs.filter((t) => t.id !== tabId);
         const newActiveId =
           pane.activeTabId === tabId
@@ -392,7 +395,10 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
 
     const renderPane = (pane: PaneState, paneId: PaneId) => {
       const isFocused = focusedPane === paneId;
-      const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
+      const isCurrentActiveTab = (tabId: string) => {
+        const currentPane = paneId === "left" ? leftPaneRef.current : rightPaneRef.current;
+        return focusedPaneRef.current === paneId && currentPane?.activeTabId === tabId;
+      };
 
       return (
         <div
@@ -410,46 +416,62 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
           />
 
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            {!activeTab ? (
+            {pane.tabs.length === 0 ? (
               <EmptyPane />
-            ) : activeTab.file.kind === "document" ? (
-              <EditorArea
-                key={activeTab.id}
-                project={project}
-                documentFilename={activeTab.file.name}
-                ollamaStatus={ollamaStatus}
-                ollamaBaseUrl={ollamaBaseUrl}
-                reloadTrigger={reloadTrigger}
-                bibReloadTrigger={bibReloadTrigger}
-                onWordCountChange={(count) => {
-                  if (focusedPaneRef.current === paneId) onWordCountChange(count);
-                }}
-                onEditorReady={(editor) => {
-                  if (editor) {
-                    editorMapRef.current.set(activeTab.id, editor);
-                  } else {
-                    editorMapRef.current.delete(activeTab.id);
-                  }
-                  if (focusedPaneRef.current === paneId) onActiveEditorChange(editor);
-                }}
-                onSaveStatusChange={(status) => {
-                  if (focusedPaneRef.current === paneId) onSaveStatusChange(status);
-                }}
-              />
             ) : (
-              <FileViewer
-                key={activeTab.id}
-                file={activeTab.file}
-                reloadTrigger={activeTab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}
-                onSaveReady={(saveNow) => {
-                  if (saveNow) {
-                    saveHandlerMapRef.current.set(activeTab.id, saveNow);
-                  } else {
-                    saveHandlerMapRef.current.delete(activeTab.id);
-                  }
-                }}
-                onBibtexSaved={onBibtexSaved}
-              />
+              pane.tabs.map((tab) => {
+                const isActiveTab = pane.activeTabId === tab.id;
+                return (
+                  <div
+                    key={tab.id}
+                    className="flex-1 min-h-0 flex flex-col overflow-hidden"
+                    style={{ display: isActiveTab ? "flex" : "none" }}
+                    aria-hidden={!isActiveTab}
+                  >
+                    {tab.file.kind === "document" ? (
+                      <EditorArea
+                        project={project}
+                        documentFilename={tab.file.name}
+                        ollamaStatus={ollamaStatus}
+                        ollamaBaseUrl={ollamaBaseUrl}
+                        initialScrollTop={scrollPositionMapRef.current.get(tab.id) ?? 0}
+                        reloadTrigger={reloadTrigger}
+                        bibReloadTrigger={bibReloadTrigger}
+                        onWordCountChange={(count) => {
+                          if (isCurrentActiveTab(tab.id)) onWordCountChange(count);
+                        }}
+                        onEditorReady={(editor) => {
+                          if (editor) {
+                            editorMapRef.current.set(tab.id, editor);
+                          } else {
+                            editorMapRef.current.delete(tab.id);
+                          }
+                          if (isCurrentActiveTab(tab.id)) onActiveEditorChange(editor);
+                        }}
+                        onScrollPositionChange={(scrollTop) => {
+                          scrollPositionMapRef.current.set(tab.id, scrollTop);
+                        }}
+                        onSaveStatusChange={(status) => {
+                          if (isCurrentActiveTab(tab.id)) onSaveStatusChange(status);
+                        }}
+                      />
+                    ) : (
+                      <FileViewer
+                        file={tab.file}
+                        reloadTrigger={tab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}
+                        onSaveReady={(saveNow) => {
+                          if (saveNow) {
+                            saveHandlerMapRef.current.set(tab.id, saveNow);
+                          } else {
+                            saveHandlerMapRef.current.delete(tab.id);
+                          }
+                        }}
+                        onBibtexSaved={onBibtexSaved}
+                      />
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>

@@ -89,8 +89,10 @@ interface EditorAreaProps {
   documentFilename: string | null;
   ollamaStatus: OllamaStatus;
   ollamaBaseUrl: string;
+  initialScrollTop?: number;
   onWordCountChange: (count: number) => void;
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
+  onScrollPositionChange?: (scrollTop: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   reloadTrigger?: number;
   bibReloadTrigger?: number;
@@ -156,8 +158,10 @@ export function EditorArea({
   documentFilename,
   ollamaStatus,
   ollamaBaseUrl,
+  initialScrollTop = 0,
   onWordCountChange,
   onEditorReady,
+  onScrollPositionChange,
   onSaveStatusChange,
   reloadTrigger,
   bibReloadTrigger,
@@ -181,6 +185,7 @@ export function EditorArea({
   const saveStatusRef = useRef<SaveStatus>("saved");
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const saveRequestSeqRef = useRef(0);
+  const suppressSaveUntilRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
@@ -190,6 +195,26 @@ export function EditorArea({
   const [doiError, setDoiError] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const hasRestoredScrollRef = useRef(false);
+
+  const restoreScrollPosition = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container || hasRestoredScrollRef.current) return;
+    hasRestoredScrollRef.current = true;
+    const top = Math.max(0, initialScrollTop);
+    requestAnimationFrame(() => {
+      container.scrollTop = top;
+      requestAnimationFrame(() => {
+        container.scrollTop = top;
+      });
+    });
+  }, [initialScrollTop]);
+
+  const replaceDocumentWithoutSaving = useCallback((content: Parameters<typeof editor.replaceBlocks>[1]) => {
+    suppressSaveUntilRef.current = Date.now() + 500;
+    editor.replaceBlocks(editor.document, content);
+  }, [editor]);
 
   const applyBibtexState = useCallback((bibtex: string) => {
     setCitekeys(parseCitekeys(bibtex));
@@ -246,6 +271,7 @@ export function EditorArea({
 
   // Load document when project or file switches
   useEffect(() => {
+    hasRestoredScrollRef.current = false;
     if (!project) return;
     const filename = documentFilename || "manuscript.scholarpen.json";
     rpc
@@ -253,15 +279,17 @@ export function EditorArea({
       .then((content) => {
         if (Array.isArray(content) && content.length > 0) {
           if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
-            editor.replaceBlocks(
-              editor.document,
-              content as Parameters<typeof editor.replaceBlocks>[1]
-            );
+            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
           }
         }
+        restoreScrollPosition();
       })
       .catch(console.error);
-  }, [project?.path, documentFilename]);
+  }, [project?.path, documentFilename, replaceDocumentWithoutSaving, restoreScrollPosition]);
+
+  useEffect(() => {
+    restoreScrollPosition();
+  }, [restoreScrollPosition]);
 
   // Refs so the reload effect can read current project/filename without re-running on their changes
   const projectRef = useRef(project);
@@ -282,10 +310,7 @@ export function EditorArea({
       .then((content) => {
         if (Array.isArray(content) && content.length > 0) {
           if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
-            editor.replaceBlocks(
-              editor.document,
-              content as Parameters<typeof editor.replaceBlocks>[1]
-            );
+            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
           }
         }
       })
@@ -328,6 +353,7 @@ export function EditorArea({
   // Immediate save (for Cmd+S / menu action)
   const saveNow = useCallback(() => {
     if (!project) return;
+    if (saveStatusRef.current === "saved" && !saveTimerRef.current) return;
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
@@ -429,6 +455,7 @@ export function EditorArea({
 
   const handleChange = useCallback(() => {
     countWords();
+    if (Date.now() < suppressSaveUntilRef.current) return;
     if (!project) return;
     updateSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -437,6 +464,15 @@ export function EditorArea({
       enqueueSave(filename, editor.document);
     }, 2 * 1000); // 2 seconds
   }, [editor, project, documentFilename, countWords, updateSaveStatus, enqueueSave]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Flush any pending save immediately when the window loses focus.
   useEffect(() => {
@@ -454,6 +490,13 @@ export function EditorArea({
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
   }, [editor, project, documentFilename, enqueueSave]);
+
+  useEffect(() => {
+    return () => {
+      const top = scrollContainerRef.current?.scrollTop;
+      if (top !== undefined) onScrollPositionChange?.(top);
+    };
+  }, [onScrollPositionChange]);
 
   // Build slash menu items once; only rebuild when editor, AI, or citekeys change.
   // Kept out of getItems to avoid reconstructing all block-type arrays on every keystroke.
@@ -506,7 +549,12 @@ export function EditorArea({
           </>
         )}
       </div>
-      <div className="flex-1 overflow-y-auto" style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}>
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto"
+        style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}
+        onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}
+      >
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
         <div style={{ maxWidth: "800px", margin: "0 auto" }}>
           <BlockNoteView
@@ -642,6 +690,7 @@ export function EditorArea({
         isOpen={findOpen}
         onClose={() => setFindOpen(false)}
         showReplaceInitially={findShowReplace}
+        scrollContainerRef={scrollContainerRef}
       />
 
       {/* DOI input dialog */}

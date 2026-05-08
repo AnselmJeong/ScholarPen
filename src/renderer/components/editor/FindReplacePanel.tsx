@@ -17,6 +17,7 @@ interface FindReplacePanelProps {
   isOpen: boolean;
   onClose: () => void;
   showReplaceInitially?: boolean;
+  scrollContainerRef?: React.RefObject<HTMLElement | null>;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ export function FindReplacePanel({
   isOpen,
   onClose,
   showReplaceInitially = false,
+  scrollContainerRef,
 }: FindReplacePanelProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [replaceTerm, setReplaceTerm] = useState("");
@@ -143,9 +145,22 @@ export function FindReplacePanel({
         .setSelection(TextSelection.create(view.state.doc, from))
         .scrollIntoView();
       view.dispatch(tr);
+      requestAnimationFrame(() => {
+        const container = scrollContainerRef?.current;
+        if (!container) return;
+        try {
+          const coords = view.coordsAtPos(from);
+          const containerRect = container.getBoundingClientRect();
+          const targetTop = container.scrollTop + coords.top - containerRect.top;
+          container.scrollTo({
+            top: Math.max(0, targetTop - container.clientHeight * 0.35),
+            behavior: "smooth",
+          });
+        } catch { /* position may no longer be visible after document changes */ }
+      });
       applyDecorations(list, idx);
     } catch { /* editor may have unmounted during navigation */ }
-  }, [getView, applyDecorations]);
+  }, [getView, applyDecorations, scrollContainerRef]);
 
   // ── Recalculate matches on searchTerm change ───────────────────────────────
 
