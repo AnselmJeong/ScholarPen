@@ -184,8 +184,13 @@ export function EditorArea({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveStatusRef = useRef<SaveStatus>("saved");
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
-  const saveRequestSeqRef = useRef(0);
+  const dirtyRevisionRef = useRef(0);
+  const savedRevisionRef = useRef(0);
+  const inFlightSaveCountRef = useRef(0);
   const suppressSaveUntilRef = useRef(0);
+  const pendingExternalReloadRef = useRef(false);
+  const pendingReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastUserEditAtRef = useRef(0);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
@@ -214,6 +219,22 @@ export function EditorArea({
   const replaceDocumentWithoutSaving = useCallback((content: Parameters<typeof editor.replaceBlocks>[1]) => {
     suppressSaveUntilRef.current = Date.now() + 500;
     editor.replaceBlocks(editor.document, content);
+  }, [editor]);
+
+  const hasLocalChangesPending = useCallback(() => {
+    return (
+      saveTimerRef.current !== null ||
+      inFlightSaveCountRef.current > 0 ||
+      dirtyRevisionRef.current !== savedRevisionRef.current
+    );
+  }, []);
+
+  const isRecentlyEdited = useCallback(() => {
+    return Date.now() - lastUserEditAtRef.current < 1500;
+  }, []);
+
+  const snapshotDocument = useCallback(() => {
+    return JSON.parse(JSON.stringify(editor.document));
   }, [editor]);
 
   const applyBibtexState = useCallback((bibtex: string) => {
@@ -297,27 +318,6 @@ export function EditorArea({
   useEffect(() => { projectRef.current = project; }, [project]);
   useEffect(() => { documentFilenameRef.current = documentFilename; }, [documentFilename]);
 
-  // Reload from external file change — but only when the editor has no unsaved changes,
-  // to prevent cursor being jumped to the end while the user is actively typing.
-  useEffect(() => {
-    if (reloadTrigger === 0) return; // skip initial mount
-    const p = projectRef.current;
-    if (!p) return;
-    if (saveStatusRef.current !== "saved") return;
-    const filename = documentFilenameRef.current || "manuscript.scholarpen.json";
-    rpc
-      .loadDocument(p.path, filename)
-      .then((content) => {
-        if (Array.isArray(content) && content.length > 0) {
-          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
-            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
-          }
-        }
-      })
-      .catch(console.error);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadTrigger]);
-
   const countWords = useCallback(() => {
     const text = editor.document.map((b) => extractText(b.content)).join(" ");
     const count = text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -330,25 +330,108 @@ export function EditorArea({
     onSaveStatusChange(status);
   }, [onSaveStatusChange]);
 
-  const enqueueSave = useCallback((filename: string, content: unknown) => {
+  const processPendingExternalReload = useCallback(() => {
+    if (!pendingExternalReloadRef.current) return;
+    if (hasLocalChangesPending() || isRecentlyEdited()) {
+      if (!pendingReloadTimerRef.current) {
+        pendingReloadTimerRef.current = setTimeout(() => {
+          pendingReloadTimerRef.current = null;
+          processPendingExternalReload();
+        }, 750);
+      }
+      return;
+    }
+
+    const p = projectRef.current;
+    if (!p) return;
+    pendingExternalReloadRef.current = false;
+    const filename = documentFilenameRef.current || "manuscript.scholarpen.json";
+    rpc
+      .loadDocument(p.path, filename)
+      .then((content) => {
+        if (Array.isArray(content) && content.length > 0) {
+          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
+            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
+          }
+        }
+      })
+      .catch(console.error);
+  }, [editor, hasLocalChangesPending, isRecentlyEdited, replaceDocumentWithoutSaving]);
+
+  // Reload from external file change only when local edits are fully settled.
+  // Whole-document replacement can move the ProseMirror selection, so never do it
+  // while a user edit is pending, saving, or very recent.
+  useEffect(() => {
+    if (reloadTrigger === 0) return; // skip initial mount
+    const p = projectRef.current;
+    if (!p) return;
+    if (hasLocalChangesPending() || isRecentlyEdited()) {
+      pendingExternalReloadRef.current = true;
+      processPendingExternalReload();
+      return;
+    }
+    const filename = documentFilenameRef.current || "manuscript.scholarpen.json";
+    rpc
+      .loadDocument(p.path, filename)
+      .then((content) => {
+        if (Array.isArray(content) && content.length > 0) {
+          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
+            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
+          }
+        }
+      })
+      .catch(console.error);
+  }, [editor, reloadTrigger, hasLocalChangesPending, isRecentlyEdited, processPendingExternalReload, replaceDocumentWithoutSaving]);
+
+  const enqueueSave = useCallback((filename: string, getContent: () => unknown, revision: number) => {
     if (!project) return Promise.resolve();
-    const seq = ++saveRequestSeqRef.current;
+    inFlightSaveCountRef.current += 1;
     updateSaveStatus("saving");
 
     const run = saveChainRef.current
       .catch(() => undefined)
-      .then(() => rpc.saveDocument(project.path, filename, content))
       .then(() => {
-        if (seq === saveRequestSeqRef.current) updateSaveStatus("saved");
+        if (revision < dirtyRevisionRef.current) {
+          return "skipped-stale" as const;
+        }
+        return rpc.saveDocument(project.path, filename, getContent()).then(() => "saved" as const);
+      })
+      .then(() => {
+        if (revision <= dirtyRevisionRef.current) {
+          savedRevisionRef.current = Math.max(savedRevisionRef.current, revision);
+        }
+        if (
+          dirtyRevisionRef.current === savedRevisionRef.current &&
+          saveTimerRef.current === null &&
+          inFlightSaveCountRef.current === 0
+        ) {
+          updateSaveStatus("saved");
+          processPendingExternalReload();
+        } else if (saveTimerRef.current === null && inFlightSaveCountRef.current === 0) {
+          updateSaveStatus("unsaved");
+        }
       })
       .catch((err) => {
         console.error("Save failed:", err);
-        if (seq === saveRequestSeqRef.current) updateSaveStatus("unsaved");
+        updateSaveStatus("unsaved");
+      })
+      .finally(() => {
+        inFlightSaveCountRef.current = Math.max(0, inFlightSaveCountRef.current - 1);
+        if (
+          dirtyRevisionRef.current === savedRevisionRef.current &&
+          saveTimerRef.current === null &&
+          inFlightSaveCountRef.current === 0
+        ) {
+          updateSaveStatus("saved");
+          processPendingExternalReload();
+        } else if (saveTimerRef.current === null && inFlightSaveCountRef.current === 0) {
+          updateSaveStatus("unsaved");
+        }
       });
 
     saveChainRef.current = run;
     return run;
-  }, [project, updateSaveStatus]);
+  }, [project, updateSaveStatus, processPendingExternalReload]);
 
   // Immediate save (for Cmd+S / menu action)
   const saveNow = useCallback(() => {
@@ -359,8 +442,8 @@ export function EditorArea({
       saveTimerRef.current = null;
     }
     const filename = documentFilename || "manuscript.scholarpen.json";
-    enqueueSave(filename, editor.document);
-  }, [editor, project, documentFilename, enqueueSave]);
+    enqueueSave(filename, snapshotDocument, dirtyRevisionRef.current);
+  }, [project, documentFilename, enqueueSave, snapshotDocument]);
 
   // Expose saveNow for external callers (e.g., menu actions)
   useEffect(() => {
@@ -457,19 +540,26 @@ export function EditorArea({
     countWords();
     if (Date.now() < suppressSaveUntilRef.current) return;
     if (!project) return;
+    dirtyRevisionRef.current += 1;
+    lastUserEditAtRef.current = Date.now();
     updateSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const filename = documentFilename || "manuscript.scholarpen.json";
-      enqueueSave(filename, editor.document);
+      saveTimerRef.current = null;
+      enqueueSave(filename, snapshotDocument, dirtyRevisionRef.current);
     }, 2 * 1000); // 2 seconds
-  }, [editor, project, documentFilename, countWords, updateSaveStatus, enqueueSave]);
+  }, [project, documentFilename, countWords, updateSaveStatus, enqueueSave, snapshotDocument]);
 
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
+      }
+      if (pendingReloadTimerRef.current) {
+        clearTimeout(pendingReloadTimerRef.current);
+        pendingReloadTimerRef.current = null;
       }
     };
   }, []);
@@ -481,7 +571,7 @@ export function EditorArea({
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
         const filename = documentFilename || "manuscript.scholarpen.json";
-        enqueueSave(filename, editor.document);
+        enqueueSave(filename, snapshotDocument, dirtyRevisionRef.current);
       }
     };
     const handler = () => {
@@ -489,7 +579,7 @@ export function EditorArea({
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [editor, project, documentFilename, enqueueSave]);
+  }, [project, documentFilename, enqueueSave, snapshotDocument]);
 
   useEffect(() => {
     return () => {
