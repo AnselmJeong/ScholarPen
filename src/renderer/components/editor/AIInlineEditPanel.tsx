@@ -3,6 +3,11 @@ import ReactDOM from "react-dom";
 import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { rpc, onAiChunk } from "../../rpc";
+import {
+  buildInlineEditMessages,
+  protectedRewritePreview,
+  type ProtectedSelection,
+} from "./ai-inline-edit-protection";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -11,6 +16,8 @@ export interface SelectionSnapshot {
   from: number;
   to: number;
   selectedText: string;
+  /** Lossless ProseMirror Slice plus markers that the AI is forbidden to alter. */
+  protection: ProtectedSelection;
   /** Viewport coords of the selection's bounding rect */
   top: number;
   bottom: number;
@@ -20,7 +27,7 @@ export interface SelectionSnapshot {
 interface AIInlineEditPanelProps {
   snapshot: SelectionSnapshot;
   model: string;
-  onAccept: (from: number, to: number, newText: string) => void;
+  onAccept: (snapshot: SelectionSnapshot, newText: string) => string | null;
   onClose: () => void;
 }
 
@@ -46,12 +53,6 @@ const TRANSLATE_LANGS = [
   { label: "French",   prompt: "Translate to French" },
   { label: "German",   prompt: "Translate to German" },
 ];
-
-const SYSTEM_PROMPT =
-  "You are an academic writing assistant. The user gives a short instruction and a text passage. " +
-  "Rewrite the passage following the instruction. " +
-  "Return ONLY the rewritten text — no explanation, no preamble, no surrounding quotes. " +
-  "The output must be a direct drop-in replacement for the original passage.";
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -205,11 +206,12 @@ export function AIInlineEditPanel({
       activeRef.current = true;
 
       try {
+        const messages = buildInlineEditMessages(instruction, snapshot.protection);
         await rpc.generateTextStream(
           model,
           [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: `${instruction}:\n\n${snapshot.selectedText}` },
+            { role: "system", content: messages.system },
+            { role: "user", content: messages.user },
           ],
           false
         );
@@ -219,11 +221,13 @@ export function AIInlineEditPanel({
         activeRef.current = false;
       }
     },
-    [model, snapshot.selectedText]
+    [model, snapshot.protection]
   );
 
   const handleAccept = () => {
-    if (result) onAccept(snapshot.from, snapshot.to, result);
+    if (!result) return;
+    const acceptError = onAccept(snapshot, result);
+    if (acceptError) setError(acceptError);
   };
 
   const handleRetry = () => {
@@ -240,6 +244,7 @@ export function AIInlineEditPanel({
     : result
     ? "result"
     : "input";
+  const resultPreview = protectedRewritePreview(result, snapshot.protection);
 
   return ReactDOM.createPortal(
     <div
@@ -359,7 +364,7 @@ export function AIInlineEditPanel({
       {phase === "streaming" && (
         <>
           <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[72px] max-h-[min(42vh,24rem)] overflow-y-auto overscroll-contain whitespace-pre-wrap leading-relaxed">
-            {result}
+            {resultPreview}
             <span className="animate-pulse text-primary ml-0.5">▋</span>
           </div>
           <div className="flex justify-end">
@@ -384,7 +389,7 @@ export function AIInlineEditPanel({
       {phase === "result" && (
         <>
           <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[60px] max-h-[min(48vh,28rem)] overflow-y-auto overscroll-contain whitespace-pre-wrap leading-relaxed">
-            {result}
+            {resultPreview}
           </div>
           <div className="flex items-center justify-between">
             <button

@@ -41,6 +41,11 @@ import { en as aiEn } from "@blocknote/xl-ai/locales";
 import "@blocknote/xl-ai/style.css";
 import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-transport";
 import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
+import {
+  isSameProtectedSlice,
+  protectSelectionSlice,
+  restoreProtectedSelection,
+} from "./ai-inline-edit-protection";
 import { DOIInputDialog } from "./DOIInputDialog";
 import { FindReplacePanel } from "./FindReplacePanel";
 import { setCitationHoverMetadata, type CitationHoverMetadata } from "../../blocks/citation-inline";
@@ -507,6 +512,7 @@ export function EditorArea({
     const { from, to } = view.state.selection;
     const selectedText = editor.getSelectedText();
     if (!selectedText.trim()) return;
+    const protection = protectSelectionSlice(view.state.doc.slice(from, to), selectedText);
 
     // Get screen coordinates of the selection start
     const coords = view.coordsAtPos(from);
@@ -515,23 +521,35 @@ export function EditorArea({
       from,
       to,
       selectedText,
+      protection,
       top: coords.top,
       bottom: coordsEnd.bottom,
       left: coords.left,
     });
   }, [editor]);
 
-  // Called when the user clicks Accept in the AI panel.
-  // Replaces ONLY the saved from..to range — the rest of the block is untouched.
+  // Called when the user clicks Accept in the AI panel. Rebuild the saved
+  // ProseMirror Slice so its marks, citations, math, footnotes, and block
+  // structure remain byte-for-byte structural equivalents; only text changes.
   const handleAIEditAccept = useCallback(
-    (from: number, to: number, newText: string) => {
+    (snapshot: SelectionSnapshot, newText: string) => {
       const view = (editor as any).prosemirrorView;
-      if (!view) return;
+      if (!view) return "The editor is unavailable. The document was not modified.";
       const { state } = view;
-      const tr = state.tr.replaceWith(from, to, state.schema.text(newText));
-      view.dispatch(tr);
-      view.focus();
-      setAiEditSnapshot(null);
+
+      if (!isSameProtectedSlice(state.doc.slice(snapshot.from, snapshot.to), snapshot.protection)) {
+        return "The selected document content changed while AI was writing. Retry from a fresh selection; the document was not modified.";
+      }
+
+      try {
+        const replacement = restoreProtectedSelection(state.schema, snapshot.protection, newText);
+        view.dispatch(state.tr.replace(snapshot.from, snapshot.to, replacement).scrollIntoView());
+        view.focus();
+        setAiEditSnapshot(null);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : "The AI response could not be applied safely.";
+      }
     },
     [editor]
   );
