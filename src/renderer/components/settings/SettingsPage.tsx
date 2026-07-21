@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { LLMProvider, OllamaStatus, AppSettings } from "@shared/rpc-types";
+import { DEFAULT_OLLAMA_BASE_URL } from "@shared/ollama-connection";
 
 interface SettingsPageProps {
   ollamaStatus: OllamaStatus;
@@ -177,7 +178,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
     if (!settings) return;
     const provider = settings.sidebarAgentProvider ?? "ollama";
     const hasCredentials =
-      provider === "ollama" ||
+      (provider === "ollama" && settings.ollamaApiKey.trim()) ||
       (provider === "anthropic" && settings.anthropicApiKey.trim()) ||
       (provider === "deepseek" && settings.deepseekApiKey.trim()) ||
       (provider === "openai" && settings.openaiApiKey.trim());
@@ -299,7 +300,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
               <>
                 <SettingRow
                   label="Ollama Base URL"
-                  description="Ollama status, model lookup, sidebar agent에 사용"
+                  description="Ollama Cloud OpenAI-compatible endpoint"
                 >
                   <Input
                     value={settings.ollamaBaseUrl}
@@ -310,16 +311,16 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                         ollama: { ...settings.modelProviders.ollama, baseUrl: e.target.value },
                       });
                     }}
-                    placeholder="http://localhost:11434"
+                    placeholder={DEFAULT_OLLAMA_BASE_URL}
                     className="font-mono text-xs"
                   />
                 </SettingRow>
 
-                <SettingRow label="Sidebar Agent Model" description="Ollama에서 설치된 모델 목록을 불러옵니다">
+                <SettingRow label="Sidebar Agent Model" description="Ollama Cloud에서 사용 가능한 모델 목록을 불러옵니다">
                   <ProviderModelPicker
                     models={modelsForProvider}
                     value={currentModel}
-                    placeholder="qwen3.5:cloud"
+                    placeholder="qwen3.5:397b"
                     loading={loadingModels}
                     error={modelListError}
                     onRefresh={() => fetchProviderModels(provider, settings)}
@@ -396,7 +397,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
             <SettingRow
               label="Ollama API Key"
-              description="ollama.com web search/fetch에 사용됩니다. 다른 provider를 선택해도 web context는 이 키로 가져옵니다."
+              description="Ollama Cloud 모델 조회·생성 및 web search/fetch에 사용됩니다"
             >
               <Input
                 type="password"
@@ -498,6 +499,28 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
           {/* Knowledge Base */}
           <SettingSection icon={BookOpen} title="Knowledge Base">
             <SettingRow
+              label="Local Embedding URL"
+              description="임베딩 전용 로컬 Ollama endpoint"
+            >
+              <Input
+                value={settings.ollamaEmbeddingBaseUrl}
+                onChange={(e) => updateSetting("ollamaEmbeddingBaseUrl", e.target.value)}
+                placeholder="http://localhost:11434"
+                className="font-mono text-xs"
+              />
+            </SettingRow>
+            <SettingRow
+              label="Embedding Model"
+              description="로컬 Ollama에 설치된 embedding model"
+            >
+              <Input
+                value={settings.ollamaEmbedModel}
+                onChange={(e) => updateSetting("ollamaEmbedModel", e.target.value)}
+                placeholder="nomic-embed-text"
+                className="font-mono text-xs"
+              />
+            </SettingRow>
+            <SettingRow
               label="Search Results"
               description="Number of KB pages injected into AI context"
             >
@@ -511,7 +534,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
               />
             </SettingRow>
             <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              Chunk size, chunk overlap, and embed model are planned for Phase 4 hybrid RAG. Current KB search uses page-level FTS.
+              현재 KB 검색은 page-level FTS를 사용합니다. 로컬 embedding 설정은 Phase 4 hybrid RAG용으로 Cloud 생성 모델과 분리되어 있습니다.
             </div>
           </SettingSection>
         </div>

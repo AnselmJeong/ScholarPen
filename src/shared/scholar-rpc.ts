@@ -15,6 +15,7 @@ import type {
   AgentThread,
   AgentThreadMessage,
   AgentThreadWithMessages,
+  OllamaProxyResponse,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -55,6 +56,11 @@ type BunRequests = RPCSchema<{
       response: void;
     };
     abortAiStream: { params: void; response: void };
+    startOllamaOpenAIProxy: {
+      params: { requestId: string; body: string };
+      response: OllamaProxyResponse;
+    };
+    abortOllamaOpenAIProxy: { params: { requestId: string }; response: void };
     // File system
     listProjectFiles: { params: { projectPath: string }; response: FileNode[] };
     openFolderDialog: { params: void; response: string | null };
@@ -105,6 +111,7 @@ type WebviewRequests = RPCSchema<{
   requests: Record<never, { params: unknown; response: unknown }>;
   messages: {
     aiChunk: { content: string; done: boolean };
+    ollamaProxyChunk: { requestId: string; content: string; done: boolean; error?: string };
     agentChunk: { content: string; done: boolean };
     projectUpdated: { projectPath: string; filePath?: string };
     menuAction: { action: string };

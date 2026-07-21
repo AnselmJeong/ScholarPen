@@ -2,6 +2,10 @@ import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/pr
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import type { ProjectInfo, ProjectFile, FileNode, FileNodeKind, AppSettings, AppSettingsUpdate } from "../../shared/rpc-types";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
+} from "../../shared/ollama-connection";
 import { deduplicateBibtex } from "../../shared/bibtex-utils";
 import { seedAppInstructions } from "../agent/app-skills";
 
@@ -13,12 +17,12 @@ const APP_SUPPORT_DIRS = new Set(["commands", "skills"]);
 const DEFAULT_SETTINGS: AppSettings = {
   projectsRootDir: SCHOLARPEN_BASE,
   sidebarAgentProvider: "ollama",
-  sidebarAgentModel: "qwen3.5:cloud",
+  sidebarAgentModel: "qwen3.5:397b",
   modelProviders: {
     ollama: {
       provider: "ollama",
-      model: "qwen3.5:cloud",
-      baseUrl: "http://localhost:11434",
+      model: "qwen3.5:397b",
+      baseUrl: DEFAULT_OLLAMA_BASE_URL,
       enabled: true,
     },
     anthropic: {
@@ -39,10 +43,11 @@ const DEFAULT_SETTINGS: AppSettings = {
       enabled: false,
     },
   },
-  ollamaBaseUrl: "http://localhost:11434",
+  ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
   ollamaApiKey: "",
   ollamaWebSearchEnabled: false,
-  ollamaDefaultModel: "qwen3.5:cloud",
+  ollamaDefaultModel: "qwen3.5:397b",
+  ollamaEmbeddingBaseUrl: DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
   ollamaEmbedModel: "nomic-embed-text",
   anthropicApiKey: "",
   anthropicDefaultModel: "claude-sonnet-4-5",
@@ -109,6 +114,7 @@ function normalizeSettings(parsed: Partial<AppSettings>): AppSettings {
     modelProviders,
     ollamaApiKey: parsed.ollamaApiKey ?? DEFAULT_SETTINGS.ollamaApiKey,
     ollamaWebSearchEnabled: parsed.ollamaWebSearchEnabled ?? DEFAULT_SETTINGS.ollamaWebSearchEnabled,
+    ollamaEmbeddingBaseUrl: parsed.ollamaEmbeddingBaseUrl ?? DEFAULT_SETTINGS.ollamaEmbeddingBaseUrl,
     anthropicDefaultModel: parsed.anthropicDefaultModel ?? legacyClaudeModel,
     deepseekBaseUrl: parsed.deepseekBaseUrl ?? DEFAULT_SETTINGS.deepseekBaseUrl,
     deepseekDefaultModel: parsed.deepseekDefaultModel ?? DEFAULT_SETTINGS.deepseekDefaultModel,

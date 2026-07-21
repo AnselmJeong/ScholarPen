@@ -19,15 +19,21 @@ import type {
   AgentThread,
   AgentThreadMessage,
   AgentThreadWithMessages,
+  OllamaProxyResponse,
 } from "../shared/rpc-types";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
+} from "../shared/ollama-connection";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
 type AiChunkHandler = (content: string, done: boolean) => void;
 type AgentChunkHandler = (content: string, done: boolean) => void;
+type OllamaProxyChunkHandler = (payload: { requestId: string; content: string; done: boolean; error?: string }) => void;
 type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 
-const mutatingMethods = new Set([
+const strictRpcMethods = new Set([
   "createProject",
   "openProject",
   "openProjectByPath",
@@ -46,6 +52,9 @@ const mutatingMethods = new Set([
   "saveAgentThreadMessage",
   "abortAgentStream",
   "abortAiStream",
+  "startOllamaOpenAIProxy",
+  "abortOllamaOpenAIProxy",
+  "listProviderModels",
 ]);
 
 // Create Electrobun RPC client for webview using defineRPC
@@ -70,6 +79,9 @@ const electrobun = new Electroview({
         agentChunk: ({ content, done }) => {
           agentChunkListeners.forEach((handler) => handler(content, done));
         },
+        ollamaProxyChunk: (payload) => {
+          ollamaProxyChunkListeners.forEach((handler) => handler(payload));
+        },
         projectUpdated: ({ projectPath, filePath }) => {
           projectUpdatedListeners.forEach((handler) => handler(projectPath, filePath));
         },
@@ -83,6 +95,7 @@ const menuActionListeners: MenuActionHandler[] = [];
 const importMarkdownListeners: ImportMarkdownHandler[] = [];
 const aiChunkListeners: AiChunkHandler[] = [];
 const agentChunkListeners: AgentChunkHandler[] = [];
+const ollamaProxyChunkListeners: OllamaProxyChunkHandler[] = [];
 const projectUpdatedListeners: ProjectUpdatedHandler[] = [];
 
 export function onMenuAction(handler: MenuActionHandler) {
@@ -114,6 +127,14 @@ export function onAgentChunk(handler: AgentChunkHandler): () => void {
   return () => {
     const idx = agentChunkListeners.indexOf(handler);
     if (idx >= 0) agentChunkListeners.splice(idx, 1);
+  };
+}
+
+export function onOllamaProxyChunk(handler: OllamaProxyChunkHandler): () => void {
+  ollamaProxyChunkListeners.push(handler);
+  return () => {
+    const idx = ollamaProxyChunkListeners.indexOf(handler);
+    if (idx >= 0) ollamaProxyChunkListeners.splice(idx, 1);
   };
 }
 
@@ -149,15 +170,16 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     deleteFile: null,
     getSettings: {
       projectsRootDir: "",
-      ollamaBaseUrl: "http://localhost:11434",
+      ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
       ollamaApiKey: "",
       ollamaWebSearchEnabled: false,
-      ollamaDefaultModel: "qwen3.5:cloud",
+        ollamaDefaultModel: "qwen3.5:397b",
+      ollamaEmbeddingBaseUrl: DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
       ollamaEmbedModel: "nomic-embed-text",
       sidebarAgentProvider: "ollama",
-      sidebarAgentModel: "qwen3.5:cloud",
+      sidebarAgentModel: "qwen3.5:397b",
       modelProviders: {
-        ollama: { provider: "ollama", model: "qwen3.5:cloud", baseUrl: "http://localhost:11434", enabled: true },
+        ollama: { provider: "ollama", model: "qwen3.5:397b", baseUrl: DEFAULT_OLLAMA_BASE_URL, enabled: true },
         anthropic: { provider: "anthropic", model: "claude-sonnet-4-5", enabled: false },
         deepseek: { provider: "deepseek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", enabled: false },
         openai: { provider: "openai", model: "gpt-5.2", baseUrl: "https://api.openai.com/v1", enabled: false },
@@ -193,7 +215,7 @@ async function call<T>(method: string, params?: unknown): Promise<T> {
     const result = await (electrobun.rpc as any)?.request?.[method](params);
     return result as T;
   } catch (err) {
-    if (mutatingMethods.has(method)) {
+    if (strictRpcMethods.has(method)) {
       console.error(`[RPC] Electrobun RPC failed for ${method}:`, err);
       throw err;
     }
@@ -301,4 +323,8 @@ export const rpc = {
     think?: boolean
   ) => call<void>("generateTextStream", { model, messages, think }),
   abortAiStream: () => call<void>("abortAiStream"),
+  startOllamaOpenAIProxy: (requestId: string, body: string) =>
+    call<OllamaProxyResponse>("startOllamaOpenAIProxy", { requestId, body }),
+  abortOllamaOpenAIProxy: (requestId: string) =>
+    call<void>("abortOllamaOpenAIProxy", { requestId }),
 };

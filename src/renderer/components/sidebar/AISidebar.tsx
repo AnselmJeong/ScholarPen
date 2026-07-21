@@ -739,7 +739,7 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
     settings?.sidebarAgentModel ||
     settings?.modelProviders?.[activeProvider]?.model ||
     settings?.ollamaDefaultModel ||
-    "qwen3.5:cloud";
+    "qwen3.5:397b";
   const modelKey = `${activeProvider}:${activeModel}`;
 
   const refreshThreads = useCallback(async () => {

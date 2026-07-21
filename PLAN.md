@@ -156,7 +156,7 @@ Phase 0 (필수 선행)
 | Editor | @blocknote/react + @blocknote/mantine |
 | AI Extension | @blocknote/xl-ai-backend + AIExtension |
 | Frontend | React 19 + Tailwind CSS + Vite |
-| AI Backend | Ollama (localhost:11434) |
+| AI Backend | Ollama Cloud (`https://ollama.com/v1`); local Ollama is reserved for embeddings |
 | Embedding | nomic-embed-text via Ollama |
 | Vector DB | LanceDB (@lancedb/lancedb) |
 | Citation | CrossRef API, OpenAlex API |

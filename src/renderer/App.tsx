@@ -12,6 +12,7 @@ import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
+import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { BlockNoteEditor } from "@blocknote/core";
 
 type AppView = "editor" | "settings";
@@ -44,8 +45,8 @@ export function App() {
   const [newProjectName, setNewProjectName] = useState("");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl">>({
     sidebarAgentProvider: "ollama",
-    sidebarAgentModel: "qwen3.5:cloud",
-    ollamaBaseUrl: "http://localhost:11434",
+    sidebarAgentModel: "qwen3.5:397b",
+    ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
   });
 
   // ── KB Graph state ────────────────────────────────────────────────────────
@@ -87,6 +88,24 @@ export function App() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  useEffect(() => {
+    if (
+      appSettings.sidebarAgentProvider === "ollama" &&
+      ollamaStatus.activeModel &&
+      !ollamaStatus.models.includes(appSettings.sidebarAgentModel)
+    ) {
+      setAppSettings((current) => ({
+        ...current,
+        sidebarAgentModel: ollamaStatus.activeModel!,
+      }));
+    }
+  }, [
+    appSettings.sidebarAgentProvider,
+    appSettings.sidebarAgentModel,
+    ollamaStatus.activeModel,
+    ollamaStatus.models,
+  ]);
+
   const refreshProjects = useCallback(() => {
     rpc.listProjects().then(setProjects).catch(console.error);
   }, []);
@@ -98,8 +117,8 @@ export function App() {
     rpc.getSettings()
       .then((s) => setAppSettings({
         sidebarAgentProvider: s.sidebarAgentProvider ?? "ollama",
-        sidebarAgentModel: s.sidebarAgentModel ?? s.ollamaDefaultModel ?? "qwen3.5:cloud",
-        ollamaBaseUrl: s.ollamaBaseUrl ?? "http://localhost:11434",
+        sidebarAgentModel: s.sidebarAgentModel ?? s.ollamaDefaultModel ?? "qwen3.5:397b",
+        ollamaBaseUrl: s.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
       }))
       .catch(console.error);
   }, []);
@@ -535,7 +554,6 @@ export function App() {
             ref={editorGroupRef}
             project={activeProject}
             ollamaStatus={ollamaStatus}
-            ollamaBaseUrl={appSettings.ollamaBaseUrl}
             reloadTrigger={editorReloadTrigger}
             bibReloadTrigger={bibReloadTrigger}
             onActiveFileChange={(file, docFilename) => {
@@ -557,8 +575,8 @@ export function App() {
                   refreshProjects();
                   setAppSettings({
                     sidebarAgentProvider: saved.sidebarAgentProvider ?? "ollama",
-                    sidebarAgentModel: saved.sidebarAgentModel ?? saved.ollamaDefaultModel ?? "qwen3.5:cloud",
-                    ollamaBaseUrl: saved.ollamaBaseUrl ?? "http://localhost:11434",
+                    sidebarAgentModel: saved.sidebarAgentModel ?? saved.ollamaDefaultModel ?? "qwen3.5:397b",
+                    ollamaBaseUrl: saved.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
                   });
                 }}
               />

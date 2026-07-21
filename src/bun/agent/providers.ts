@@ -1,35 +1,17 @@
 import type { AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
+import { resolveOllamaConnection } from "../../shared/ollama-connection";
 
 export interface AgentStreamRequest {
   provider: LLMProvider;
   model: string;
   messages: OllamaMessage[];
+  think?: boolean;
   signal?: AbortSignal;
 }
 
 function ensureApiKey(provider: string, apiKey: string): string {
   if (!apiKey.trim()) throw new Error(`${provider} API key is not configured in Settings.`);
   return apiKey.trim();
-}
-
-async function* streamJsonLines(response: Response): AsyncGenerator<Record<string, any>> {
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Provider returned an empty response body.");
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      yield JSON.parse(trimmed);
-    }
-  }
 }
 
 async function* streamSse(response: Response): AsyncGenerator<Record<string, any>> {
@@ -68,21 +50,25 @@ export async function* streamAgentModel(
   settings: AppSettings,
 ): AsyncGenerator<string> {
   if (request.provider === "ollama") {
-    const baseUrl = (settings.ollamaBaseUrl || "http://localhost:11434").replace(/\/$/, "");
-    const res = await fetch(`${baseUrl}/api/chat`, {
+    const apiKey = ensureApiKey("Ollama", settings.ollamaApiKey);
+    const connection = resolveOllamaConnection(settings.ollamaBaseUrl, apiKey);
+    const res = await fetch(`${connection.openAIBaseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...connection.authorizationHeaders,
+      },
       body: JSON.stringify({
         model: request.model || settings.ollamaDefaultModel,
         messages: request.messages,
         stream: true,
-        think: false,
+        think: request.think ?? false,
       }),
       signal: request.signal,
     });
     if (!res.ok) throw new Error(`Ollama error: HTTP ${res.status} ${await res.text()}`);
-    for await (const json of streamJsonLines(res)) {
-      const text = json.message?.content;
+    for await (const json of streamSse(res)) {
+      const text = json.choices?.[0]?.delta?.content;
       if (text) yield text;
     }
     return;
@@ -148,14 +134,13 @@ function normalizeModelIds(json: any): string[] {
 
 export async function listProviderModels(provider: LLMProvider, settings: AppSettings): Promise<string[]> {
   if (provider === "ollama") {
-    const baseUrl = (settings.ollamaBaseUrl || "http://localhost:11434").replace(/\/$/, "");
-    const res = await fetch(`${baseUrl}/api/tags`);
-    if (!res.ok) throw new Error(`Ollama model list error: HTTP ${res.status}`);
-    const json = await res.json();
-    return (Array.isArray(json?.models) ? json.models : [])
-      .map((model: { name?: unknown }) => model?.name)
-      .filter((name: unknown): name is string => typeof name === "string" && name.length > 0)
-      .sort((a: string, b: string) => a.localeCompare(b));
+    const apiKey = ensureApiKey("Ollama", settings.ollamaApiKey);
+    const connection = resolveOllamaConnection(settings.ollamaBaseUrl, apiKey);
+    const res = await fetch(`${connection.openAIBaseUrl}/models`, {
+      headers: connection.authorizationHeaders,
+    });
+    if (!res.ok) throw new Error(`Ollama model list error: HTTP ${res.status} ${await res.text()}`);
+    return normalizeModelIds(await res.json());
   }
 
   if (provider === "anthropic") {

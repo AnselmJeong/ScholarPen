@@ -36,7 +36,6 @@ export interface EditorPaneGroupHandle {
 interface EditorPaneGroupProps {
   project: ProjectInfo | null;
   ollamaStatus: OllamaStatus;
-  ollamaBaseUrl: string;
   reloadTrigger: number;
   bibReloadTrigger: number;
   onActiveFileChange: (file: FileNode | null, docFilename: string | null) => void;
@@ -63,7 +62,6 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     {
       project,
       ollamaStatus,
-      ollamaBaseUrl,
       reloadTrigger,
       bibReloadTrigger,
       onActiveFileChange,
@@ -433,7 +431,6 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         project={project}
                         documentFilename={tab.file.name}
                         ollamaStatus={ollamaStatus}
-                        ollamaBaseUrl={ollamaBaseUrl}
                         initialScrollTop={scrollPositionMapRef.current.get(tab.id) ?? 0}
                         reloadTrigger={reloadTrigger}
                         bibReloadTrigger={bibReloadTrigger}

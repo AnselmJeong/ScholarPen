@@ -93,7 +93,6 @@ interface EditorAreaProps {
   project: ProjectInfo | null;
   documentFilename: string | null;
   ollamaStatus: OllamaStatus;
-  ollamaBaseUrl: string;
   initialScrollTop?: number;
   onWordCountChange: (count: number) => void;
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
@@ -162,7 +161,6 @@ export function EditorArea({
   project,
   documentFilename,
   ollamaStatus,
-  ollamaBaseUrl,
   initialScrollTop = 0,
   onWordCountChange,
   onEditorReady,
@@ -181,8 +179,8 @@ export function EditorArea({
     extensions: [
       AIExtension({
         transport: ollamaStatus.connected
-          ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:cloud", ollamaBaseUrl)
-          : createNoOpTransport(ollamaBaseUrl),
+          ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b")
+          : createNoOpTransport(),
       }),
     ],
   });
@@ -259,11 +257,8 @@ export function EditorArea({
     if (!aiExt?.options?.setState) return;
 
     const transport = ollamaStatus.connected
-      ? createOllamaTransport(
-          ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen2.5:latest",
-          ollamaBaseUrl
-        )
-      : createNoOpTransport(ollamaBaseUrl);
+      ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b")
+      : createNoOpTransport();
 
     aiExt.options.setState((prev: Record<string, unknown>) => ({
       ...prev,
@@ -274,7 +269,7 @@ export function EditorArea({
     if (menuState === "closed" || menuState == null) {
       aiExt.closeAIMenu?.();
     }
-  }, [editor, ollamaStatus.connected, ollamaStatus.activeModel, ollamaBaseUrl]);
+  }, [editor, ollamaStatus.connected, ollamaStatus.activeModel]);
 
   // Load citekeys from references.bib when project changes
   useEffect(() => {
@@ -814,7 +809,7 @@ export function EditorArea({
       {aiEditSnapshot && (
         <AIInlineEditPanel
           snapshot={aiEditSnapshot}
-          model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:cloud"}
+          model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b"}
           onAccept={handleAIEditAccept}
           onClose={() => setAiEditSnapshot(null)}
         />

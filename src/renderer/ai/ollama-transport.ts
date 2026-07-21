@@ -3,41 +3,91 @@
 
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { ClientSideTransport } from "@blocknote/xl-ai/server";
+import { onOllamaProxyChunk, rpc } from "../rpc";
 
 /**
- * Creates a ClientSideTransport that calls Ollama directly from the webview.
- * Ollama must be running on localhost:11434.
- *
- * Note: Ollama needs CORS enabled. Run with:
- *   OLLAMA_ORIGINS="*" ollama serve
+ * Streams the OpenAI-compatible request through Bun. The Bun proxy injects
+ * `think: false`, bypasses Cloud CORS restrictions, and keeps credentials out
+ * of renderer-side network requests while preserving tool-call SSE events.
  */
-/**
- * Custom fetch that injects `think: false` into all Ollama chat completions
- * to disable qwen3's chain-of-thought thinking mode.  Without this, qwen3
- * models return an empty `content` field while thinking tokens go into
- * `reasoning_content`, which leaves BlockNote's AI extension with a blank response.
- */
-const ollamaFetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-  if (init?.body && typeof init.body === "string") {
-    try {
-      const body = JSON.parse(init.body);
-      body.think = false;
-      return fetch(input, { ...init, body: JSON.stringify(body) });
-    } catch {
-      // ignore parse errors — fall through to plain fetch
-    }
+const ollamaProxyFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  if (typeof init?.body !== "string") {
+    throw new Error("Ollama proxy expected a JSON request body.");
   }
-  return fetch(input, init);
+  if (init.signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+
+  const requestId = crypto.randomUUID();
+  const encoder = new TextEncoder();
+  let detachListener = () => {};
+  let detachAbort = () => {};
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const cleanup = () => {
+        detachListener();
+        detachAbort();
+      };
+
+      detachListener = onOllamaProxyChunk((payload) => {
+        if (payload.requestId !== requestId) return;
+        if (payload.error) {
+          cleanup();
+          controller.error(new Error(payload.error));
+          return;
+        }
+        if (payload.content) controller.enqueue(encoder.encode(payload.content));
+        if (payload.done) {
+          cleanup();
+          controller.close();
+        }
+      });
+
+      const abort = () => {
+        cleanup();
+        void rpc.abortOllamaOpenAIProxy(requestId).catch(() => {});
+        controller.error(new DOMException("The operation was aborted.", "AbortError"));
+      };
+      if (init.signal?.aborted) {
+        abort();
+      } else if (init.signal) {
+        init.signal.addEventListener("abort", abort, { once: true });
+        detachAbort = () => init.signal?.removeEventListener("abort", abort);
+      }
+    },
+    cancel() {
+      detachListener();
+      detachAbort();
+      void rpc.abortOllamaOpenAIProxy(requestId).catch(() => {});
+    },
+  });
+
+  try {
+    const response = await rpc.startOllamaOpenAIProxy(requestId, init.body);
+    return new Response(stream, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: { "Content-Type": response.contentType },
+    });
+  } catch (error) {
+    detachListener();
+    detachAbort();
+    throw error;
+  }
+}) as typeof fetch;
+
+const unavailableFetch = (async () => {
+  throw new Error("Ollama Cloud is not connected. Configure the API key in Settings.");
 }) as unknown as typeof fetch;
 
-export function createOllamaTransport(modelName: string, baseURL = "http://localhost:11434") {
+export function createOllamaTransport(modelName: string) {
   console.log("[ollama-transport] Creating transport for model:", modelName);
-  // Use OpenAI Compatible provider for Ollama
   const ollama = createOpenAICompatible({
     name: "ollama",
-    baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
-    apiKey: "ollama", // Ollama doesn't require API key, but provider needs one
-    fetch: ollamaFetch,
+    baseURL: "http://scholarpen.internal/v1",
+    apiKey: "proxied-by-bun",
+    fetch: ollamaProxyFetch,
   });
   const model = ollama(modelName);
   console.log("[ollama-transport] Model created:", typeof model);
@@ -55,10 +105,15 @@ export function createOllamaTransport(modelName: string, baseURL = "http://local
 /**
  * Creates an Ollama transport with custom system prompt
  */
-export function createOllamaTransportWithSystemPrompt(modelName: string, systemPrompt: string) {
+export function createOllamaTransportWithSystemPrompt(
+  modelName: string,
+  systemPrompt: string,
+) {
   const ollama = createOpenAICompatible({
     name: "ollama",
-    baseURL: "http://localhost:11434/v1",
+    baseURL: "http://scholarpen.internal/v1",
+    apiKey: "proxied-by-bun",
+    fetch: ollamaProxyFetch,
   });
   const model = ollama(modelName);
   return new ClientSideTransport({
@@ -76,16 +131,15 @@ export function createOllamaTransportWithSystemPrompt(modelName: string, systemP
  * throws "null is not an object" and poisons the cached `chat` object for
  * the rest of the session.
  *
- * Using a real (non-null) model with a placeholder model ID is safe: if AI
- * is invoked before Ollama connects the call will fail with a network error
- * (connection refused), which BlockNote surfaces as a recoverable error state
- * rather than an uncaught crash.
+ * Using a real (non-null) model with a placeholder model ID is safe: the
+ * placeholder fetch surfaces a recoverable configuration error if invoked.
  */
-export function createNoOpTransport(baseURL = "http://localhost:11434") {
+export function createNoOpTransport() {
   const ollama = createOpenAICompatible({
     name: "ollama-placeholder",
-    baseURL: `${baseURL.replace(/\/$/, "")}/v1`,
+    baseURL: "http://scholarpen.internal/v1",
     apiKey: "none",
+    fetch: unavailableFetch,
   });
   return new ClientSideTransport({
     model: ollama("placeholder"),

@@ -19,6 +19,12 @@ export interface OllamaChatChunk {
   done: boolean;
 }
 
+export interface OllamaProxyResponse {
+  status: number;
+  statusText: string;
+  contentType: string;
+}
+
 export interface CitationMetadata {
   doi: string;
   citekey: string;
@@ -175,6 +181,7 @@ export interface AppSettings {
   ollamaApiKey: string;
   ollamaWebSearchEnabled: boolean;
   ollamaDefaultModel: string;
+  ollamaEmbeddingBaseUrl: string;
   ollamaEmbedModel: string;
   anthropicApiKey: string;
   anthropicDefaultModel: string;

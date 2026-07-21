@@ -1,4 +1,5 @@
 import type { AgentStreamParams, AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
+import { resolveOllamaConnection } from "../../shared/ollama-connection";
 
 const DECISION_PROMPT = `Decide whether the assistant must use live web search before answering.
 
@@ -59,10 +60,14 @@ export async function shouldUseWebSearch(
   const messages = decisionMessages(params);
 
   if (provider === "ollama") {
-    const baseUrl = (settings.ollamaBaseUrl || "http://localhost:11434").replace(/\/$/, "");
-    const res = await fetch(`${baseUrl}/api/chat`, {
+    const apiKey = ensureApiKey("Ollama", settings.ollamaApiKey);
+    const connection = resolveOllamaConnection(settings.ollamaBaseUrl, apiKey);
+    const res = await fetch(`${connection.openAIBaseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...connection.authorizationHeaders,
+      },
       body: JSON.stringify({
         model: model || settings.ollamaDefaultModel,
         messages,
@@ -74,7 +79,7 @@ export async function shouldUseWebSearch(
     });
     if (!res.ok) throw new Error(`Ollama web-search decision error: HTTP ${res.status} ${await res.text()}`);
     const json = await res.json();
-    return parseDecision(json.message?.content ?? json.response ?? "");
+    return parseDecision(json.choices?.[0]?.message?.content ?? "");
   }
 
   if (provider === "anthropic") {

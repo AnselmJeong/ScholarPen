@@ -11,6 +11,7 @@ import { listAgentMentionableFiles } from "./agent/mention-resolver";
 import { streamScholarAgent } from "./agent/service";
 import { listProviderModels } from "./agent/providers";
 import { getAgentThreadStore } from "./agent/thread-store";
+import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 
 
@@ -44,10 +45,12 @@ async function getMainViewUrl(): Promise<string> {
 let sendProjectUpdated: ((payload: { projectPath: string; filePath?: string }) => void) | null = null;
 let sendAiChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
 let sendAgentChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
+let sendOllamaProxyChunk: ((payload: { requestId: string; content: string; done: boolean; error?: string }) => void) | null = null;
 
 // Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
 let activeAiAbortController: AbortController | null = null;
 let activeAgentAbortController: AbortController | null = null;
+const activeOllamaProxyControllers = new Map<string, AbortController>();
 
 function openValidatedExternalUrl(url: string): void {
   let parsed: URL;
@@ -370,6 +373,52 @@ async function main() {
         abortAiStream: () => {
           activeAiAbortController?.abort();
         },
+
+        startOllamaOpenAIProxy: async ({ requestId, body }) => {
+          activeOllamaProxyControllers.get(requestId)?.abort();
+          const controller = new AbortController();
+          activeOllamaProxyControllers.set(requestId, controller);
+
+          try {
+            const response = await openOllamaChatCompletion(body, controller.signal);
+            void pipeResponseText(response, (content) => {
+              sendOllamaProxyChunk?.({ requestId, content, done: false });
+            })
+              .then(() => sendOllamaProxyChunk?.({ requestId, content: "", done: true }))
+              .catch((error: Error) => {
+                if (error.name === "AbortError") {
+                  sendOllamaProxyChunk?.({ requestId, content: "", done: true });
+                  return;
+                }
+                sendOllamaProxyChunk?.({
+                  requestId,
+                  content: "",
+                  done: true,
+                  error: error.message,
+                });
+              })
+              .finally(() => {
+                if (activeOllamaProxyControllers.get(requestId) === controller) {
+                  activeOllamaProxyControllers.delete(requestId);
+                }
+              });
+
+            return {
+              status: response.status,
+              statusText: response.statusText,
+              contentType: response.headers.get("content-type") ?? "text/event-stream",
+            };
+          } catch (error) {
+            if (activeOllamaProxyControllers.get(requestId) === controller) {
+              activeOllamaProxyControllers.delete(requestId);
+            }
+            throw error;
+          }
+        },
+
+        abortOllamaOpenAIProxy: ({ requestId }) => {
+          activeOllamaProxyControllers.get(requestId)?.abort();
+        },
       },
       messages: {
         aiChunk: (payload) => {
@@ -399,6 +448,7 @@ async function main() {
   sendProjectUpdated = (payload) => win.webview.rpc?.send.projectUpdated(payload);
   sendAiChunk = (payload) => win.webview.rpc?.send.aiChunk(payload);
   sendAgentChunk = (payload) => win.webview.rpc?.send.agentChunk(payload);
+  sendOllamaProxyChunk = (payload) => win.webview.rpc?.send.ollamaProxyChunk(payload);
 
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {
