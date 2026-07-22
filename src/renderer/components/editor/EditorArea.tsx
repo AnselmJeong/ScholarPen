@@ -42,6 +42,7 @@ import "@blocknote/xl-ai/style.css";
 import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-transport";
 import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
 import {
+  buildInlineEditDocumentContext,
   isSameProtectedSlice,
   protectSelectionSlice,
   restoreProtectedSelection,
@@ -508,6 +509,7 @@ export function EditorArea({
     const selectedText = editor.getSelectedText();
     if (!selectedText.trim()) return;
     const protection = protectSelectionSlice(view.state.doc.slice(from, to), selectedText);
+    const documentContext = buildInlineEditDocumentContext(view.state.doc, from, to);
 
     // Get screen coordinates of the selection start
     const coords = view.coordsAtPos(from);
@@ -517,6 +519,7 @@ export function EditorArea({
       to,
       selectedText,
       protection,
+      documentContext,
       top: coords.top,
       bottom: coordsEnd.bottom,
       left: coords.left,

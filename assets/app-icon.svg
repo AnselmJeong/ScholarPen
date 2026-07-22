@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="scholarpen-purple" x1="180" y1="160" x2="850" y2="870" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5b21b6"/>
+      <stop offset="0.52" stop-color="#5520a8"/>
+      <stop offset="1" stop-color="#4c1d95"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="40" y="55" width="944" height="954" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#2e1065" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+
+  <!-- The same rounded purple tile used in ScholarPen's title bar. -->
+  <rect x="104" y="92" width="816" height="816" rx="204" fill="url(#scholarpen-purple)" filter="url(#soft-shadow)"/>
+
+  <!-- Lucide PenLine, matching the title-bar glyph. -->
+  <g transform="translate(224 212) scale(24)" fill="none" stroke="#ffffff" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 21h8"/>
+    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/>
+  </g>
+</svg>

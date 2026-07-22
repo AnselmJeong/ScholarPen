@@ -6,6 +6,7 @@ import { rpc, onAiChunk } from "../../rpc";
 import {
   buildInlineEditMessages,
   protectedRewritePreview,
+  type InlineEditDocumentContext,
   type ProtectedSelection,
 } from "./ai-inline-edit-protection";
 
@@ -18,6 +19,8 @@ export interface SelectionSnapshot {
   selectedText: string;
   /** Lossless ProseMirror Slice plus markers that the AI is forbidden to alter. */
   protection: ProtectedSelection;
+  /** Complete document text surrounding the selection, used as read-only context. */
+  documentContext: InlineEditDocumentContext;
   /** Viewport coords of the selection's bounding rect */
   top: number;
   bottom: number;
@@ -37,11 +40,14 @@ const PANEL_WIDTH = 440;
 const PANEL_HEIGHT_EST = 290; // used only for flip-above logic
 const PANEL_MARGIN = 8;
 
+export const ACADEMIC_IMPROVE_PROMPT =
+  "Substantively improve this passage as academic prose. Strengthen its analytical precision, logical progression, conceptual clarity, and contribution to the manuscript's argument—not merely its surface fluency. Preserve the author's intended meaning, technical terminology, disciplinary voice, and calibrated degree of certainty. Where the complete document context permits, resolve ambiguity, redundancy, weak transitions, unsupported overstatement, and logical gaps. Do not invent facts, evidence, citations, or stronger claims than the manuscript can support.";
+
 const QUICK_ACTIONS = [
-  { label: "Improve",   prompt: "Improve the writing quality and clarity of" },
-  { label: "Shorten",   prompt: "Shorten and make more concise" },
-  { label: "Formalize", prompt: "Make more formal and academic" },
-  { label: "Simplify",  prompt: "Simplify the language of" },
+  { label: "Improve",   prompt: ACADEMIC_IMPROVE_PROMPT, verifyAcademically: true },
+  { label: "Shorten",   prompt: "Shorten and make more concise", verifyAcademically: false },
+  { label: "Formalize", prompt: "Make more formal and academic", verifyAcademically: false },
+  { label: "Simplify",  prompt: "Simplify the language of", verifyAcademically: false },
 ];
 
 const TRANSLATE_LANGS = [
@@ -197,7 +203,7 @@ export function AIInlineEditPanel({
   }, []);
 
   const run = useCallback(
-    async (instruction: string) => {
+    async (instruction: string, verifyAcademically = false) => {
       if (!instruction.trim()) return;
       setResult("");
       setError("");
@@ -206,14 +212,19 @@ export function AIInlineEditPanel({
       activeRef.current = true;
 
       try {
-        const messages = buildInlineEditMessages(instruction, snapshot.protection);
+        const messages = buildInlineEditMessages(
+          instruction,
+          snapshot.protection,
+          snapshot.documentContext
+        );
         await rpc.generateTextStream(
           model,
           [
             { role: "system", content: messages.system },
             { role: "user", content: messages.user },
           ],
-          false
+          false,
+          verifyAcademically ? snapshot.selectedText : undefined
         );
       } catch (err) {
         setError((err as Error).message);
@@ -221,7 +232,7 @@ export function AIInlineEditPanel({
         activeRef.current = false;
       }
     },
-    [model, snapshot.protection]
+    [model, snapshot.documentContext, snapshot.protection, snapshot.selectedText]
   );
 
   const handleAccept = () => {
@@ -292,7 +303,7 @@ export function AIInlineEditPanel({
             {QUICK_ACTIONS.map((a) => (
               <button
                 key={a.label}
-                onClick={() => { setPrompt(a.prompt); run(a.prompt); }}
+                onClick={() => { setPrompt(a.prompt); run(a.prompt, a.verifyAcademically); }}
                 className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
               >
                 {a.label}

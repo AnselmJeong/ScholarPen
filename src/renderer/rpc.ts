@@ -320,8 +320,9 @@ export const rpc = {
   generateTextStream: (
     model: string,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-    think?: boolean
-  ) => call<void>("generateTextStream", { model, messages, think }),
+    think?: boolean,
+    academicVerificationText?: string
+  ) => call<void>("generateTextStream", { model, messages, think, academicVerificationText }),
   abortAiStream: () => call<void>("abortAiStream"),
   startOllamaOpenAIProxy: (requestId: string, body: string) =>
     call<OllamaProxyResponse>("startOllamaOpenAIProxy", { requestId, body }),

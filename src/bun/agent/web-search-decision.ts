@@ -12,6 +12,16 @@ Use NO_SEARCH for rewriting, editing, brainstorming, stable general knowledge, p
 
 Knowledge Base is OFF for this decision.`;
 
+const ACADEMIC_VERIFICATION_PROMPT = `Decide whether a scholarly editor should use web search before revising the supplied manuscript passage.
+
+Return exactly one line in one of these forms:
+NO_SEARCH
+SEARCH: <a concise scholarly search query>
+
+Use SEARCH only when the passage makes a factual, empirical, causal, historical, terminological, or attributed theoretical claim whose accuracy materially affects the rewrite and cannot be checked from prose alone. Also use SEARCH for time-sensitive claims.
+Use NO_SEARCH when the task is purely stylistic, rhetorical, grammatical, interpretive, or logical and does not require external facts.
+Do not search merely to make prose sound more sophisticated. The query must target the claim that needs verification, not the editing task, and should favor primary, authoritative, or peer-reviewed sources.`;
+
 function ensureApiKey(provider: string, apiKey: string): string {
   if (!apiKey.trim()) throw new Error(`${provider} API key is not configured in Settings.`);
   return apiKey.trim();
@@ -125,4 +135,47 @@ export async function shouldUseWebSearch(
   if (!res.ok) throw new Error(`${isDeepSeek ? "DeepSeek" : "OpenAI"} web-search decision error: HTTP ${res.status} ${await res.text()}`);
   const json = await res.json();
   return parseDecision(json.choices?.[0]?.message?.content ?? "");
+}
+
+/**
+ * Produces a focused search query only when external verification is material
+ * to an academic rewrite. Inline editing currently uses the Ollama provider,
+ * whose API key is also required by Ollama web search/fetch.
+ */
+export async function academicVerificationSearchQuery(
+  passage: string,
+  settings: AppSettings,
+  model: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  if (!settings.ollamaWebSearchEnabled || !settings.ollamaApiKey.trim()) return null;
+
+  const connection = resolveOllamaConnection(settings.ollamaBaseUrl, settings.ollamaApiKey.trim());
+  const res = await fetch(`${connection.openAIBaseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...connection.authorizationHeaders,
+    },
+    body: JSON.stringify({
+      model: model || settings.ollamaDefaultModel,
+      messages: [
+        { role: "system", content: ACADEMIC_VERIFICATION_PROMPT },
+        { role: "user", content: `Manuscript passage:\n${passage.slice(0, 12_000)}` },
+      ],
+      stream: false,
+      think: false,
+      options: { temperature: 0 },
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`Ollama academic verification decision error: HTTP ${res.status} ${await res.text()}`);
+  }
+
+  const json = await res.json();
+  const decision = String(json.choices?.[0]?.message?.content ?? "").trim();
+  const match = decision.match(/^SEARCH:\s*(.+)$/im);
+  const query = match?.[1]?.trim().replace(/\s+/g, " ").slice(0, 500) ?? "";
+  return query || null;
 }

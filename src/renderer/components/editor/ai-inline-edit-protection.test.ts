@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "prosemirror-model";
 import {
+  buildInlineEditDocumentContext,
   buildInlineEditMessages,
   protectSelectionSlice,
   restoreProtectedSelection,
@@ -52,6 +53,48 @@ describe("AI inline edit protection", () => {
 
     expect(messages.system).toContain("source passage is English");
     expect(messages.system).toContain("Write the replacement in English");
+  });
+
+  test("uses the complete manuscript as read-only context for substantive academic editing", () => {
+    const selection = makeProtectedSelection();
+    const messages = buildInlineEditMessages(
+      "Substantively improve this passage as academic prose",
+      selection,
+      {
+        beforeSelection: "The introduction defines the paper's central problem.",
+        afterSelection: "The conclusion returns to the same qualified claim.",
+      }
+    );
+
+    expect(messages.system).toContain("research question, thesis, disciplinary register");
+    expect(messages.system).toContain("analytical precision, logical coherence");
+    expect(messages.system).toContain("Never invent evidence, facts");
+    expect(messages.user).toContain("<complete_document_context reference_only=\"true\">");
+    expect(messages.user).toContain("The introduction defines the paper's central problem.");
+    expect(messages.user).toContain("The conclusion returns to the same qualified claim.");
+    expect(messages.user).toContain(selection.protectedText);
+  });
+
+  test("captures all document text before and after the selected passage", () => {
+    const doc = schema.nodes.doc.create(null, [
+      schema.nodes.paragraph.create(null, schema.text("Introduction context")),
+      schema.nodes.paragraph.create(null, schema.text("Selected claim")),
+      schema.nodes.paragraph.create(null, schema.text("Conclusion context")),
+    ]);
+    let from = 0;
+    let to = 0;
+    doc.descendants((node, pos) => {
+      if (node.isText && node.text === "Selected claim") {
+        from = pos;
+        to = pos + node.nodeSize;
+      }
+    });
+
+    const context = buildInlineEditDocumentContext(doc, from, to);
+    expect(context.beforeSelection).toContain("Introduction context");
+    expect(context.beforeSelection).not.toContain("Selected claim");
+    expect(context.afterSelection).toContain("Conclusion context");
+    expect(context.afterSelection).not.toContain("Selected claim");
   });
 
   test("restores rewritten text without losing marks, citations, or Markdown controls", () => {
