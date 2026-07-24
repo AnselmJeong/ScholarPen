@@ -19,6 +19,61 @@ interface OllamaWebFetchResult {
   links?: string[];
 }
 
+const ACADEMIC_HOST_MARKERS = [
+  "doi.org",
+  "openalex.org",
+  "crossref.org",
+  "pubmed.ncbi.nlm.nih.gov",
+  "ncbi.nlm.nih.gov",
+  "arxiv.org",
+  "semanticscholar.org",
+  "jstor.org",
+  "projectmuse.jhu.edu",
+  "acm.org",
+  "ieee.org",
+  "springer.com",
+  "sciencedirect.com",
+  "wiley.com",
+  "tandfonline.com",
+  "sagepub.com",
+  "nature.com",
+  "science.org",
+  "oup.com",
+  "cambridge.org",
+  "plos.org",
+  "frontiersin.org",
+  "bmj.com",
+  "mdpi.com",
+];
+
+export function academicSourceScore(result: WebSearchResult): number {
+  let score = 0;
+  try {
+    const hostname = new URL(result.url).hostname.toLowerCase();
+    if (ACADEMIC_HOST_MARKERS.some((marker) => hostname === marker || hostname.endsWith(`.${marker}`))) {
+      score += 100;
+    }
+    if (hostname.endsWith(".edu") || hostname.endsWith(".ac.uk")) score += 45;
+    if (hostname.endsWith(".kr")) score -= 20;
+  } catch {
+    score -= 10;
+  }
+
+  const searchable = `${result.title} ${result.content}`;
+  if (/\b(?:doi|journal|abstract|peer-reviewed|systematic review|meta-analysis|research article)\b/i.test(searchable)) {
+    score += 20;
+  }
+  if (/[\u3131-\u318E\uAC00-\uD7A3]/u.test(result.title)) score -= 15;
+  return score;
+}
+
+export function prioritizeAcademicResults(results: WebSearchResult[]): WebSearchResult[] {
+  return results
+    .map((result, index) => ({ result, index, score: academicSourceScore(result) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ result }) => result);
+}
+
 function authHeaders(apiKey: string): HeadersInit {
   return {
     "Content-Type": "application/json",
@@ -84,7 +139,9 @@ export async function searchAndFetchWebWithOllama(
   settings: AppSettings,
   maxResults = 5,
 ): Promise<WebSearchResult[]> {
-  const searchResults = await searchWebWithOllama(query, settings, maxResults);
+  const searchResults = prioritizeAcademicResults(
+    await searchWebWithOllama(query, settings, Math.min(10, Math.max(maxResults, maxResults * 2))),
+  ).slice(0, maxResults);
   if (searchResults.length === 0) return [];
 
   const fetched = await Promise.all(

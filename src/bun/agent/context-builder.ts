@@ -4,6 +4,7 @@ import { citationClient, type SupportingCitation } from "../citation/client";
 import { buildCitationReferenceList, buildReferenceList, buildWebReferenceList } from "./references";
 import { loadAgentSkill } from "./skill-registry";
 import { resolveMentionedFiles } from "./mention-resolver";
+import { createEnglishAcademicSearchQuery } from "./research-query";
 import { searchAndFetchWebWithOllama, type WebSearchResult } from "./web-search";
 import { shouldUseWebSearch } from "./web-search-decision";
 
@@ -131,6 +132,7 @@ function findCitationInstructions(params: AgentStreamParams): string {
   if (params.analysisMode !== "find-citation" || !params.citationContext) return "";
   return `<find_citation_mode>
 Find scholarly citations that directly support the selected passage. Use only entries in <verified_doi_candidates>; never invent, alter, or infer a title, author, year, DOI, URL, or candidate ID.
+The retrieval query was generated in English regardless of the selected passage's language. Prioritize English-language peer-reviewed scholarship over Korean-language websites or general web summaries.
 Rank at most five genuinely relevant candidates. Do not fill the list with weak matches. For each result, reproduce its bibliographic metadata, DOI, and DOI URL exactly, then explain which specific claim it supports and any limitation.
 Treat an abstract as evidence only for statements it actually contains. When a candidate has no abstract, label it as a title-and-metadata-level lead that requires manual verification; do not claim that it definitively supports the passage.
 Use a "## 검색 결과 요약" heading. Cite candidates as [C1], [C2], etc. If there is no sufficiently relevant verified candidate, state that clearly instead of relying on general model knowledge.
@@ -179,12 +181,21 @@ export async function buildAgentMessages(
   }
 
   let citationCandidates: SupportingCitation[] = [];
+  let englishAcademicSearchQuery = "";
   if (isFindCitation && params.citationContext) {
-    citationCandidates = await citationClient.findSupportingCitations(
+    englishAcademicSearchQuery = await createEnglishAcademicSearchQuery(
       params.citationContext.selectedText,
-      8,
-      settings.openAlexApiKey || undefined,
+      settings,
+      params.provider,
+      params.model,
     );
+    if (englishAcademicSearchQuery) {
+      citationCandidates = await citationClient.findSupportingCitations(
+        englishAcademicSearchQuery,
+        8,
+        settings.openAlexApiKey || undefined,
+      );
+    }
   }
 
   const deepenNeedsWebFallback =
@@ -206,7 +217,15 @@ export async function buildAgentMessages(
         params.model,
       );
       if (useWebSearch) {
-        webResults = await searchAndFetchWebWithOllama(query, settings, 5);
+        englishAcademicSearchQuery = await createEnglishAcademicSearchQuery(
+          query,
+          settings,
+          params.provider,
+          params.model,
+        );
+        if (englishAcademicSearchQuery) {
+          webResults = await searchAndFetchWebWithOllama(englishAcademicSearchQuery, settings, 5);
+        }
       }
     } catch (err) {
       console.warn("[Agent] Web search failed:", err);
@@ -218,6 +237,7 @@ export async function buildAgentMessages(
     "You are ScholarPen's research writing assistant.",
     "Use only the project files, selected instructions, KB references, and web search results that are explicitly provided in this request.",
     "Do not claim to have read files that were not provided.",
+    "Whenever external search is used, ScholarPen searches with an English academic query and prioritizes English-language scholarly literature. The final answer must still follow the user's selected response language.",
     params.kbEnabled
       ? "KB search is ON. Use KB references only when <kb_context> is present."
       : "KB search is OFF. No Knowledge_Base content is provided in this request.",
@@ -231,7 +251,9 @@ export async function buildAgentMessages(
     isFindCitation
       ? citationCandidates.length > 0
         ? `${citationCandidates.length} DOI-bearing scholarly candidates were retrieved from OpenAlex and/or Crossref. Use only those candidates.`
-        : "No DOI-bearing scholarly candidate was retrieved. Do not provide an unverified citation from model knowledge."
+        : englishAcademicSearchQuery
+          ? "No DOI-bearing scholarly candidate was retrieved. Do not provide an unverified citation from model knowledge."
+          : "An English academic query could not be generated safely, so no external citation search was issued. Do not provide an unverified citation from model knowledge."
       : "",
     mentionedFiles.length > 0
       ? "The user designated project files for this request; you may discuss those provided files."

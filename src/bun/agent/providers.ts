@@ -9,9 +9,32 @@ export interface AgentStreamRequest {
   signal?: AbortSignal;
 }
 
+export interface AgentCompletionRequest {
+  provider: LLMProvider;
+  model: string;
+  messages: OllamaMessage[];
+  maxTokens?: number;
+  temperature?: number;
+  signal?: AbortSignal;
+}
+
 function ensureApiKey(provider: string, apiKey: string): string {
   if (!apiKey.trim()) throw new Error(`${provider} API key is not configured in Settings.`);
   return apiKey.trim();
+}
+
+function firstText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item;
+      if (typeof item === "object" && item && "text" in item && typeof item.text === "string") {
+        return item.text;
+      }
+      return "";
+    })
+    .join("");
 }
 
 async function* streamSse(response: Response): AsyncGenerator<Record<string, any>> {
@@ -43,6 +66,92 @@ function splitSystem(messages: OllamaMessage[]): { system: string; messages: Arr
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
   return { system, messages: rest };
+}
+
+export async function completeAgentModel(
+  request: AgentCompletionRequest,
+  settings: AppSettings,
+): Promise<string> {
+  const maxTokens = request.maxTokens ?? 256;
+  const temperature = request.temperature ?? 0;
+
+  if (request.provider === "ollama") {
+    const apiKey = ensureApiKey("Ollama", settings.ollamaApiKey);
+    const connection = resolveOllamaConnection(settings.ollamaBaseUrl, apiKey);
+    const res = await fetch(`${connection.openAIBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...connection.authorizationHeaders,
+      },
+      body: JSON.stringify({
+        model: request.model || settings.ollamaDefaultModel,
+        messages: request.messages,
+        stream: false,
+        think: false,
+        max_tokens: maxTokens,
+        options: { temperature },
+      }),
+      signal: request.signal,
+    });
+    if (!res.ok) throw new Error(`Ollama completion error: HTTP ${res.status} ${await res.text()}`);
+    const json = await res.json();
+    return json.choices?.[0]?.message?.content ?? "";
+  }
+
+  if (request.provider === "anthropic") {
+    const apiKey = ensureApiKey("Claude", settings.anthropicApiKey);
+    const { system, messages } = splitSystem(request.messages);
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: request.model || settings.anthropicDefaultModel,
+        max_tokens: maxTokens,
+        temperature,
+        system,
+        messages,
+      }),
+      signal: request.signal,
+    });
+    if (!res.ok) throw new Error(`Claude completion error: HTTP ${res.status} ${await res.text()}`);
+    const json = await res.json();
+    return firstText(json.content);
+  }
+
+  const isDeepSeek = request.provider === "deepseek";
+  const apiKey = ensureApiKey(
+    isDeepSeek ? "DeepSeek" : "OpenAI",
+    isDeepSeek ? settings.deepseekApiKey : settings.openaiApiKey,
+  );
+  const baseUrl = (
+    isDeepSeek
+      ? settings.deepseekBaseUrl
+      : settings.openaiBaseUrl || "https://api.openai.com/v1"
+  ).replace(/\/$/, "");
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: request.model || (isDeepSeek ? settings.deepseekDefaultModel : settings.openaiDefaultModel),
+      messages: request.messages,
+      temperature,
+      max_tokens: maxTokens,
+    }),
+    signal: request.signal,
+  });
+  if (!res.ok) {
+    throw new Error(`${isDeepSeek ? "DeepSeek" : "OpenAI"} completion error: HTTP ${res.status} ${await res.text()}`);
+  }
+  const json = await res.json();
+  return json.choices?.[0]?.message?.content ?? "";
 }
 
 export async function* streamAgentModel(
