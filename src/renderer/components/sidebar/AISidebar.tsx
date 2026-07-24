@@ -36,6 +36,10 @@ import {
   buildDeepenAnalysisMessage,
   type DeepenAnalysisRequest,
 } from "../../ai/deepen-analysis";
+import {
+  buildFindCitationMessage,
+  type FindCitationRequest,
+} from "../../ai/find-citation";
 import { rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -53,6 +57,8 @@ interface AISidebarProps {
   onOpenKBFile?: (filePath: string) => void;
   deepenRequest?: DeepenAnalysisRequest | null;
   onDeepenRequestConsumed?: (requestId: string) => void;
+  findCitationRequest?: FindCitationRequest | null;
+  onFindCitationRequestConsumed?: (requestId: string) => void;
 }
 
 type DropdownMode = "slash" | "file" | null;
@@ -363,17 +369,19 @@ function ThreadRuntimeSync({
   return null;
 }
 
-function DeepenRequestDispatcher({
+function PreparedRequestDispatcher<T extends { id: string }>({
   request,
   preparedRequestId,
   ready,
+  buildMessage,
   onPrepare,
   onConsumed,
 }: {
-  request: DeepenAnalysisRequest | null;
+  request: T | null;
   preparedRequestId: string | null;
   ready: boolean;
-  onPrepare: (request: DeepenAnalysisRequest) => void;
+  buildMessage: (request: T) => string;
+  onPrepare: (request: T) => void;
   onConsumed: (requestId: string) => void;
 }) {
   const aui = useAui();
@@ -390,12 +398,12 @@ function DeepenRequestDispatcher({
     }
 
     dispatchedRequestIdRef.current = request.id;
-    aui.composer().setText(buildDeepenAnalysisMessage(request));
+    aui.composer().setText(buildMessage(request));
     queueMicrotask(() => {
       aui.composer().send();
       onConsumed(request.id);
     });
-  }, [aui, isRunning, onConsumed, onPrepare, preparedRequestId, ready, request]);
+  }, [aui, buildMessage, isRunning, onConsumed, onPrepare, preparedRequestId, ready, request]);
 
   return null;
 }
@@ -771,6 +779,8 @@ export function AISidebar({
   onOpenKBFile,
   deepenRequest = null,
   onDeepenRequestConsumed,
+  findCitationRequest = null,
+  onFindCitationRequestConsumed,
 }: AISidebarProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [slashCommands, setSlashCommands] = useState<AgentSkill[]>([]);
@@ -785,8 +795,10 @@ export function AISidebar({
   const [kbEnabled, setKbEnabled] = useState(true);
   const [lang, setLang] = useState<"ko" | "en">("ko");
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
+  const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
   const modelKeyRef = useRef<string | null>(null);
   const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
+  const findCitationRequestRef = useRef<FindCitationRequest | null>(null);
 
   const activeProvider = appSettings?.sidebarAgentProvider ?? settings?.sidebarAgentProvider ?? "ollama";
   const activeModel =
@@ -839,6 +851,7 @@ export function AISidebar({
 
   const prepareDeepenRequest = useCallback(
     (request: DeepenAnalysisRequest) => {
+      findCitationRequestRef.current = null;
       deepenRequestRef.current = request;
       startNewThread();
       setPreparedDeepenRequestId(request.id);
@@ -854,6 +867,24 @@ export function AISidebar({
     [onDeepenRequestConsumed],
   );
 
+  const prepareFindCitationRequest = useCallback(
+    (request: FindCitationRequest) => {
+      deepenRequestRef.current = null;
+      findCitationRequestRef.current = request;
+      startNewThread();
+      setPreparedFindCitationRequestId(request.id);
+    },
+    [startNewThread],
+  );
+
+  const consumeFindCitationRequest = useCallback(
+    (requestId: string) => {
+      setPreparedFindCitationRequestId((current) => current === requestId ? null : current);
+      onFindCitationRequestConsumed?.(requestId);
+    },
+    [onFindCitationRequestConsumed],
+  );
+
   const assistantAdapter = useMemo(
     () =>
       createScholarAgentAdapter(async (_messages, message) => {
@@ -862,19 +893,34 @@ export function AISidebar({
           deepen !== null &&
           message === buildDeepenAnalysisMessage(deepen);
         if (isDeepen) deepenRequestRef.current = null;
+        const findCitation = findCitationRequestRef.current;
+        const isFindCitation =
+          findCitation !== null &&
+          message === buildFindCitationMessage(findCitation);
+        if (isFindCitation) findCitationRequestRef.current = null;
+        const isPreparedRequest = isDeepen || isFindCitation;
+        const analysisMode = isDeepen
+          ? "deepen" as const
+          : isFindCitation
+            ? "find-citation" as const
+            : undefined;
         const fallbackSkillIds = slashCommands
           .filter((skill) => message.trimStart().startsWith(`/${skill.name}`))
           .map((skill) => skill.id);
-        const skillIds = isDeepen
+        const skillIds = isPreparedRequest
           ? []
           : selectedSkillIds.length > 0
             ? selectedSkillIds
             : fallbackSkillIds;
-        const filePaths = isDeepen ? [] : selectedFilePaths;
+        const filePaths = isPreparedRequest ? [] : selectedFilePaths;
         const projectPath = project?.path ?? null;
-        const kbEnabledForRun = isDeepen ? Boolean(kbStatus?.exists) : Boolean(kbStatus?.exists && kbEnabled);
+        const kbEnabledForRun = isDeepen
+          ? Boolean(kbStatus?.exists)
+          : isFindCitation
+            ? false
+            : Boolean(kbStatus?.exists && kbEnabled);
         const canReuseThread =
-          !isDeepen &&
+          !isPreparedRequest &&
           Boolean(activeThread) &&
           activeThread?.projectPath === projectPath &&
           activeThread?.provider === activeProvider &&
@@ -892,7 +938,9 @@ export function AISidebar({
           if (!runThread) {
             const threadTitle = isDeepen && deepen
               ? `Deepen: ${deepen.selectedText.replace(/\s+/g, " ").trim().slice(0, 72)}`
-              : message;
+              : isFindCitation && findCitation
+                ? `Find Citation: ${findCitation.selectedText.replace(/\s+/g, " ").trim().slice(0, 64)}`
+                : message;
             runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, threadTitle);
             setActiveThread(runThread);
           }
@@ -900,7 +948,7 @@ export function AISidebar({
             provider: activeProvider,
             model: activeModel,
             kbEnabled: kbEnabledForRun,
-            analysisMode: isDeepen ? "deepen" : undefined,
+            analysisMode,
             selectedSkillIds: skillIds,
             selectedFilePaths: filePaths,
             lang,
@@ -916,7 +964,7 @@ export function AISidebar({
           selectedFilePaths: filePaths,
           kbEnabled: kbEnabledForRun,
           lang,
-          analysisMode: isDeepen ? "deepen" : undefined,
+          analysisMode,
           deepenContext: isDeepen && deepen
             ? {
                 selectedText: deepen.selectedText,
@@ -924,14 +972,17 @@ export function AISidebar({
                 afterSelection: deepen.documentContext.afterSelection,
               }
             : undefined,
-          ignoreHistory: isDeepen || !canReuseThread,
+          citationContext: isFindCitation && findCitation
+            ? { selectedText: findCitation.selectedText }
+            : undefined,
+          ignoreHistory: isPreparedRequest || !canReuseThread,
           onComplete: async (assistantMessage, status) => {
             if (!projectPath || !runThread || !assistantMessage.trim()) return;
             await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", assistantMessage, status, {
               provider: activeProvider,
               model: activeModel,
               kbEnabled: kbEnabledForRun,
-              analysisMode: isDeepen ? "deepen" : undefined,
+              analysisMode,
               selectedSkillIds: skillIds,
               selectedFilePaths: filePaths,
               lang,
@@ -1003,12 +1054,21 @@ export function AISidebar({
   return (
     <AssistantRuntimeProvider runtime={assistantRuntime}>
       <ThreadRuntimeSync messages={loadedMessages} resetKey={threadResetKey} />
-      <DeepenRequestDispatcher
+      <PreparedRequestDispatcher
         request={deepenRequest}
         preparedRequestId={preparedDeepenRequestId}
         ready={!project || Boolean(kbStatus)}
+        buildMessage={buildDeepenAnalysisMessage}
         onPrepare={prepareDeepenRequest}
         onConsumed={consumeDeepenRequest}
+      />
+      <PreparedRequestDispatcher
+        request={findCitationRequest}
+        preparedRequestId={preparedFindCitationRequestId}
+        ready={!project || Boolean(kbStatus)}
+        buildMessage={buildFindCitationMessage}
+        onPrepare={prepareFindCitationRequest}
+        onConsumed={consumeFindCitationRequest}
       />
       <div
         className="relative flex h-full flex-shrink-0 flex-col border-l border-border bg-background"

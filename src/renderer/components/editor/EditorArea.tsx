@@ -52,6 +52,8 @@ import { FindReplacePanel } from "./FindReplacePanel";
 import { setCitationHoverMetadata, type CitationHoverMetadata } from "../../blocks/citation-inline";
 import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
 import { createDeepenAnalysisRequest } from "../../ai/deepen-analysis";
+import type { FindCitationRequest } from "../../ai/find-citation";
+import { createFindCitationRequest } from "../../ai/find-citation";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -102,6 +104,7 @@ interface EditorAreaProps {
   onScrollPositionChange?: (scrollTop: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   onDeepenAnalysis: (request: DeepenAnalysisRequest) => void;
+  onFindCitation: (request: FindCitationRequest) => void;
   reloadTrigger?: number;
   bibReloadTrigger?: number;
 }
@@ -152,13 +155,9 @@ function BlockTypeDragItem() {
   );
 }
 
-function extractText(content: unknown): string {
-  if (!content || typeof content !== "object") return "";
-  if (Array.isArray(content)) return content.map(extractText).join(" ");
-  const obj = content as Record<string, unknown>;
-  if (typeof obj.text === "string") return obj.text;
-  if (Array.isArray(obj.content)) return extractText(obj.content);
-  return "";
+function normalizeDocumentContent(content: unknown) {
+  if (Array.isArray(content) && content.length > 0) return content;
+  return [{ type: "paragraph", content: "" }];
 }
 
 export function EditorArea({
@@ -170,8 +169,8 @@ export function EditorArea({
   onEditorReady,
   onScrollPositionChange,
   onSaveStatusChange,
-  reloadTrigger,
   onDeepenAnalysis,
+  onFindCitation,
   bibReloadTrigger,
 }: EditorAreaProps) {
   const isDark = useIsDark();
@@ -195,10 +194,9 @@ export function EditorArea({
   const dirtyRevisionRef = useRef(0);
   const savedRevisionRef = useRef(0);
   const inFlightSaveCountRef = useRef(0);
+  const loadRequestSeqRef = useRef(0);
   const suppressSaveUntilRef = useRef(0);
-  const pendingExternalReloadRef = useRef(false);
-  const pendingReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastUserEditAtRef = useRef(0);
+  const wordCountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
@@ -210,38 +208,42 @@ export function EditorArea({
   const [findShowReplace, setFindShowReplace] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasRestoredScrollRef = useRef(false);
+  const initialScrollTopRef = useRef(initialScrollTop);
+  const onWordCountChangeRef = useRef(onWordCountChange);
+  const onSaveStatusChangeRef = useRef(onSaveStatusChange);
+
+  useEffect(() => {
+    initialScrollTopRef.current = initialScrollTop;
+  }, [initialScrollTop]);
+
+  useEffect(() => {
+    onWordCountChangeRef.current = onWordCountChange;
+  }, [onWordCountChange]);
+
+  useEffect(() => {
+    onSaveStatusChangeRef.current = onSaveStatusChange;
+  }, [onSaveStatusChange]);
 
   const restoreScrollPosition = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container || hasRestoredScrollRef.current) return;
     hasRestoredScrollRef.current = true;
-    const top = Math.max(0, initialScrollTop);
+    const top = Math.max(0, initialScrollTopRef.current);
     requestAnimationFrame(() => {
       container.scrollTop = top;
       requestAnimationFrame(() => {
         container.scrollTop = top;
       });
     });
-  }, [initialScrollTop]);
+  }, []);
 
   const replaceDocumentWithoutSaving = useCallback((content: Parameters<typeof editor.replaceBlocks>[1]) => {
     suppressSaveUntilRef.current = Date.now() + 500;
     editor.replaceBlocks(editor.document, content);
   }, [editor]);
 
-  const hasLocalChangesPending = useCallback(() => {
-    return (
-      saveTimerRef.current !== null ||
-      inFlightSaveCountRef.current > 0 ||
-      dirtyRevisionRef.current !== savedRevisionRef.current
-    );
-  }, []);
-
-  const isRecentlyEdited = useCallback(() => {
-    return Date.now() - lastUserEditAtRef.current < 1500;
-  }, []);
-
-  const snapshotDocument = useCallback(() => {
+  const readSettledDocumentSnapshot = useCallback(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     return JSON.parse(JSON.stringify(editor.document));
   }, [editor]);
 
@@ -295,100 +297,61 @@ export function EditorArea({
     citekeysRef.current = citekeys;
   }, [citekeys]);
 
+  const updateSaveStatus = useCallback((status: SaveStatus) => {
+    if (saveStatusRef.current === status) return;
+    saveStatusRef.current = status;
+    setSaveStatus(status);
+    onSaveStatusChangeRef.current(status);
+  }, []);
+
   // Load document when project or file switches
   useEffect(() => {
     hasRestoredScrollRef.current = false;
     if (!project) return;
+    const loadSeq = ++loadRequestSeqRef.current;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    dirtyRevisionRef.current = 0;
+    savedRevisionRef.current = 0;
     const filename = documentFilename || "manuscript.scholarpen.json";
     rpc
       .loadDocument(project.path, filename)
       .then((content) => {
-        if (Array.isArray(content) && content.length > 0) {
-          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
-            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
-          }
+        if (loadSeq !== loadRequestSeqRef.current || dirtyRevisionRef.current !== 0) return;
+        const normalized = normalizeDocumentContent(content);
+        if (JSON.stringify(normalized) !== JSON.stringify(editor.document)) {
+          replaceDocumentWithoutSaving(normalized as Parameters<typeof editor.replaceBlocks>[1]);
         }
+        dirtyRevisionRef.current = 0;
+        savedRevisionRef.current = 0;
+        updateSaveStatus("saved");
+        requestAnimationFrame(() => {
+          const text = editor.prosemirrorView?.state.doc.textContent ?? "";
+          const count = text.trim() ? text.trim().split(/\s+/).length : 0;
+          onWordCountChangeRef.current(count);
+        });
         restoreScrollPosition();
       })
       .catch(console.error);
-  }, [project?.path, documentFilename, replaceDocumentWithoutSaving, restoreScrollPosition]);
+  }, [project?.path, documentFilename, editor, replaceDocumentWithoutSaving, restoreScrollPosition, updateSaveStatus]);
 
   useEffect(() => {
     restoreScrollPosition();
   }, [restoreScrollPosition]);
 
-  // Refs so the reload effect can read current project/filename without re-running on their changes
-  const projectRef = useRef(project);
-  const documentFilenameRef = useRef(documentFilename);
-  useEffect(() => { projectRef.current = project; }, [project]);
-  useEffect(() => { documentFilenameRef.current = documentFilename; }, [documentFilename]);
+  const scheduleWordCount = useCallback(() => {
+    if (wordCountTimerRef.current) clearTimeout(wordCountTimerRef.current);
+    wordCountTimerRef.current = setTimeout(() => {
+      wordCountTimerRef.current = null;
+      const text = editor.prosemirrorView?.state.doc.textContent ?? "";
+      const count = text.trim() ? text.trim().split(/\s+/).length : 0;
+      onWordCountChangeRef.current(count);
+    }, 0);
+  }, [editor]);
 
-  const countWords = useCallback(() => {
-    const text = editor.document.map((b) => extractText(b.content)).join(" ");
-    const count = text.trim() ? text.trim().split(/\s+/).length : 0;
-    onWordCountChange(count);
-  }, [editor, onWordCountChange]);
-
-  const updateSaveStatus = useCallback((status: SaveStatus) => {
-    saveStatusRef.current = status;
-    setSaveStatus(status);
-    onSaveStatusChange(status);
-  }, [onSaveStatusChange]);
-
-  const processPendingExternalReload = useCallback(() => {
-    if (!pendingExternalReloadRef.current) return;
-    if (hasLocalChangesPending() || isRecentlyEdited()) {
-      if (!pendingReloadTimerRef.current) {
-        pendingReloadTimerRef.current = setTimeout(() => {
-          pendingReloadTimerRef.current = null;
-          processPendingExternalReload();
-        }, 750);
-      }
-      return;
-    }
-
-    const p = projectRef.current;
-    if (!p) return;
-    pendingExternalReloadRef.current = false;
-    const filename = documentFilenameRef.current || "manuscript.scholarpen.json";
-    rpc
-      .loadDocument(p.path, filename)
-      .then((content) => {
-        if (Array.isArray(content) && content.length > 0) {
-          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
-            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
-          }
-        }
-      })
-      .catch(console.error);
-  }, [editor, hasLocalChangesPending, isRecentlyEdited, replaceDocumentWithoutSaving]);
-
-  // Reload from external file change only when local edits are fully settled.
-  // Whole-document replacement can move the ProseMirror selection, so never do it
-  // while a user edit is pending, saving, or very recent.
-  useEffect(() => {
-    if (reloadTrigger === 0) return; // skip initial mount
-    const p = projectRef.current;
-    if (!p) return;
-    if (hasLocalChangesPending() || isRecentlyEdited()) {
-      pendingExternalReloadRef.current = true;
-      processPendingExternalReload();
-      return;
-    }
-    const filename = documentFilenameRef.current || "manuscript.scholarpen.json";
-    rpc
-      .loadDocument(p.path, filename)
-      .then((content) => {
-        if (Array.isArray(content) && content.length > 0) {
-          if (JSON.stringify(content) !== JSON.stringify(editor.document)) {
-            replaceDocumentWithoutSaving(content as Parameters<typeof editor.replaceBlocks>[1]);
-          }
-        }
-      })
-      .catch(console.error);
-  }, [editor, reloadTrigger, hasLocalChangesPending, isRecentlyEdited, processPendingExternalReload, replaceDocumentWithoutSaving]);
-
-  const enqueueSave = useCallback((filename: string, getContent: () => unknown, revision: number) => {
+  const enqueueSave = useCallback((filename: string, getContent: () => Promise<unknown>, revision: number) => {
     if (!project) return Promise.resolve();
     inFlightSaveCountRef.current += 1;
     updateSaveStatus("saving");
@@ -399,7 +362,13 @@ export function EditorArea({
         if (revision < dirtyRevisionRef.current) {
           return "skipped-stale" as const;
         }
-        return rpc.saveDocument(project.path, filename, getContent()).then(() => "saved" as const);
+        return getContent()
+          .then((content) => {
+            if (revision < dirtyRevisionRef.current) {
+              return "skipped-stale" as const;
+            }
+            return rpc.saveDocument(project.path, filename, content).then(() => "saved" as const);
+          });
       })
       .then(() => {
         if (revision <= dirtyRevisionRef.current) {
@@ -411,7 +380,6 @@ export function EditorArea({
           inFlightSaveCountRef.current === 0
         ) {
           updateSaveStatus("saved");
-          processPendingExternalReload();
         } else if (saveTimerRef.current === null && inFlightSaveCountRef.current === 0) {
           updateSaveStatus("unsaved");
         }
@@ -428,7 +396,6 @@ export function EditorArea({
           inFlightSaveCountRef.current === 0
         ) {
           updateSaveStatus("saved");
-          processPendingExternalReload();
         } else if (saveTimerRef.current === null && inFlightSaveCountRef.current === 0) {
           updateSaveStatus("unsaved");
         }
@@ -436,7 +403,7 @@ export function EditorArea({
 
     saveChainRef.current = run;
     return run;
-  }, [project, updateSaveStatus, processPendingExternalReload]);
+  }, [project, updateSaveStatus]);
 
   // Immediate save (for Cmd+S / menu action)
   const saveNow = useCallback(() => {
@@ -447,8 +414,8 @@ export function EditorArea({
       saveTimerRef.current = null;
     }
     const filename = documentFilename || "manuscript.scholarpen.json";
-    enqueueSave(filename, snapshotDocument, dirtyRevisionRef.current);
-  }, [project, documentFilename, enqueueSave, snapshotDocument]);
+    enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
+  }, [project, documentFilename, enqueueSave, readSettledDocumentSnapshot]);
 
   // Expose saveNow for external callers (e.g., menu actions)
   useEffect(() => {
@@ -557,19 +524,18 @@ export function EditorArea({
   );
 
   const handleChange = useCallback(() => {
-    countWords();
     if (Date.now() < suppressSaveUntilRef.current) return;
+    scheduleWordCount();
     if (!project) return;
     dirtyRevisionRef.current += 1;
-    lastUserEditAtRef.current = Date.now();
     updateSaveStatus("unsaved");
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const filename = documentFilename || "manuscript.scholarpen.json";
       saveTimerRef.current = null;
-      enqueueSave(filename, snapshotDocument, dirtyRevisionRef.current);
+      enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
     }, 2 * 1000); // 2 seconds
-  }, [project, documentFilename, countWords, updateSaveStatus, enqueueSave, snapshotDocument]);
+  }, [project, documentFilename, scheduleWordCount, updateSaveStatus, enqueueSave, readSettledDocumentSnapshot]);
 
   useEffect(() => {
     return () => {
@@ -577,9 +543,9 @@ export function EditorArea({
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
-      if (pendingReloadTimerRef.current) {
-        clearTimeout(pendingReloadTimerRef.current);
-        pendingReloadTimerRef.current = null;
+      if (wordCountTimerRef.current) {
+        clearTimeout(wordCountTimerRef.current);
+        wordCountTimerRef.current = null;
       }
     };
   }, []);
@@ -591,7 +557,7 @@ export function EditorArea({
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
         const filename = documentFilename || "manuscript.scholarpen.json";
-        enqueueSave(filename, snapshotDocument, dirtyRevisionRef.current);
+        enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
       }
     };
     const handler = () => {
@@ -599,7 +565,7 @@ export function EditorArea({
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [project, documentFilename, enqueueSave, snapshotDocument]);
+  }, [project, documentFilename, enqueueSave, readSettledDocumentSnapshot]);
 
   useEffect(() => {
     return () => {
@@ -822,6 +788,10 @@ export function EditorArea({
             onDeepenAnalysis(
               createDeepenAnalysisRequest(snapshot.selectedText, snapshot.documentContext),
             );
+            setAiEditSnapshot(null);
+          }}
+          onFindCitation={(snapshot) => {
+            onFindCitation(createFindCitationRequest(snapshot.selectedText));
             setAiEditSnapshot(null);
           }}
           onClose={() => setAiEditSnapshot(null)}

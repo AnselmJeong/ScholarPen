@@ -15,6 +15,7 @@ import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSett
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
+import type { FindCitationRequest } from "./ai/find-citation";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -35,6 +36,7 @@ export function App() {
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
+  const [pendingFindCitationRequest, setPendingFindCitationRequest] = useState<FindCitationRequest | null>(null);
   const [wordCount, setWordCount]                     = useState(0);
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
@@ -567,7 +569,13 @@ export function App() {
             onSaveStatusChange={setSaveStatus}
             onBibtexSaved={() => setBibReloadTrigger(n => n + 1)}
             onDeepenAnalysis={(request) => {
+              setPendingFindCitationRequest(null);
               setPendingDeepenRequest(request);
+              setAiSidebarOpen(true);
+            }}
+            onFindCitation={(request) => {
+              setPendingDeepenRequest(null);
+              setPendingFindCitationRequest(request);
               setAiSidebarOpen(true);
             }}
           />
@@ -609,6 +617,12 @@ export function App() {
                 deepenRequest={pendingDeepenRequest}
                 onDeepenRequestConsumed={(requestId) => {
                   setPendingDeepenRequest((current) =>
+                    current?.id === requestId ? null : current,
+                  );
+                }}
+                findCitationRequest={pendingFindCitationRequest}
+                onFindCitationRequestConsumed={(requestId) => {
+                  setPendingFindCitationRequest((current) =>
                     current?.id === requestId ? null : current,
                   );
                 }}

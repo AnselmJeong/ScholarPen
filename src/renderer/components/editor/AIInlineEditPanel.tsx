@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import ReactDOM from "react-dom";
-import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown } from "lucide-react";
+import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { rpc, onAiChunk } from "../../rpc";
 import {
@@ -32,6 +32,7 @@ interface AIInlineEditPanelProps {
   model: string;
   onAccept: (snapshot: SelectionSnapshot, newText: string) => string | null;
   onDeepen: (snapshot: SelectionSnapshot) => void;
+  onFindCitation: (snapshot: SelectionSnapshot) => void;
   onClose: () => void;
 }
 
@@ -45,9 +46,7 @@ export const ACADEMIC_IMPROVE_PROMPT =
   "Polish the selected passage as clear, coherent academic prose while considering the complete document. Preserve the author's meaning, terminology, disciplinary voice, and degree of certainty. Improve style, precision, transitions, and logical flow. Check the passage against the rest of the document for internal contradictions, inconsistent terminology, scope, or claims. If the document makes the intended resolution clear, revise the selected passage accordingly; otherwise make the tension or uncertainty explicit without inventing facts, evidence, or citations.";
 
 const QUICK_ACTIONS = [
-  { label: "Improve",   prompt: ACADEMIC_IMPROVE_PROMPT },
-  { label: "Formalize", prompt: "Make more formal and academic" },
-  { label: "Simplify",  prompt: "Simplify the language of" },
+  { label: "Improve", prompt: ACADEMIC_IMPROVE_PROMPT },
 ];
 
 const TRANSLATE_LANGS = [
@@ -67,6 +66,7 @@ export function AIInlineEditPanel({
   model,
   onAccept,
   onDeepen,
+  onFindCitation,
   onClose,
 }: AIInlineEditPanelProps) {
   const [prompt, setPrompt] = useState("");
@@ -319,6 +319,14 @@ export function AIInlineEditPanel({
                 )}
               </React.Fragment>
             ))}
+            <button
+              onClick={() => onFindCitation(snapshot)}
+              className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium flex items-center gap-1"
+              title="Find verified scholarly citations with DOI links"
+            >
+              <Search className="h-3 w-3" />
+              Find Citation
+            </button>
 
             {/* Translate dropdown */}
             <div ref={translateRef} className="relative">

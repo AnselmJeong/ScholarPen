@@ -150,11 +150,14 @@ export interface AgentStreamParams {
   selectedFilePaths: string[];
   kbEnabled: boolean;
   lang: "ko" | "en";
-  analysisMode?: "deepen";
+  analysisMode?: "deepen" | "find-citation";
   deepenContext?: {
     selectedText: string;
     beforeSelection: string;
     afterSelection: string;
+  };
+  citationContext?: {
+    selectedText: string;
   };
 }
 
