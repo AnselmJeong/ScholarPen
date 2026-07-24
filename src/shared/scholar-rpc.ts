@@ -52,8 +52,6 @@ type BunRequests = RPCSchema<{
         model: string;
         messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
         think?: boolean;
-        /** Selected academic prose to verify via web search when necessary. */
-        academicVerificationText?: string;
       };
       response: void;
     };

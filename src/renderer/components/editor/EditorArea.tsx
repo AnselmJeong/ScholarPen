@@ -50,6 +50,8 @@ import {
 import { DOIInputDialog } from "./DOIInputDialog";
 import { FindReplacePanel } from "./FindReplacePanel";
 import { setCitationHoverMetadata, type CitationHoverMetadata } from "../../blocks/citation-inline";
+import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
+import { createDeepenAnalysisRequest } from "../../ai/deepen-analysis";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -99,6 +101,7 @@ interface EditorAreaProps {
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
+  onDeepenAnalysis: (request: DeepenAnalysisRequest) => void;
   reloadTrigger?: number;
   bibReloadTrigger?: number;
 }
@@ -168,6 +171,7 @@ export function EditorArea({
   onScrollPositionChange,
   onSaveStatusChange,
   reloadTrigger,
+  onDeepenAnalysis,
   bibReloadTrigger,
 }: EditorAreaProps) {
   const isDark = useIsDark();
@@ -814,6 +818,12 @@ export function EditorArea({
           snapshot={aiEditSnapshot}
           model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b"}
           onAccept={handleAIEditAccept}
+          onDeepen={(snapshot) => {
+            onDeepenAnalysis(
+              createDeepenAnalysisRequest(snapshot.selectedText, snapshot.documentContext),
+            );
+            setAiEditSnapshot(null);
+          }}
           onClose={() => setAiEditSnapshot(null)}
         />
       )}

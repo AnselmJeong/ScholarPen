@@ -14,6 +14,7 @@ import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { BlockNoteEditor } from "@blocknote/core";
+import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -33,6 +34,7 @@ export function App() {
   const [activeDocumentFilename, setActiveDocumentFilename] = useState<string | null>(null);
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
+  const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
   const [wordCount, setWordCount]                     = useState(0);
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
@@ -564,6 +566,10 @@ export function App() {
             onWordCountChange={setWordCount}
             onSaveStatusChange={setSaveStatus}
             onBibtexSaved={() => setBibReloadTrigger(n => n + 1)}
+            onDeepenAnalysis={(request) => {
+              setPendingDeepenRequest(request);
+              setAiSidebarOpen(true);
+            }}
           />
 
           {currentView === "settings" && (
@@ -600,6 +606,12 @@ export function App() {
                 onClose={() => setAiSidebarOpen(false)}
                 width={aiSidebarWidth}
                 onOpenKBFile={(filePath) => handleKnowledgeFileSelect(filePath)}
+                deepenRequest={pendingDeepenRequest}
+                onDeepenRequestConsumed={(requestId) => {
+                  setPendingDeepenRequest((current) =>
+                    current?.id === requestId ? null : current,
+                  );
+                }}
               />
             </Suspense>
           </>

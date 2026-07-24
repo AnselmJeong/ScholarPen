@@ -31,6 +31,7 @@ interface AIInlineEditPanelProps {
   snapshot: SelectionSnapshot;
   model: string;
   onAccept: (snapshot: SelectionSnapshot, newText: string) => string | null;
+  onDeepen: (snapshot: SelectionSnapshot) => void;
   onClose: () => void;
 }
 
@@ -41,13 +42,12 @@ const PANEL_HEIGHT_EST = 290; // used only for flip-above logic
 const PANEL_MARGIN = 8;
 
 export const ACADEMIC_IMPROVE_PROMPT =
-  "Substantively improve this passage as academic prose. Strengthen its analytical precision, logical progression, conceptual clarity, and contribution to the manuscript's argument—not merely its surface fluency. Preserve the author's intended meaning, technical terminology, disciplinary voice, and calibrated degree of certainty. Where the complete document context permits, resolve ambiguity, redundancy, weak transitions, unsupported overstatement, and logical gaps. Do not invent facts, evidence, citations, or stronger claims than the manuscript can support.";
+  "Polish the selected passage as clear, coherent academic prose while considering the complete document. Preserve the author's meaning, terminology, disciplinary voice, and degree of certainty. Improve style, precision, transitions, and logical flow. Check the passage against the rest of the document for internal contradictions, inconsistent terminology, scope, or claims. If the document makes the intended resolution clear, revise the selected passage accordingly; otherwise make the tension or uncertainty explicit without inventing facts, evidence, or citations.";
 
 const QUICK_ACTIONS = [
-  { label: "Improve",   prompt: ACADEMIC_IMPROVE_PROMPT, verifyAcademically: true },
-  { label: "Shorten",   prompt: "Shorten and make more concise", verifyAcademically: false },
-  { label: "Formalize", prompt: "Make more formal and academic", verifyAcademically: false },
-  { label: "Simplify",  prompt: "Simplify the language of", verifyAcademically: false },
+  { label: "Improve",   prompt: ACADEMIC_IMPROVE_PROMPT },
+  { label: "Formalize", prompt: "Make more formal and academic" },
+  { label: "Simplify",  prompt: "Simplify the language of" },
 ];
 
 const TRANSLATE_LANGS = [
@@ -66,6 +66,7 @@ export function AIInlineEditPanel({
   snapshot,
   model,
   onAccept,
+  onDeepen,
   onClose,
 }: AIInlineEditPanelProps) {
   const [prompt, setPrompt] = useState("");
@@ -203,7 +204,7 @@ export function AIInlineEditPanel({
   }, []);
 
   const run = useCallback(
-    async (instruction: string, verifyAcademically = false) => {
+    async (instruction: string) => {
       if (!instruction.trim()) return;
       setResult("");
       setError("");
@@ -223,8 +224,7 @@ export function AIInlineEditPanel({
             { role: "system", content: messages.system },
             { role: "user", content: messages.user },
           ],
-          false,
-          verifyAcademically ? snapshot.selectedText : undefined
+          false
         );
       } catch (err) {
         setError((err as Error).message);
@@ -232,7 +232,7 @@ export function AIInlineEditPanel({
         activeRef.current = false;
       }
     },
-    [model, snapshot.documentContext, snapshot.protection, snapshot.selectedText]
+    [model, snapshot.documentContext, snapshot.protection]
   );
 
   const handleAccept = () => {
@@ -300,14 +300,24 @@ export function AIInlineEditPanel({
         <>
           {/* Quick-action chips */}
           <div className="flex flex-wrap gap-1.5">
-            {QUICK_ACTIONS.map((a) => (
-              <button
-                key={a.label}
-                onClick={() => { setPrompt(a.prompt); run(a.prompt, a.verifyAcademically); }}
-                className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-              >
-                {a.label}
-              </button>
+            {QUICK_ACTIONS.map((a, index) => (
+              <React.Fragment key={a.label}>
+                <button
+                  onClick={() => { setPrompt(a.prompt); run(a.prompt); }}
+                  className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                >
+                  {a.label}
+                </button>
+                {index === 0 && (
+                  <button
+                    onClick={() => onDeepen(snapshot)}
+                    className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                    title="Open a new AI chat with a deep critique of the selection"
+                  >
+                    Deepen
+                  </button>
+                )}
+              </React.Fragment>
             ))}
 
             {/* Translate dropdown */}

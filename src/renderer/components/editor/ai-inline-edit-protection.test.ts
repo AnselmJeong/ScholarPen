@@ -55,10 +55,10 @@ describe("AI inline edit protection", () => {
     expect(messages.system).toContain("Write the replacement in English");
   });
 
-  test("uses the complete manuscript as read-only context for substantive academic editing", () => {
+  test("uses the complete manuscript to polish style and surface internal contradictions", () => {
     const selection = makeProtectedSelection();
     const messages = buildInlineEditMessages(
-      "Substantively improve this passage as academic prose",
+      "Polish this passage as academic prose",
       selection,
       {
         beforeSelection: "The introduction defines the paper's central problem.",
@@ -66,9 +66,10 @@ describe("AI inline edit protection", () => {
       }
     );
 
-    expect(messages.system).toContain("research question, thesis, disciplinary register");
-    expect(messages.system).toContain("analytical precision, logical coherence");
-    expect(messages.system).toContain("Never invent evidence, facts");
+    expect(messages.system).toContain("Polish its academic style");
+    expect(messages.system).toContain("internal contradictions");
+    expect(messages.system).toContain("make the tension or uncertainty explicit");
+    expect(messages.system).not.toContain("web-verification");
     expect(messages.user).toContain("<complete_document_context reference_only=\"true\">");
     expect(messages.user).toContain("The introduction defines the paper's central problem.");
     expect(messages.user).toContain("The conclusion returns to the same qualified claim.");

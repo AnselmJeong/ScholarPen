@@ -32,6 +32,10 @@ import type {
   ProjectInfo,
 } from "@shared/rpc-types";
 import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
+import {
+  buildDeepenAnalysisMessage,
+  type DeepenAnalysisRequest,
+} from "../../ai/deepen-analysis";
 import { rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -47,6 +51,8 @@ interface AISidebarProps {
   onClose: () => void;
   width?: number;
   onOpenKBFile?: (filePath: string) => void;
+  deepenRequest?: DeepenAnalysisRequest | null;
+  onDeepenRequestConsumed?: (requestId: string) => void;
 }
 
 type DropdownMode = "slash" | "file" | null;
@@ -353,6 +359,43 @@ function ThreadRuntimeSync({
   useEffect(() => {
     aui.thread().reset(messages);
   }, [aui, messages, resetKey]);
+
+  return null;
+}
+
+function DeepenRequestDispatcher({
+  request,
+  preparedRequestId,
+  ready,
+  onPrepare,
+  onConsumed,
+}: {
+  request: DeepenAnalysisRequest | null;
+  preparedRequestId: string | null;
+  ready: boolean;
+  onPrepare: (request: DeepenAnalysisRequest) => void;
+  onConsumed: (requestId: string) => void;
+}) {
+  const aui = useAui();
+  const isRunning = useAuiState((state) => state.thread.isRunning);
+  const dispatchedRequestIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!request || !ready || isRunning) return;
+    if (dispatchedRequestIdRef.current === request.id) return;
+
+    if (preparedRequestId !== request.id) {
+      onPrepare(request);
+      return;
+    }
+
+    dispatchedRequestIdRef.current = request.id;
+    aui.composer().setText(buildDeepenAnalysisMessage(request));
+    queueMicrotask(() => {
+      aui.composer().send();
+      onConsumed(request.id);
+    });
+  }, [aui, isRunning, onConsumed, onPrepare, preparedRequestId, ready, request]);
 
   return null;
 }
@@ -718,7 +761,17 @@ function AssistantComposer({
   );
 }
 
-export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, editor, onClose, width, onOpenKBFile }: AISidebarProps) {
+export function AISidebar({
+  project,
+  ollamaStatus: _ollamaStatus,
+  appSettings,
+  editor,
+  onClose,
+  width,
+  onOpenKBFile,
+  deepenRequest = null,
+  onDeepenRequestConsumed,
+}: AISidebarProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [slashCommands, setSlashCommands] = useState<AgentSkill[]>([]);
   const [mentionableFiles, setMentionableFiles] = useState<AgentMentionableFile[]>([]);
@@ -731,7 +784,9 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
   const [kbStatus, setKbStatus] = useState<KBStatus | null>(null);
   const [kbEnabled, setKbEnabled] = useState(true);
   const [lang, setLang] = useState<"ko" | "en">("ko");
+  const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const modelKeyRef = useRef<string | null>(null);
+  const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
 
   const activeProvider = appSettings?.sidebarAgentProvider ?? settings?.sidebarAgentProvider ?? "ollama";
   const activeModel =
@@ -782,16 +837,44 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
     [activeThread?.id, project?.path, refreshThreads, startNewThread],
   );
 
+  const prepareDeepenRequest = useCallback(
+    (request: DeepenAnalysisRequest) => {
+      deepenRequestRef.current = request;
+      startNewThread();
+      setPreparedDeepenRequestId(request.id);
+    },
+    [startNewThread],
+  );
+
+  const consumeDeepenRequest = useCallback(
+    (requestId: string) => {
+      setPreparedDeepenRequestId((current) => current === requestId ? null : current);
+      onDeepenRequestConsumed?.(requestId);
+    },
+    [onDeepenRequestConsumed],
+  );
+
   const assistantAdapter = useMemo(
     () =>
       createScholarAgentAdapter(async (_messages, message) => {
+        const deepen = deepenRequestRef.current;
+        const isDeepen =
+          deepen !== null &&
+          message === buildDeepenAnalysisMessage(deepen);
+        if (isDeepen) deepenRequestRef.current = null;
         const fallbackSkillIds = slashCommands
           .filter((skill) => message.trimStart().startsWith(`/${skill.name}`))
           .map((skill) => skill.id);
-        const skillIds = selectedSkillIds.length > 0 ? selectedSkillIds : fallbackSkillIds;
-        const filePaths = selectedFilePaths;
+        const skillIds = isDeepen
+          ? []
+          : selectedSkillIds.length > 0
+            ? selectedSkillIds
+            : fallbackSkillIds;
+        const filePaths = isDeepen ? [] : selectedFilePaths;
         const projectPath = project?.path ?? null;
+        const kbEnabledForRun = isDeepen ? Boolean(kbStatus?.exists) : Boolean(kbStatus?.exists && kbEnabled);
         const canReuseThread =
+          !isDeepen &&
           Boolean(activeThread) &&
           activeThread?.projectPath === projectPath &&
           activeThread?.provider === activeProvider &&
@@ -807,13 +890,17 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
 
         if (projectPath) {
           if (!runThread) {
-            runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, message);
+            const threadTitle = isDeepen && deepen
+              ? `Deepen: ${deepen.selectedText.replace(/\s+/g, " ").trim().slice(0, 72)}`
+              : message;
+            runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, threadTitle);
             setActiveThread(runThread);
           }
           await rpc.saveAgentThreadMessage(projectPath, runThread.id, "user", message, "complete", {
             provider: activeProvider,
             model: activeModel,
-            kbEnabled: kbStatus?.exists ? kbEnabled : false,
+            kbEnabled: kbEnabledForRun,
+            analysisMode: isDeepen ? "deepen" : undefined,
             selectedSkillIds: skillIds,
             selectedFilePaths: filePaths,
             lang,
@@ -827,15 +914,24 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
           model: activeModel,
           selectedSkillIds: skillIds,
           selectedFilePaths: filePaths,
-          kbEnabled: kbStatus?.exists ? kbEnabled : false,
+          kbEnabled: kbEnabledForRun,
           lang,
-          ignoreHistory: !canReuseThread,
+          analysisMode: isDeepen ? "deepen" : undefined,
+          deepenContext: isDeepen && deepen
+            ? {
+                selectedText: deepen.selectedText,
+                beforeSelection: deepen.documentContext.beforeSelection,
+                afterSelection: deepen.documentContext.afterSelection,
+              }
+            : undefined,
+          ignoreHistory: isDeepen || !canReuseThread,
           onComplete: async (assistantMessage, status) => {
             if (!projectPath || !runThread || !assistantMessage.trim()) return;
             await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", assistantMessage, status, {
               provider: activeProvider,
               model: activeModel,
-              kbEnabled: kbStatus?.exists ? kbEnabled : false,
+              kbEnabled: kbEnabledForRun,
+              analysisMode: isDeepen ? "deepen" : undefined,
               selectedSkillIds: skillIds,
               selectedFilePaths: filePaths,
               lang,
@@ -866,6 +962,7 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
     startNewThread();
 
     if (project?.path) {
+      setKbStatus(null);
       refreshThreads().catch(console.error);
       rpc.listAgentMentionableFiles(project.path).then(setMentionableFiles).catch(console.error);
       rpc.getKBStatus(project.path)
@@ -873,7 +970,15 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
           setKbStatus(status);
           if (status.exists) setKbEnabled(true);
         })
-        .catch(console.error);
+        .catch((error) => {
+          console.error(error);
+          setKbStatus({
+            exists: false,
+            kbRoot: null,
+            pageCount: 0,
+            lastIndexed: null,
+          });
+        });
     } else {
       setKbStatus(null);
       setMentionableFiles([]);
@@ -898,6 +1003,13 @@ export function AISidebar({ project, ollamaStatus: _ollamaStatus, appSettings, e
   return (
     <AssistantRuntimeProvider runtime={assistantRuntime}>
       <ThreadRuntimeSync messages={loadedMessages} resetKey={threadResetKey} />
+      <DeepenRequestDispatcher
+        request={deepenRequest}
+        preparedRequestId={preparedDeepenRequestId}
+        ready={!project || Boolean(kbStatus)}
+        onPrepare={prepareDeepenRequest}
+        onConsumed={consumeDeepenRequest}
+      />
       <div
         className="relative flex h-full flex-shrink-0 flex-col border-l border-border bg-background"
         style={{

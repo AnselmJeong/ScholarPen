@@ -150,6 +150,12 @@ export interface AgentStreamParams {
   selectedFilePaths: string[];
   kbEnabled: boolean;
   lang: "ko" | "en";
+  analysisMode?: "deepen";
+  deepenContext?: {
+    selectedText: string;
+    beforeSelection: string;
+    afterSelection: string;
+  };
 }
 
 export type FileNodeKind =

@@ -11,6 +11,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import type { FileNode, ProjectInfo, OllamaStatus } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
+import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,7 @@ interface EditorPaneGroupProps {
   onWordCountChange: (count: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   onBibtexSaved: () => void;
+  onDeepenAnalysis: (request: DeepenAnalysisRequest) => void;
 }
 
 // ── Drag tracking (outside React — never causes stale closures) ────────────
@@ -69,6 +71,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       onWordCountChange,
       onSaveStatusChange,
       onBibtexSaved,
+      onDeepenAnalysis,
     },
     ref
   ) {
@@ -451,6 +454,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         onSaveStatusChange={(status) => {
                           if (isCurrentActiveTab(tab.id)) onSaveStatusChange(status);
                         }}
+                        onDeepenAnalysis={onDeepenAnalysis}
                       />
                     ) : (
                       <FileViewer
