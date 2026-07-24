@@ -14,6 +14,19 @@ interface Block {
   children: Block[];
 }
 
+export function buildQuartoFrontmatter(
+  title = "Document",
+  date = new Date(),
+): string {
+  return [
+    "---",
+    `title: "${title}"`,
+    `date: "${date.toISOString().split("T")[0]}"`,
+    "bibliography: references.bib",
+    "---",
+  ].join("\n");
+}
+
 /**
  * Extract plain text from BlockNote inline content.
  */
@@ -115,12 +128,7 @@ export async function blocksToScholarMarkdown(
 
   // Quarto: add YAML frontmatter
   if (format === "qmd") {
-    lines.push("---");
-    lines.push(`title: "Document"`);
-    lines.push(`date: "${new Date().toISOString().split("T")[0]}"`);
-    lines.push("bibliography: references.bib");
-    lines.push("---");
-    lines.push("");
+    lines.push(buildQuartoFrontmatter());
   }
 
   for (const block of blocks) {
