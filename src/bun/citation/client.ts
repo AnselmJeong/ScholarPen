@@ -118,13 +118,14 @@ class CitationClient {
     selectedText: string,
     limit = 8,
     openAlexApiKey?: string,
+    signal?: AbortSignal,
   ): Promise<SupportingCitation[]> {
     const queries = buildCitationSearchQueries(selectedText);
     if (queries.length === 0) return [];
 
     const tasks = queries.flatMap((query) => [
-      this.searchOpenAlexSupporting(query, limit, openAlexApiKey),
-      this.searchCrossrefSupporting(query, limit),
+      this.searchOpenAlexSupporting(query, limit, openAlexApiKey, signal),
+      this.searchCrossrefSupporting(query, limit, signal),
     ]);
     const settled = await Promise.allSettled(tasks);
     const candidates = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
@@ -152,6 +153,7 @@ class CitationClient {
     query: string,
     limit: number,
     apiKey?: string,
+    signal?: AbortSignal,
   ): Promise<SupportingCitation[]> {
     const params = new URLSearchParams({
       search: query,
@@ -160,6 +162,7 @@ class CitationClient {
     if (apiKey?.trim()) params.set("api_key", apiKey.trim());
     const res = await fetch(`https://api.openalex.org/works?${params}`, {
       headers: { "User-Agent": "ScholarPen/1.0 (mailto:scholarpen@example.com)" },
+      signal,
     });
     if (!res.ok) throw new Error(`OpenAlex error: HTTP ${res.status}`);
 
@@ -179,6 +182,7 @@ class CitationClient {
   private async searchCrossrefSupporting(
     query: string,
     limit: number,
+    signal?: AbortSignal,
   ): Promise<SupportingCitation[]> {
     const params = new URLSearchParams({
       query,
@@ -186,6 +190,7 @@ class CitationClient {
     });
     const res = await fetch(`https://api.crossref.org/works?${params}`, {
       headers: { "User-Agent": "ScholarPen/1.0 (mailto:scholarpen@example.com)" },
+      signal,
     });
     if (!res.ok) throw new Error(`Crossref search error: HTTP ${res.status}`);
 

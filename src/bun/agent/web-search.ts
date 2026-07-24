@@ -85,6 +85,7 @@ export async function searchWebWithOllama(
   query: string,
   settings: AppSettings,
   maxResults = 5,
+  signal?: AbortSignal,
 ): Promise<WebSearchResult[]> {
   const apiKey = settings.ollamaApiKey.trim();
   if (!settings.ollamaWebSearchEnabled || !apiKey) return [];
@@ -96,6 +97,7 @@ export async function searchWebWithOllama(
       query,
       max_results: Math.max(1, Math.min(10, maxResults)),
     }),
+    signal,
   });
 
   if (!res.ok) throw new Error(`Ollama web search error: HTTP ${res.status} ${await res.text()}`);
@@ -114,6 +116,7 @@ export async function searchWebWithOllama(
 export async function fetchWebPageWithOllama(
   url: string,
   settings: AppSettings,
+  signal?: AbortSignal,
 ): Promise<WebSearchResult | null> {
   const apiKey = settings.ollamaApiKey.trim();
   if (!settings.ollamaWebSearchEnabled || !apiKey) return null;
@@ -122,6 +125,7 @@ export async function fetchWebPageWithOllama(
     method: "POST",
     headers: authHeaders(apiKey),
     body: JSON.stringify({ url }),
+    signal,
   });
 
   if (!res.ok) throw new Error(`Ollama web fetch error: HTTP ${res.status} ${await res.text()}`);
@@ -138,17 +142,24 @@ export async function searchAndFetchWebWithOllama(
   query: string,
   settings: AppSettings,
   maxResults = 5,
+  signal?: AbortSignal,
 ): Promise<WebSearchResult[]> {
   const searchResults = prioritizeAcademicResults(
-    await searchWebWithOllama(query, settings, Math.min(10, Math.max(maxResults, maxResults * 2))),
+    await searchWebWithOllama(
+      query,
+      settings,
+      Math.min(10, Math.max(maxResults, maxResults * 2)),
+      signal,
+    ),
   ).slice(0, maxResults);
   if (searchResults.length === 0) return [];
 
   const fetched = await Promise.all(
     searchResults.map(async (result) => {
       try {
-        return await fetchWebPageWithOllama(result.url, settings);
+        return await fetchWebPageWithOllama(result.url, settings, signal);
       } catch (err) {
+        if ((err as Error).name === "AbortError") throw err;
         console.warn(`[Agent] Web fetch failed for ${result.url}:`, err);
         return null;
       }

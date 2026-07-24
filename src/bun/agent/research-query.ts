@@ -89,6 +89,7 @@ export async function createEnglishAcademicSearchQuery(
     }, settings);
     return sanitizeEnglishAcademicQuery(result) || buildEnglishAcademicFallbackQuery(normalized);
   } catch (error) {
+    if ((error as Error).name === "AbortError") throw error;
     console.warn("[Agent] English academic query generation failed:", error);
     return buildEnglishAcademicFallbackQuery(normalized);
   }

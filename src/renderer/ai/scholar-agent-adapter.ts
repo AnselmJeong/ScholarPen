@@ -1,5 +1,10 @@
 import type { ChatModelAdapter, ThreadMessage } from "@assistant-ui/react";
 import type { AgentStreamParams } from "@shared/rpc-types";
+import {
+  AGENT_RENDERER_FIRST_RESPONSE_TIMEOUT_MS,
+  AGENT_RENDERER_IDLE_TIMEOUT_MS,
+  agentStreamTimeoutMessage,
+} from "@shared/agent-stream-timeout";
 import { onAgentChunk, rpc } from "../rpc";
 
 const HISTORY_MESSAGE_LIMIT = 4_000;
@@ -60,25 +65,49 @@ export function createScholarAgentAdapter(
       let visible = "";
       let done = false;
       let wasAborted = false;
+      let streamFailed = false;
+      let receivedEvent = false;
+      let lastEventAt = Date.now();
       let notify: (() => void) | null = null;
 
       const off = onAgentChunk((content, isDone) => {
         if (content) received += content;
+        if (content.includes("❌")) streamFailed = true;
         done = isDone;
+        receivedEvent = true;
+        lastEventAt = Date.now();
         notify?.();
       });
 
       abortSignal.addEventListener("abort", () => {
         wasAborted = true;
+        done = true;
+        notify?.();
         rpc.abortAgentStream().catch(console.error);
-      });
+      }, { once: true });
 
       try {
-        await rpc.agentStream({
-          ...base,
-          message,
-          history: ignoreHistory ? [] : compactHistory(messages),
-        });
+        try {
+          await rpc.agentStream({
+            ...base,
+            message,
+            history: ignoreHistory ? [] : compactHistory(messages),
+          });
+        } catch (error) {
+          if (abortSignal.aborted) {
+            wasAborted = true;
+            done = true;
+          } else {
+            streamFailed = true;
+            done = true;
+            const detail = error instanceof Error && error.message.trim()
+              ? ` (${error.message.trim().slice(0, 300)})`
+              : "";
+            received = base.lang === "ko"
+              ? `❌ AI 요청을 시작하지 못했습니다. 연결과 제공자 설정을 확인한 뒤 다시 시도해 주세요.${detail}`
+              : `❌ The AI request could not be started. Check the connection and provider settings, then try again.${detail}`;
+          }
+        }
 
         while (!done || visible.length < received.length) {
           if (visible.length < received.length) {
@@ -93,15 +122,33 @@ export function createScholarAgentAdapter(
             continue;
           }
 
-          await new Promise<void>((resolve) => {
-            notify = resolve;
+          const timeoutMs = receivedEvent
+            ? AGENT_RENDERER_IDLE_TIMEOUT_MS
+            : AGENT_RENDERER_FIRST_RESPONSE_TIMEOUT_MS;
+          const remainingMs = Math.max(0, timeoutMs - (Date.now() - lastEventAt));
+          const waitResult = await new Promise<"activity" | "timeout">((resolve) => {
+            const timer = setTimeout(() => resolve("timeout"), remainingMs);
+            notify = () => {
+              clearTimeout(timer);
+              resolve("activity");
+            };
           });
+          notify = null;
+
+          if (waitResult === "timeout" && !done && !wasAborted) {
+            streamFailed = true;
+            const phase = receivedEvent ? "idle" : "first-response";
+            const messageText = agentStreamTimeoutMessage(base.lang, phase);
+            received += `${received.trim() ? "\n\n" : ""}❌ ${messageText}`;
+            done = true;
+            rpc.abortAgentStream().catch(console.error);
+          }
         }
 
         yield { content: [{ type: "text", text: received }] };
       } finally {
         off();
-        const status = wasAborted ? "aborted" : received.trim().startsWith("❌") ? "error" : "complete";
+        const status = wasAborted ? "aborted" : streamFailed ? "error" : "complete";
         await onComplete?.(received, status);
       }
     },

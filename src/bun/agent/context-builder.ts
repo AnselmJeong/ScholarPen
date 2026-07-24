@@ -153,6 +153,7 @@ function researchQuery(params: AgentStreamParams): string {
 export async function buildAgentMessages(
   params: AgentStreamParams,
   settings: AppSettings,
+  signal?: AbortSignal,
 ): Promise<{ messages: OllamaMessage[]; references: string }> {
   const selectedSkills = await Promise.all(
     params.selectedSkillIds.map((id) => loadAgentSkill(id, params.projectPath ?? undefined))
@@ -188,12 +189,14 @@ export async function buildAgentMessages(
       settings,
       params.provider,
       params.model,
+      signal,
     );
     if (englishAcademicSearchQuery) {
       citationCandidates = await citationClient.findSupportingCitations(
         englishAcademicSearchQuery,
         8,
         settings.openAlexApiKey || undefined,
+        signal,
       );
     }
   }
@@ -215,6 +218,7 @@ export async function buildAgentMessages(
         settings,
         params.provider,
         params.model,
+        signal,
       );
       if (useWebSearch) {
         englishAcademicSearchQuery = await createEnglishAcademicSearchQuery(
@@ -222,12 +226,19 @@ export async function buildAgentMessages(
           settings,
           params.provider,
           params.model,
+          signal,
         );
         if (englishAcademicSearchQuery) {
-          webResults = await searchAndFetchWebWithOllama(englishAcademicSearchQuery, settings, 5);
+          webResults = await searchAndFetchWebWithOllama(
+            englishAcademicSearchQuery,
+            settings,
+            5,
+            signal,
+          );
         }
       }
     } catch (err) {
+      if ((err as Error).name === "AbortError") throw err;
       console.warn("[Agent] Web search failed:", err);
     }
   }

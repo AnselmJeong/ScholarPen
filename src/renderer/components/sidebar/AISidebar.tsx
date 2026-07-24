@@ -119,6 +119,7 @@ function AssistantMessage({
   const text = messageText(message);
   const isUser = message.role === "user";
   const isStreaming = message.status?.type === "running";
+  const isError = text.trimStart().startsWith("❌") || text.includes("\n\n❌");
 
   if (isUser) {
     return (
@@ -132,13 +133,20 @@ function AssistantMessage({
 
   return (
     <div className="space-y-1.5 w-full min-w-0 overflow-hidden">
-      <div className="w-full min-w-0 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none
+      <div
+        role={isError && !isStreaming ? "alert" : undefined}
+        className={cn(
+          "w-full min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none",
+          isError ? "border-destructive/60 bg-destructive/5" : "border-border",
+          `
         [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
         [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
         [&_code]:text-xs [&_code]:bg-muted [&_code]:text-foreground [&_code]:px-1 [&_code]:rounded
         [&_pre]:text-xs [&_pre]:bg-muted [&_pre]:text-foreground [&_pre]:p-2 [&_pre]:rounded-md [&_pre]:overflow-x-auto
         [&_blockquote]:border-l [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:italic
-        [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5">
+        [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5`,
+        )}
+      >
         {text ? (
           <>
             <ReactMarkdown
