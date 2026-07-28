@@ -33,6 +33,8 @@ export interface EditorPaneGroupHandle {
   openFile: (file: FileNode) => void;
   saveActiveEditor: () => void;
   closeFileByPath: (filePath: string) => void;
+  getDocumentSnapshot: (filePath: string) => unknown[] | null;
+  openProjectFindReplace: () => boolean;
 }
 
 interface EditorPaneGroupProps {
@@ -136,6 +138,31 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       if (editor) (editor as any).__scholarpenSaveNow?.();
     }, []);
 
+    const getOpenDocumentSnapshots = useCallback(() => {
+      const snapshots = new Map<string, unknown[]>();
+      const tabs = [
+        ...leftPaneRef.current.tabs,
+        ...(rightPaneRef.current?.tabs ?? []),
+      ];
+      for (const tab of tabs) {
+        if (tab.file.kind !== "document") continue;
+        const editor = editorMapRef.current.get(tab.id);
+        if (!editor) continue;
+        snapshots.set(
+          tab.file.path,
+          JSON.parse(JSON.stringify(editor.document)) as unknown[],
+        );
+      }
+      return snapshots;
+    }, []);
+
+    const saveAllOpenDocuments = useCallback(async () => {
+      const saveOperations = [...editorMapRef.current.values()].map((editor) =>
+        Promise.resolve((editor as any).__scholarpenSaveNow?.())
+      );
+      await Promise.all(saveOperations);
+    }, []);
+
     // ── Imperative handle ───────────────────────────────────────────────────
 
     useImperativeHandle(ref, () => ({
@@ -164,6 +191,30 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       },
 
       saveActiveEditor: saveActiveEditorNow,
+
+      getDocumentSnapshot(filePath: string) {
+        const tabs = [
+          ...leftPaneRef.current.tabs,
+          ...(rightPaneRef.current?.tabs ?? []),
+        ];
+        const tab = tabs.find((candidate) => candidate.file.path === filePath);
+        if (!tab) return null;
+        const editor = editorMapRef.current.get(tab.id);
+        if (!editor) return null;
+        return JSON.parse(JSON.stringify(editor.document)) as unknown[];
+      },
+
+      openProjectFindReplace() {
+        const pane = focusedPaneRef.current === "left"
+          ? leftPaneRef.current
+          : (rightPaneRef.current ?? leftPaneRef.current);
+        const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
+        if (!tab || tab.file.kind !== "document") return false;
+        const editor = editorMapRef.current.get(tab.id);
+        if (!editor) return false;
+        (editor as any).__scholarpenOpenProjectFindReplace?.();
+        return true;
+      },
 
       closeFileByPath(filePath: string) {
         const closeFrom = (pane: PaneState): PaneState => {
@@ -459,10 +510,13 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         }}
                         onDeepenAnalysis={onDeepenAnalysis}
                         onFindCitation={onFindCitation}
+                        getOpenDocumentSnapshots={getOpenDocumentSnapshots}
+                        saveAllOpenDocuments={saveAllOpenDocuments}
                       />
                     ) : (
                       <FileViewer
                         file={tab.file}
+                        projectPath={project?.path ?? ""}
                         reloadTrigger={tab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}
                         onSaveReady={(saveNow) => {
                           if (saveNow) {
@@ -472,6 +526,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                           }
                         }}
                         onBibtexSaved={onBibtexSaved}
+                        onBeforeBibliographyMaintenance={saveAllOpenDocuments}
                       />
                     )}
                   </div>

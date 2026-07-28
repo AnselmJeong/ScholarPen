@@ -13,12 +13,14 @@ interface ExportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onExport: (format: ExportFormat) => Promise<void>;
-  documentName: string;
+  documentNames: string[];
 }
 
-export function ExportDialog({ open, onOpenChange, onExport, documentName }: ExportDialogProps) {
+export function ExportDialog({ open, onOpenChange, onExport, documentNames }: ExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>("qmd");
   const [exporting, setExporting] = useState(false);
+  const documentCount = documentNames.length;
+  const isBulkExport = documentCount > 1;
 
   const handleExport = async () => {
     setExporting(true);
@@ -36,13 +38,31 @@ export function ExportDialog({ open, onOpenChange, onExport, documentName }: Exp
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Export Document</DialogTitle>
+          <DialogTitle>{isBulkExport ? "Export Selected Sections" : "Export Document"}</DialogTitle>
         </DialogHeader>
 
         <div className="py-4 space-y-3">
           <p className="text-sm text-muted-foreground">
-            Export <span className="font-medium text-foreground">{documentName || "document"}</span> as:
+            {isBulkExport ? (
+              <>
+                Export <span className="font-medium text-foreground">{documentCount} selected sections</span> as separate files:
+              </>
+            ) : (
+              <>
+                Export <span className="font-medium text-foreground">{documentNames[0] || "document"}</span> as:
+              </>
+            )}
           </p>
+
+          {isBulkExport && (
+            <div className="max-h-28 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2">
+              {documentNames.map((name) => (
+                <div key={name} className="truncate py-0.5 text-xs text-foreground">
+                  {name}
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="space-y-2">
             <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors hover:bg-accent/50 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
@@ -86,7 +106,11 @@ export function ExportDialog({ open, onOpenChange, onExport, documentName }: Exp
             Cancel
           </Button>
           <Button size="sm" onClick={handleExport} disabled={exporting}>
-            {exporting ? "Exporting\u2026" : "Export"}
+            {exporting
+              ? `Exporting${isBulkExport ? ` ${documentCount} files` : ""}\u2026`
+              : isBulkExport
+                ? `Export ${documentCount} files`
+                : "Export"}
           </Button>
         </DialogFooter>
       </DialogContent>

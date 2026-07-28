@@ -28,7 +28,8 @@ interface LeftSidebarProps {
   onFileSelect: (file: FileNode) => void;
   onOpenSettings: () => void;
   onRefreshTree: () => Promise<void>;
-  onExportDocument: () => void;
+  onExportDocuments: (documents: FileNode[]) => void;
+  onFindReplaceDocuments: () => void;
   onImportFile: (filePath: string) => Promise<void>;
   onFileRenamed: (newPath: string, newName: string) => void;
   onFileDeleted: (filePath: string) => void;
@@ -116,7 +117,8 @@ export function LeftSidebar({
   onFileSelect,
   onOpenSettings,
   onRefreshTree,
-  onExportDocument,
+  onExportDocuments,
+  onFindReplaceDocuments,
   onImportFile,
   onFileRenamed,
   onFileDeleted,
@@ -141,7 +143,8 @@ export function LeftSidebar({
             onFileSelect={onFileSelect}
             onOpenSettings={onOpenSettings}
             onRefreshTree={onRefreshTree}
-            onExportDocument={onExportDocument}
+            onExportDocuments={onExportDocuments}
+            onFindReplaceDocuments={onFindReplaceDocuments}
             onImportFile={onImportFile}
             onFileRenamed={onFileRenamed}
             onFileDeleted={onFileDeleted}

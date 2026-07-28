@@ -2,10 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RotateCcw, Save, SearchCheck, Trash2 } from "lucide-react";
 import type { FileNode } from "../../../shared/rpc-types";
 import {
-  deduplicateBibtex,
+  areBibtexEntriesDuplicates,
   findDuplicateBibtexGroups,
-  getBibtexIdentityKey,
-  parseBibtexCitekeys,
   parseBibtexEntries,
   type BibtexEntry,
 } from "../../../shared/bibtex-utils";
@@ -19,10 +17,12 @@ const REVIEW_ITEM_LIMIT = 200;
 
 interface BibtexEditorProps {
   file: FileNode;
+  projectPath: string;
   initialContent: string;
   reloadTrigger?: number;
   onSaveReady?: (saveNow: (() => void) | null) => void;
   onSaved?: () => void;
+  onBeforeBibliographyMaintenance?: () => Promise<void>;
 }
 
 function flattenDocumentFiles(nodes: FileNode[]): FileNode[] {
@@ -99,14 +99,13 @@ function validateMultipleEntries(raw: string): { entries?: BibtexEntry[]; error?
 }
 
 function findDuplicateForEntry(entries: BibtexEntry[], candidate: BibtexEntry, ignoreStart?: number): string | null {
-  const candidateCitekey = candidate.citekey.toLowerCase();
-  const candidateIdentity = getBibtexIdentityKey(candidate);
   for (const entry of entries) {
     if (ignoreStart !== undefined && entry.start === ignoreStart) continue;
-    if (entry.citekey.toLowerCase() === candidateCitekey) return `citekey '${candidate.citekey}'가 이미 있습니다.`;
-    if (candidateIdentity && getBibtexIdentityKey(entry) === candidateIdentity) {
-      return `같은 DOI 또는 title/author/year로 보이는 entry가 이미 있습니다: ${entry.citekey}`;
+    if (!areBibtexEntriesDuplicates(entry, candidate)) continue;
+    if (entry.citekey.toLocaleLowerCase() === candidate.citekey.toLocaleLowerCase()) {
+      return `citekey '${candidate.citekey}'가 이미 있습니다.`;
     }
+    return `같은 DOI 또는 title/author/year로 보이는 entry가 이미 있습니다: ${entry.citekey}`;
   }
   return null;
 }
@@ -116,7 +115,15 @@ function parsedEntryByStart(entries: BibtexEntry[], start: number | null): Bibte
   return entries.find((entry) => entry.start === start) ?? null;
 }
 
-export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveReady, onSaved }: BibtexEditorProps) {
+export function BibtexEditor({
+  file,
+  projectPath,
+  initialContent,
+  reloadTrigger = 0,
+  onSaveReady,
+  onSaved,
+  onBeforeBibliographyMaintenance,
+}: BibtexEditorProps) {
   const [content, setContent] = useState(initialContent);
   const [savedContent, setSavedContent] = useState(initialContent);
   const [message, setMessage] = useState<string | null>(null);
@@ -132,7 +139,6 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
   const [addDraft, setAddDraft] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const find = useTextFind(contentRef, file.path);
-  const projectPath = file.path.substring(0, file.path.lastIndexOf("/"));
   const dirty = content !== savedContent;
 
   useEffect(() => {
@@ -311,14 +317,43 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
   }, [flash, projectPath]);
 
   const handleDedup = useCallback(async () => {
-    const before = parseBibtexCitekeys(content).length;
-    const deduped = deduplicateBibtex(content);
-    const after = parseBibtexCitekeys(deduped).length;
-    await rpc.saveBibtex(projectPath, deduped);
-    setContent(deduped);
-    setSavedContent(deduped);
-    flash(before - after > 0 ? `${before - after}개 citekey 중복 항목 제거됨` : "citekey 중복 없음");
-  }, [content, flash, projectPath]);
+    const duplicateCount = duplicateGroups.reduce((count, group) => count + group.length - 1, 0);
+    if (duplicateCount === 0) {
+      flash("citekey, DOI, title/author/year 기준 중복 없음");
+      return;
+    }
+    if (!window.confirm(
+      `${duplicateCount}개 중복 entry를 제거하고 documents의 인용 citekey를 유지할 entry로 통일할까요?\n\n변경 전 bibliography와 관련 documents는 자동으로 백업됩니다.`
+    )) return;
+
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await onBeforeBibliographyMaintenance?.();
+      const result = await rpc.deduplicateBibliography(projectPath, content);
+      setContent(result.bibtex);
+      setSavedContent(result.bibtex);
+      setUsedCitekeys(null);
+      setSelectedStart(null);
+      setEditDraft("");
+      onSaved?.();
+      flash(
+        `${result.removedEntries}개 중복 제거 · `
+        + `${result.updatedDocuments}개 document에서 ${result.remappedCitations}개 인용 통일`
+      );
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : "중복 제거 실패");
+    } finally {
+      setSaving(false);
+    }
+  }, [
+    content,
+    duplicateGroups,
+    flash,
+    onBeforeBibliographyMaintenance,
+    onSaved,
+    projectPath,
+  ]);
 
   const handleRemoveUnused = useCallback(async () => {
     const keys = usedCitekeys ?? await scanDocumentUsage();
@@ -330,19 +365,6 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
     }
     await saveRaw(removeEntriesFromBibtex(content, entriesToRemove), `${removed}개 미사용 항목 제거됨`);
   }, [content, flash, parsed.entries, saveRaw, scanDocumentUsage, usedCitekeys]);
-
-  const handleRemoveDuplicateGroups = useCallback(async () => {
-    const duplicateStarts = new Set<number>();
-    for (const group of duplicateGroups) {
-      for (const entry of group.slice(1)) duplicateStarts.add(entry.start);
-    }
-    if (duplicateStarts.size === 0) {
-      flash("중복 후보 없음");
-      return;
-    }
-    const entriesToRemove = parsed.entries.filter((entry) => duplicateStarts.has(entry.start));
-    await saveRaw(removeEntriesFromBibtex(content, entriesToRemove), `${duplicateStarts.size}개 duplicate 후보 제거됨`);
-  }, [content, duplicateGroups, flash, parsed.entries, saveRaw]);
 
   const handleRemoveEntry = useCallback(async (entry: BibtexEntry) => {
     if (!window.confirm(`'${entry.citekey}' entry를 references.bib에서 제거할까요?`)) return;
@@ -396,7 +418,7 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
             <RotateCcw className="h-3.5 w-3.5" />
             되돌리기
           </button>
-          <button onClick={handleDedup} disabled={editDirty} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40" title="citekey 중복 항목 제거">
+          <button onClick={handleDedup} disabled={saving || editDirty} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40" title="중복 entry 제거 및 documents citation citekey 통일">
             <FilterX className="h-3.5 w-3.5" />
             중복 제거
           </button>
@@ -613,11 +635,11 @@ export function BibtexEditor({ file, initialContent, reloadTrigger = 0, onSaveRe
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Duplicate review</h3>
-                  <p className="text-xs text-muted-foreground">Exact citekey duplicates plus DOI/title-author-year identity duplicates are grouped.</p>
+                  <p className="text-xs text-muted-foreground">Citekey, DOI, or title-author-year duplicates are grouped. Cleanup also remaps citations across all documents.</p>
                 </div>
-                <button onClick={handleRemoveDuplicateGroups} disabled={duplicateGroups.length === 0} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40">
+                <button onClick={handleDedup} disabled={saving || editDirty || duplicateGroups.length === 0} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40">
                   <FilterX className="h-3.5 w-3.5" />
-                  후보 제거
+                  중복 제거 + 인용 통일
                 </button>
               </div>
               {duplicateGroups.length === 0 ? <p className="text-xs text-emerald-500">중복 후보가 없습니다.</p> : (

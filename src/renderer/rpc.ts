@@ -20,6 +20,7 @@ import type {
   AgentThreadMessage,
   AgentThreadWithMessages,
   OllamaProxyResponse,
+  BibliographyDeduplicationResult,
 } from "../shared/rpc-types";
 import {
   DEFAULT_OLLAMA_BASE_URL,
@@ -38,10 +39,12 @@ const strictRpcMethods = new Set([
   "openProject",
   "openProjectByPath",
   "saveDocument",
+  "saveDocuments",
   "createDocument",
   "saveManuscript",
   "saveBibtex",
   "saveBibtexRaw",
+  "deduplicateBibliography",
   "exportFile",
   "renameFile",
   "deleteFile",
@@ -157,6 +160,14 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     loadDocument: [],
     loadBibtex: "",
     saveBibtexRaw: null,
+    deduplicateBibliography: {
+      bibtex: "",
+      removedEntries: 0,
+      remappedCitations: 0,
+      updatedDocuments: 0,
+      citekeyRemap: {},
+      backupPath: null,
+    },
     resolveDOI: null,
     searchCitations: [],
     searchKnowledgeBase: [],
@@ -232,6 +243,10 @@ export const rpc = {
   // ── Document CRUD ─────────────────────────────────────
   saveDocument: (projectPath: string, filename: string, content: unknown) =>
     call<void>("saveDocument", { projectPath, filename, content }),
+  saveDocuments: (
+    projectPath: string,
+    documents: Array<{ filename: string; content: unknown }>,
+  ) => call<void>("saveDocuments", { projectPath, documents }),
   loadDocument: (projectPath: string, filename: string) =>
     call<unknown>("loadDocument", { projectPath, filename }),
   createDocument: (projectPath: string, filename: string, content?: unknown) =>
@@ -247,6 +262,11 @@ export const rpc = {
   saveBibtexRaw: (projectPath: string, bibtex: string) =>
     call<void>("saveBibtexRaw", { projectPath, bibtex }),
   loadBibtex: (projectPath: string) => call<string>("loadBibtex", { projectPath }),
+  deduplicateBibliography: (projectPath: string, bibtex: string) =>
+    call<BibliographyDeduplicationResult>("deduplicateBibliography", {
+      projectPath,
+      bibtex,
+    }),
   // ── Citation ──────────────────────────────────────────
   resolveDOI: (doi: string) => call<CitationMetadata>("resolveDOI", { doi }),
   searchCitations: (query: string) =>

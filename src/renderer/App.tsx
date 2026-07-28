@@ -1,19 +1,24 @@
 import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from "react";
-import { PenLine, Plus } from "lucide-react";
+import { BookMarked, BookOpen, PenLine, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { LeftSidebar, type SidebarTab } from "./components/sidebar/LeftSidebar";
 import { IconRail } from "./components/sidebar/IconRail";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog } from "./components/editor/ExportDialog";
+import { QuartoBookDialog, type QuartoBookSetup } from "./components/editor/QuartoBookDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
+import { scholarSchema } from "./blocks/schema";
+import { collectDocumentNodes } from "./utils/document-tree";
 import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
-import type { BlockNoteEditor } from "@blocknote/core";
+import { buildQuartoBookConfig, collectQuartoChapterFilenames } from "../shared/quarto-config";
+import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
 
@@ -40,6 +45,8 @@ export function App() {
   const [wordCount, setWordCount]                     = useState(0);
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
+  const [exportTargets, setExportTargets]             = useState<FileNode[]>([]);
+  const [quartoBookDialogOpen, setQuartoBookDialogOpen] = useState(false);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
@@ -64,7 +71,9 @@ export function App() {
   );
 
   const editorRef      = useRef<BlockNoteEditor<any, any, any> | null>(null);
+  const exportEditorRef = useRef<BlockNoteEditor<any, any, any> | null>(null);
   const editorGroupRef = useRef<EditorPaneGroupHandle | null>(null);
+  const pendingProjectFindReplaceRef = useRef(false);
 
   // Resize refs — Left sidebar
   const isResizingLeftRef    = useRef(false);
@@ -140,6 +149,9 @@ export function App() {
     setActiveProject(project);
     setActiveFile(null);
     setActiveDocumentFilename(null);
+    setExportTargets([]);
+    setExportDialogOpen(false);
+    setQuartoBookDialogOpen(false);
     // Reset graph when switching projects
     setGraphMode(false);
     setKbGraph(null);
@@ -173,9 +185,45 @@ export function App() {
     setCurrentView("editor");
   }, []);
 
+  const handleShowReferences = useCallback(() => {
+    if (!activeProject) return;
+    const bibliography = activeProject.files.find((file) => file.type === "reference");
+    if (!bibliography) return;
+    handleFileSelect({
+      name: bibliography.name,
+      path: bibliography.path,
+      kind: "reference",
+      isDirectory: false,
+      lastModified: activeProject.lastModified,
+    });
+  }, [activeProject, handleFileSelect]);
+
+  const handleOpenQuartoBookDialog = useCallback(() => {
+    if (!activeProject) return;
+    setQuartoBookDialogOpen(true);
+    void refreshFileTree();
+  }, [activeProject, refreshFileTree]);
+
   const handleEditorReady = useCallback((editor: BlockNoteEditor<any, any, any> | null) => {
     editorRef.current = editor;
+    if (editor && pendingProjectFindReplaceRef.current) {
+      pendingProjectFindReplaceRef.current = false;
+      requestAnimationFrame(() => {
+        (editor as any).__scholarpenOpenProjectFindReplace?.();
+      });
+    }
   }, []);
+
+  const handleOpenProjectFindReplace = useCallback(() => {
+    if (editorGroupRef.current?.openProjectFindReplace()) return;
+    const target = activeFile?.kind === "document"
+      ? activeFile
+      : collectDocumentNodes(fileTree)[0];
+    if (!target) return;
+    pendingProjectFindReplaceRef.current = true;
+    editorGroupRef.current?.openFile(target);
+    setCurrentView("editor");
+  }, [activeFile, fileTree]);
 
   // ── KB graph handlers ─────────────────────────────────────────────────────
 
@@ -265,15 +313,21 @@ export function App() {
           editorGroupRef.current?.saveActiveEditor();
           break;
         case "exportMarkdown":
-          setExportDialogOpen(true);
+          if (activeFile?.kind === "document") {
+            setExportTargets([activeFile]);
+            setExportDialogOpen(true);
+          }
           break;
         case "importMarkdown":
           handleImportMarkdown();
           break;
+        case "findReplaceDocuments":
+          handleOpenProjectFindReplace();
+          break;
       }
     });
     return unsub;
-  }, [activeProject, activeDocumentFilename]);
+  }, [activeProject, activeDocumentFilename, activeFile, handleOpenProjectFindReplace]);
 
   useEffect(() => {
     const unsub = onImportMarkdown(async (content, suggestedFilename) => {
@@ -318,15 +372,66 @@ export function App() {
     input.click();
   }, [activeProject, refreshFileTree]);
 
+  const openExportDialog = useCallback((documents: FileNode[]) => {
+    if (documents.length === 0) return;
+    setExportTargets(documents);
+    setExportDialogOpen(true);
+  }, []);
+
   const handleExport = useCallback(async (format: ExportFormat) => {
-    if (!activeProject || !editorRef.current) return;
-    const editor   = editorRef.current;
-    const docName  = (activeDocumentFilename || "manuscript").replace(".scholarpen.json", "");
-    const ext      = format === "qmd" ? ".qmd" : ".md";
-    const markdown = await blocksToScholarMarkdown(editor, editor.document as any, format);
-    await rpc.exportFile(activeProject.path, docName + ext, markdown);
+    if (!activeProject || exportTargets.length === 0) return;
+
+    const serializerEditor = editorRef.current ?? (
+      exportEditorRef.current ??= BlockNoteEditor.create({ schema: scholarSchema })
+    );
+    const ext = format === "qmd" ? ".qmd" : ".md";
+
+    for (const target of exportTargets) {
+      const openSnapshot = editorGroupRef.current?.getDocumentSnapshot(target.path);
+      const blocks = openSnapshot ?? await rpc.loadDocument(activeProject.path, target.name);
+      if (!Array.isArray(blocks)) {
+        throw new Error(`Document "${target.name}" does not contain a valid block array.`);
+      }
+      const docName = target.name.replace(/\.scholarpen\.json$/, "");
+      const markdown = await blocksToScholarMarkdown(serializerEditor, blocks as any, format);
+      await rpc.exportFile(activeProject.path, docName + ext, markdown);
+    }
+
     await refreshFileTree();
-  }, [activeProject, activeDocumentFilename, refreshFileTree]);
+  }, [activeProject, exportTargets, refreshFileTree]);
+
+  const handleGenerateQuartoBook = useCallback(async ({
+    title,
+    authors,
+    cslFile,
+  }: QuartoBookSetup) => {
+    if (!activeProject) throw new Error("Open a project first.");
+
+    const latestTree = await rpc.listProjectFiles(activeProject.path);
+    const qmdFilenames = collectQuartoChapterFilenames(latestTree);
+    const config = buildQuartoBookConfig({
+      title,
+      authors,
+      cslFilename: cslFile.name,
+      qmdFilenames,
+    });
+    const cslContent = await cslFile.text();
+
+    await rpc.exportFile(activeProject.path, cslFile.name, cslContent);
+    const configPath = await rpc.exportFile(
+      activeProject.path,
+      "_quarto.yml",
+      config,
+    );
+    setFileTree(await rpc.listProjectFiles(activeProject.path));
+    handleFileSelect({
+      name: "_quarto.yml",
+      path: configPath,
+      kind: "unknown",
+      isDirectory: false,
+      lastModified: Date.now(),
+    });
+  }, [activeProject, handleFileSelect]);
 
   const handleImportFromFile = useCallback(async (filePath: string) => {
     if (!activeProject) return;
@@ -436,15 +541,62 @@ export function App() {
           </div>
           <span className="text-sm font-bold tracking-tight" style={{ color: "#1e1b4b" }}>ScholarPen</span>
         </div>
-        {/* Right: New Project button */}
-        <button
-          onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
-          className="flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
-          style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)", boxShadow: "0 4px 12px rgba(91,33,182,0.3)" }}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New Project
-        </button>
+        <div className="flex items-center gap-2">
+          <TooltipProvider delayDuration={400}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleShowReferences}
+                  disabled={!activeProject}
+                  aria-label="Show references"
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+                    disabled:cursor-not-allowed disabled:opacity-30
+                    ${activeFile?.kind === "reference"
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                >
+                  <BookOpen className="h-4 w-4" strokeWidth={1.8} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Show references</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <TooltipProvider delayDuration={400}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleOpenQuartoBookDialog}
+                  disabled={!activeProject}
+                  aria-label="Configure Quarto book"
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors
+                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+                    disabled:cursor-not-allowed disabled:opacity-30
+                    ${activeFile?.name === "_quarto.yml"
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                >
+                  <BookMarked className="h-4 w-4" strokeWidth={1.8} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Configure Quarto book</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <button
+            onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
+            className="flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
+            style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)", boxShadow: "0 4px 12px rgba(91,33,182,0.3)" }}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Project
+          </button>
+        </div>
       </header>
 
       {/* New Project Dialog */}
@@ -510,7 +662,8 @@ export function App() {
             onFileSelect={handleFileSelect}
             onOpenSettings={() => setCurrentView("settings")}
             onRefreshTree={refreshFileTree}
-            onExportDocument={() => setExportDialogOpen(true)}
+            onExportDocuments={openExportDialog}
+            onFindReplaceDocuments={handleOpenProjectFindReplace}
             onImportFile={handleImportFromFile}
             onFileRenamed={handleFileRenamed}
             onFileDeleted={handleFileDeleted}
@@ -645,9 +798,20 @@ export function App() {
       {/* Export Dialog */}
       <ExportDialog
         open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
+        onOpenChange={(open) => {
+          setExportDialogOpen(open);
+          if (!open) setExportTargets([]);
+        }}
         onExport={handleExport}
-        documentName={(activeDocumentFilename || "manuscript").replace(".scholarpen.json", "")}
+        documentNames={exportTargets.map((target) => target.name.replace(/\.scholarpen\.json$/, ""))}
+      />
+
+      <QuartoBookDialog
+        key={activeProject?.path ?? "no-project"}
+        open={quartoBookDialogOpen}
+        onOpenChange={setQuartoBookDialogOpen}
+        qmdFilenames={collectQuartoChapterFilenames(fileTree)}
+        onGenerate={handleGenerateQuartoBook}
       />
     </div>
   );

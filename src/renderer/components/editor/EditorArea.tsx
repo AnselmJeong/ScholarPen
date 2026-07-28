@@ -105,6 +105,8 @@ interface EditorAreaProps {
   onSaveStatusChange: (status: SaveStatus) => void;
   onDeepenAnalysis: (request: DeepenAnalysisRequest) => void;
   onFindCitation: (request: FindCitationRequest) => void;
+  getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
+  saveAllOpenDocuments?: () => Promise<void>;
   reloadTrigger?: number;
   bibReloadTrigger?: number;
 }
@@ -171,6 +173,9 @@ export function EditorArea({
   onSaveStatusChange,
   onDeepenAnalysis,
   onFindCitation,
+  getOpenDocumentSnapshots,
+  saveAllOpenDocuments,
+  reloadTrigger,
   bibReloadTrigger,
 }: EditorAreaProps) {
   const isDark = useIsDark();
@@ -206,6 +211,7 @@ export function EditorArea({
   const [doiError, setDoiError] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
+  const [findScope, setFindScope] = useState<"document" | "project">("document");
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasRestoredScrollRef = useRef(false);
   const initialScrollTopRef = useRef(initialScrollTop);
@@ -335,7 +341,7 @@ export function EditorArea({
         restoreScrollPosition();
       })
       .catch(console.error);
-  }, [project?.path, documentFilename, editor, replaceDocumentWithoutSaving, restoreScrollPosition, updateSaveStatus]);
+  }, [project?.path, documentFilename, editor, reloadTrigger, replaceDocumentWithoutSaving, restoreScrollPosition, updateSaveStatus]);
 
   useEffect(() => {
     restoreScrollPosition();
@@ -407,20 +413,31 @@ export function EditorArea({
 
   // Immediate save (for Cmd+S / menu action)
   const saveNow = useCallback(() => {
-    if (!project) return;
-    if (saveStatusRef.current === "saved" && !saveTimerRef.current) return;
+    if (!project) return Promise.resolve();
+    if (saveStatusRef.current === "saved" && !saveTimerRef.current) return Promise.resolve();
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
     const filename = documentFilename || "manuscript.scholarpen.json";
-    enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
+    return enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
   }, [project, documentFilename, enqueueSave, readSettledDocumentSnapshot]);
 
   // Expose saveNow for external callers (e.g., menu actions)
   useEffect(() => {
     (editor as any).__scholarpenSaveNow = saveNow;
   }, [editor, saveNow]);
+
+  useEffect(() => {
+    (editor as any).__scholarpenOpenProjectFindReplace = () => {
+      setFindScope("project");
+      setFindShowReplace(true);
+      setFindOpen(true);
+    };
+    return () => {
+      delete (editor as any).__scholarpenOpenProjectFindReplace;
+    };
+  }, [editor]);
 
   // ── DOI resolution & insertion ───────────────────────────────────────────
   const handleDOISubmit = useCallback(async (doi: string) => {
@@ -606,10 +623,17 @@ export function EditorArea({
       onKeyDown={(e) => {
         if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "f") {
           e.preventDefault();
+          setFindScope("document");
           setFindOpen(true);
           setFindShowReplace(false);
         } else if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "h") {
           e.preventDefault();
+          setFindScope("document");
+          setFindOpen(true);
+          setFindShowReplace(true);
+        } else if (e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === "h") {
+          e.preventDefault();
+          setFindScope("project");
           setFindOpen(true);
           setFindShowReplace(true);
         }
@@ -766,7 +790,12 @@ export function EditorArea({
         isOpen={findOpen}
         onClose={() => setFindOpen(false)}
         showReplaceInitially={findShowReplace}
+        initialScope={findScope}
         scrollContainerRef={scrollContainerRef}
+        projectPath={project.path}
+        documentFilename={documentFilename || "manuscript.scholarpen.json"}
+        getOpenDocumentSnapshots={getOpenDocumentSnapshots}
+        saveAllOpenDocuments={saveAllOpenDocuments}
       />
 
       {/* DOI input dialog */}

@@ -3,7 +3,7 @@ import { watch, type FSWatcher } from "fs";
 import { join } from "path";
 import { ollamaClient } from "./ollama/client";
 import { citationClient } from "./citation/client";
-import { fileSystem } from "./fs/manager";
+import { BIBLIOGRAPHY_RELATIVE_PATH, fileSystem } from "./fs/manager";
 import { findKBRoot, getKBEngine } from "./kb/search";
 import { buildKBGraph } from "./kb/graph";
 import { listAgentSkills } from "./agent/skill-registry";
@@ -70,6 +70,7 @@ function openValidatedExternalUrl(url: string): void {
 // File watcher state — tracks external changes to project files
 let activeProjectWatcher: FSWatcher | null = null;
 const recentlySavedFiles = new Set<string>(); // suppress reload for own saves
+const internallyUpdatingProjects = new Set<string>();
 
 function watchProjectDir(projectPath: string) {
   activeProjectWatcher?.close();
@@ -79,6 +80,7 @@ function watchProjectDir(projectPath: string) {
       if (!filename) return;
       const norm = filename.replace(/\\/g, "/");
       // Suppress if we just saved this file
+      if (internallyUpdatingProjects.has(projectPath)) return;
       if (recentlySavedFiles.has(norm) || recentlySavedFiles.has(filename)) return;
       if (norm.endsWith(".scholarpen.json") || norm.endsWith(".bib")) {
         sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
@@ -115,6 +117,8 @@ async function main() {
         { role: "copy" },
         { role: "paste" },
         { role: "selectAll" },
+        { type: "separator" },
+        { label: "Find & Replace in Documents…", action: "findReplaceDocuments" },
       ],
     },
   ]);
@@ -159,6 +163,21 @@ async function main() {
           return fileSystem.saveDocument(projectPath, filename, content);
         },
 
+        saveDocuments: async ({ projectPath, documents }) => {
+          for (const { filename } of documents) {
+            recentlySavedFiles.add(`documents/${filename}`);
+            recentlySavedFiles.add(filename);
+          }
+          setTimeout(() => {
+            for (const { filename } of documents) {
+              recentlySavedFiles.delete(`documents/${filename}`);
+              recentlySavedFiles.delete(filename);
+            }
+          }, 3000);
+          await fileSystem.saveDocuments(projectPath, documents);
+          sendProjectUpdated?.({ projectPath });
+        },
+
         loadDocument: ({ projectPath, filename }) =>
           fileSystem.loadDocument(projectPath, filename),
 
@@ -174,20 +193,51 @@ async function main() {
 
         saveBibtex: async ({ projectPath, bibtex }) => {
           // Suppress file watcher to avoid triggering a document reload
+          recentlySavedFiles.add(BIBLIOGRAPHY_RELATIVE_PATH);
           recentlySavedFiles.add("references.bib");
-          setTimeout(() => recentlySavedFiles.delete("references.bib"), 3000);
+          setTimeout(() => {
+            recentlySavedFiles.delete(BIBLIOGRAPHY_RELATIVE_PATH);
+            recentlySavedFiles.delete("references.bib");
+          }, 3000);
           await fileSystem.saveBibtex(projectPath, bibtex);
-          sendProjectUpdated?.({ projectPath, filePath: join(projectPath, "references.bib") });
+          sendProjectUpdated?.({
+            projectPath,
+            filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+          });
         },
 
         saveBibtexRaw: async ({ projectPath, bibtex }) => {
+          recentlySavedFiles.add(BIBLIOGRAPHY_RELATIVE_PATH);
           recentlySavedFiles.add("references.bib");
-          setTimeout(() => recentlySavedFiles.delete("references.bib"), 3000);
+          setTimeout(() => {
+            recentlySavedFiles.delete(BIBLIOGRAPHY_RELATIVE_PATH);
+            recentlySavedFiles.delete("references.bib");
+          }, 3000);
           await fileSystem.saveBibtexRaw(projectPath, bibtex);
-          sendProjectUpdated?.({ projectPath, filePath: join(projectPath, "references.bib") });
+          sendProjectUpdated?.({
+            projectPath,
+            filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+          });
         },
 
         loadBibtex: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
+
+        deduplicateBibliography: async ({ projectPath, bibtex }) => {
+          internallyUpdatingProjects.add(projectPath);
+          try {
+            const result = await fileSystem.deduplicateBibliography(projectPath, bibtex);
+            if (result.removedEntries > 0) {
+              sendProjectUpdated?.({ projectPath });
+              sendProjectUpdated?.({
+                projectPath,
+                filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+              });
+            }
+            return result;
+          } finally {
+            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
+          }
+        },
 
         resolveDOI: ({ doi }) => citationClient.resolveDOI(doi),
 

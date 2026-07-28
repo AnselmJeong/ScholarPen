@@ -120,7 +120,7 @@ function inlineContentToMarkdown(content: unknown): string {
  * Custom blocks are serialized with format-specific rules.
  */
 export async function blocksToScholarMarkdown(
-  editor: BlockNoteEditor,
+  editor: BlockNoteEditor<any, any, any>,
   blocks: Block[],
   format: ExportFormat = "md"
 ): Promise<string> {
@@ -140,7 +140,7 @@ export async function blocksToScholarMarkdown(
 }
 
 async function blockToMarkdown(
-  editor: BlockNoteEditor,
+  editor: BlockNoteEditor<any, any, any>,
   block: Block,
   format: ExportFormat,
   depth: number
