@@ -14,7 +14,7 @@ import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import { scholarSchema } from "./blocks/schema";
-import { collectDocumentNodes } from "./utils/document-tree";
+import { collectDocumentNodes, findBibliographyNode } from "./utils/document-tree";
 import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import { buildQuartoBookConfig, collectQuartoChapterFilenames } from "../shared/quarto-config";
@@ -187,16 +187,9 @@ export function App() {
 
   const handleShowReferences = useCallback(() => {
     if (!activeProject) return;
-    const bibliography = activeProject.files.find((file) => file.type === "reference");
-    if (!bibliography) return;
-    handleFileSelect({
-      name: bibliography.name,
-      path: bibliography.path,
-      kind: "reference",
-      isDirectory: false,
-      lastModified: activeProject.lastModified,
-    });
-  }, [activeProject, handleFileSelect]);
+    const bibliography = findBibliographyNode(fileTree);
+    if (bibliography) handleFileSelect(bibliography);
+  }, [activeProject, fileTree, handleFileSelect]);
 
   const handleOpenQuartoBookDialog = useCallback(() => {
     if (!activeProject) return;
