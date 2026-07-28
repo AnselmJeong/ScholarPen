@@ -152,6 +152,14 @@ export function onProjectUpdated(handler: ProjectUpdatedHandler): () => void {
 // Fallback mock for browser development
 function mockRpc(method: string, _args: unknown[]): unknown {
   console.warn(`[RPC] Using mock for ${method}`);
+  if (method === "confirmAction") {
+    const params = _args[0] as {
+      message?: string;
+      detail?: string;
+    } | undefined;
+    const prompt = [params?.message, params?.detail].filter(Boolean).join("\n\n");
+    return typeof window !== "undefined" ? window.confirm(prompt) : false;
+  }
   const mocks: Record<string, unknown> = {
     getOllamaStatus: { connected: false, models: [], activeModel: null },
     listProjects: [],
@@ -231,12 +239,18 @@ async function call<T>(method: string, params?: unknown): Promise<T> {
       throw err;
     }
     console.warn(`[RPC] Electrobun RPC failed for ${method}, using mock:`, err);
-    return mockRpc(method, []) as T;
+    return mockRpc(method, [params]) as T;
   }
 }
 
 export const rpc = {
   getOllamaStatus: () => call<OllamaStatus>("getOllamaStatus"),
+  confirmAction: (options: {
+    title: string;
+    message: string;
+    detail?: string;
+    confirmLabel?: string;
+  }) => call<boolean>("confirmAction", options),
   listProjects: () => call<ProjectInfo[]>("listProjects"),
   openProject: (name: string) => call<ProjectInfo>("openProject", { name }),
   createProject: (name: string) => call<ProjectInfo>("createProject", { name }),

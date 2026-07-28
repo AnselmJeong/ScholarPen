@@ -213,8 +213,15 @@ export function BibtexEditor({
     }
   }, [content, saveRaw]);
 
-  const handleSelectEntry = useCallback((entry: BibtexEntry) => {
-    if (editDirty && !window.confirm("저장하지 않은 entry 수정사항을 버리고 다른 entry를 열까요?")) return;
+  const handleSelectEntry = useCallback(async (entry: BibtexEntry) => {
+    if (editDirty) {
+      const confirmed = await rpc.confirmAction({
+        title: "저장하지 않은 변경사항",
+        message: "저장하지 않은 entry 수정사항을 버리고 다른 entry를 열까요?",
+        confirmLabel: "변경사항 버리기",
+      });
+      if (!confirmed) return;
+    }
     setSelectedStart(entry.start);
     setEditDraft(entry.raw);
   }, [editDirty]);
@@ -316,16 +323,7 @@ export function BibtexEditor({
     }
   }, [flash, projectPath]);
 
-  const handleDedup = useCallback(async () => {
-    const duplicateCount = duplicateGroups.reduce((count, group) => count + group.length - 1, 0);
-    if (duplicateCount === 0) {
-      flash("citekey, DOI, title/author/year 기준 중복 없음");
-      return;
-    }
-    if (!window.confirm(
-      `${duplicateCount}개 중복 entry를 제거하고 documents의 인용 citekey를 유지할 entry로 통일할까요?\n\n변경 전 bibliography와 관련 documents는 자동으로 백업됩니다.`
-    )) return;
-
+  const performDedup = useCallback(async () => {
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -348,12 +346,28 @@ export function BibtexEditor({
     }
   }, [
     content,
-    duplicateGroups,
     flash,
     onBeforeBibliographyMaintenance,
     onSaved,
     projectPath,
   ]);
+
+  const handleDedup = useCallback(async () => {
+    const duplicateCount = duplicateGroups.reduce((count, group) => count + group.length - 1, 0);
+    if (duplicateCount === 0) {
+      flash("citekey, DOI, title/author/year 기준 중복 없음");
+      return;
+    }
+    const confirmed = await rpc.confirmAction({
+      title: "중복 references 정리",
+      message: `${duplicateCount}개 중복 entry를 제거할까요?`,
+      detail: "Documents의 인용 citekey는 유지할 entry로 통일됩니다. 변경 전 bibliography와 관련 documents는 자동으로 백업됩니다.",
+      confirmLabel: "중복 제거",
+    });
+    if (!confirmed) return;
+
+    await performDedup();
+  }, [duplicateGroups, flash, performDedup]);
 
   const handleRemoveUnused = useCallback(async () => {
     const keys = usedCitekeys ?? await scanDocumentUsage();
@@ -367,15 +381,64 @@ export function BibtexEditor({
   }, [content, flash, parsed.entries, saveRaw, scanDocumentUsage, usedCitekeys]);
 
   const handleRemoveEntry = useCallback(async (entry: BibtexEntry) => {
-    if (!window.confirm(`'${entry.citekey}' entry를 references.bib에서 제거할까요?`)) return;
-    await saveRaw(removeEntriesFromBibtex(content, [entry]), `'${entry.citekey}' 제거됨`);
-  }, [content, saveRaw]);
+    const duplicateGroup = duplicateGroups.find((group) => group.includes(entry));
+    if (duplicateGroup) {
+      const duplicateCount = duplicateGroups.reduce(
+        (count, group) => count + group.length - 1,
+        0,
+      );
+      const confirmed = await rpc.confirmAction({
+        title: "중복 reference 정리",
+        message: `'${entry.citekey}'는 중복 그룹에 속합니다. ${duplicateCount}개 중복 entry를 정리할까요?`,
+        detail: "각 그룹의 첫 entry를 유지하고 나머지를 제거합니다. Documents의 citation은 유지한 citekey로 통일되며, 변경 전 파일은 자동으로 백업됩니다.",
+        confirmLabel: "중복 정리",
+      });
+      if (confirmed) await performDedup();
+      return;
+    }
+
+    const confirmed = await rpc.confirmAction({
+      title: "Reference 제거",
+      message: `'${entry.citekey}' entry를 references.bib에서 제거할까요?`,
+      detail: "이 작업은 bibliography에서 해당 entry만 제거합니다.",
+      confirmLabel: "제거",
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await saveRaw(removeEntriesFromBibtex(content, [entry]), `'${entry.citekey}' 제거됨`);
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : "제거 실패");
+    } finally {
+      setSaving(false);
+    }
+  }, [content, duplicateGroups, performDedup, saveRaw]);
 
   const handleRemoveFilteredEntries = useCallback(async () => {
     if (!entryFilter.trim() || filteredEntries.length === 0) return;
-    if (!window.confirm(`현재 필터와 일치하는 ${filteredEntries.length}개 entry를 제거할까요?`)) return;
-    await saveRaw(removeEntriesFromBibtex(content, filteredEntries), `${filteredEntries.length}개 filtered entry 제거됨`);
-    setEntryFilter("");
+    const confirmed = await rpc.confirmAction({
+      title: "Filtered references 제거",
+      message: `현재 필터와 일치하는 ${filteredEntries.length}개 entry를 제거할까요?`,
+      detail: "이 작업은 bibliography에서 현재 필터 결과를 모두 제거합니다.",
+      confirmLabel: "모두 제거",
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await saveRaw(
+        removeEntriesFromBibtex(content, filteredEntries),
+        `${filteredEntries.length}개 filtered entry 제거됨`,
+      );
+      setEntryFilter("");
+    } catch (err) {
+      setSaveMsg(err instanceof Error ? err.message : "제거 실패");
+    } finally {
+      setSaving(false);
+    }
   }, [entryFilter, content, filteredEntries, saveRaw]);
 
   return (

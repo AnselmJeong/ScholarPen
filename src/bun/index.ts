@@ -130,6 +130,24 @@ async function main() {
       requests: {
         getOllamaStatus: () => ollamaClient.getStatus(),
 
+        confirmAction: async ({
+          title,
+          message,
+          detail = "",
+          confirmLabel = "확인",
+        }) => {
+          const { response } = await Utils.showMessageBox({
+            type: "question",
+            title,
+            message,
+            detail,
+            buttons: [confirmLabel, "취소"],
+            defaultId: 1,
+            cancelId: 1,
+          });
+          return response === 0;
+        },
+
         listProjects: () => fileSystem.listProjects(),
 
         openProject: async ({ name }) => {

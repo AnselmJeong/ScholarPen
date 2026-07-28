@@ -23,6 +23,15 @@ import type {
 type BunRequests = RPCSchema<{
   requests: {
     getOllamaStatus: { params: void; response: OllamaStatus };
+    confirmAction: {
+      params: {
+        title: string;
+        message: string;
+        detail?: string;
+        confirmLabel?: string;
+      };
+      response: boolean;
+    };
     listProjects: { params: void; response: ProjectInfo[] };
     openProject: { params: { name: string }; response: ProjectInfo };
     openProjectByPath: { params: { projectPath: string }; response: ProjectInfo };
