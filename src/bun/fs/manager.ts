@@ -1,18 +1,31 @@
 import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
-import type { ProjectInfo, ProjectFile, FileNode, FileNodeKind, AppSettings, AppSettingsUpdate } from "../../shared/rpc-types";
+import type {
+  ProjectInfo,
+  ProjectFile,
+  FileNode,
+  FileNodeKind,
+  AppSettings,
+  AppSettingsUpdate,
+  BibliographyDeduplicationResult,
+} from "../../shared/rpc-types";
 import {
   DEFAULT_OLLAMA_BASE_URL,
   DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
 } from "../../shared/ollama-connection";
-import { deduplicateBibtex } from "../../shared/bibtex-utils";
+import {
+  buildBibtexDeduplicationPlan,
+  deduplicateBibtex,
+  remapDocumentCitationKeys,
+} from "../../shared/bibtex-utils";
 import { seedAppInstructions } from "../agent/app-skills";
 
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
 const LEGACY_PROJECTS_ROOT = join(SCHOLARPEN_BASE, "projects");
 const APP_SUPPORT_DIRS = new Set(["commands", "skills"]);
+export const BIBLIOGRAPHY_RELATIVE_PATH = "exports/references.bib";
 
 const DEFAULT_SETTINGS: AppSettings = {
   projectsRootDir: SCHOLARPEN_BASE,
@@ -531,7 +544,7 @@ class FileSystemManager {
       join(projectPath, "documents", `${safeName}.scholarpen.json`),
       JSON.stringify(emptyManuscript, null, 2)
     );
-    await writeFile(join(projectPath, "references.bib"), "");
+    await writeFile(join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH), "");
 
     return {
       name: safeName,
@@ -579,6 +592,57 @@ class FileSystemManager {
     await writeFile(filePath, JSON.stringify(content, null, 2));
   }
 
+  async saveDocuments(
+    projectPath: string,
+    documents: Array<{ filename: string; content: unknown }>,
+  ): Promise<void> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    if (documents.length === 0) return;
+
+    const docsDir = join(projectPath, "documents");
+    await mkdir(docsDir, { recursive: true });
+    const prepared = documents.map(({ filename, content }) => {
+      const safeFilename = this.safeFilename(filename, ".scholarpen.json");
+      return {
+        filename: safeFilename,
+        filePath: join(docsDir, safeFilename),
+        serialized: JSON.stringify(content, null, 2),
+      };
+    });
+    if (new Set(prepared.map((item) => item.filename)).size !== prepared.length) {
+      throw new Error("Batch document save contains duplicate filenames.");
+    }
+
+    const originals = new Map<string, string>();
+    for (const item of prepared) {
+      originals.set(item.filePath, await readFile(item.filePath, "utf-8"));
+    }
+
+    const backupStamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupDir = join(projectPath, ".scholarpen", "backups", `documents-${backupStamp}`);
+    await mkdir(backupDir, { recursive: true });
+    for (const item of prepared) {
+      await writeFile(
+        join(backupDir, item.filename),
+        originals.get(item.filePath)!,
+        "utf-8",
+      );
+    }
+
+    try {
+      for (const item of prepared) {
+        await writeFile(item.filePath, item.serialized, "utf-8");
+      }
+    } catch (error) {
+      await Promise.allSettled(
+        [...originals.entries()].map(([filePath, original]) =>
+          writeFile(filePath, original, "utf-8")
+        ),
+      );
+      throw error;
+    }
+  }
+
   async loadDocument(projectPath: string, filename: string): Promise<unknown> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     filename = this.safeFilename(filename, ".scholarpen.json");
@@ -616,21 +680,132 @@ class FileSystemManager {
 
   async saveBibtex(projectPath: string, bibtex: string): Promise<void> {
     projectPath = await this.assertKnownProjectPath(projectPath);
-    await writeFile(join(projectPath, "references.bib"), deduplicateBibtex(bibtex));
+    const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    await mkdir(dirname(referencesPath), { recursive: true });
+    await writeFile(referencesPath, deduplicateBibtex(bibtex));
   }
 
   async saveBibtexRaw(projectPath: string, bibtex: string): Promise<void> {
     projectPath = await this.assertKnownProjectPath(projectPath);
-    await writeFile(join(projectPath, "references.bib"), bibtex);
+    const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    await mkdir(dirname(referencesPath), { recursive: true });
+    await writeFile(referencesPath, bibtex);
   }
 
   async loadBibtex(projectPath: string): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     try {
-      return await readFile(join(projectPath, "references.bib"), "utf-8");
+      return await readFile(join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH), "utf-8");
     } catch {
       return "";
     }
+  }
+
+  async deduplicateBibliography(
+    projectPath: string,
+    bibtex: string,
+  ): Promise<BibliographyDeduplicationResult> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    const plan = buildBibtexDeduplicationPlan(bibtex);
+    if (plan.removedEntries === 0) {
+      return {
+        bibtex,
+        removedEntries: 0,
+        remappedCitations: 0,
+        updatedDocuments: 0,
+        citekeyRemap: {},
+        backupPath: null,
+      };
+    }
+
+    const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    const documentsDir = join(projectPath, "documents");
+    const documentPaths: string[] = [];
+    const collectDocumentPaths = async (directory: string): Promise<void> => {
+      const entries = await readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        const entryPath = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await collectDocumentPaths(entryPath);
+        } else if (entry.name.endsWith(".scholarpen.json")) {
+          documentPaths.push(entryPath);
+        }
+      }
+    };
+    try {
+      await collectDocumentPaths(documentsDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    const updatedDocuments: Array<{
+      filePath: string;
+      original: string;
+      updated: string;
+      replacementCount: number;
+    }> = [];
+    for (const filePath of documentPaths) {
+      const original = await readFile(filePath, "utf-8");
+      const content = JSON.parse(original) as unknown;
+      const remapped = remapDocumentCitationKeys(content, plan.citekeyRemap);
+      if (remapped.replacementCount === 0) continue;
+      updatedDocuments.push({
+        filePath,
+        original,
+        updated: JSON.stringify(remapped.content, null, 2),
+        replacementCount: remapped.replacementCount,
+      });
+    }
+
+    let originalBibtex = "";
+    try {
+      originalBibtex = await readFile(referencesPath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    const backupStamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupPath = join(
+      projectPath,
+      ".scholarpen",
+      "backups",
+      `bibliography-dedup-${backupStamp}`,
+    );
+    const bibliographyBackupPath = join(backupPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    await mkdir(dirname(bibliographyBackupPath), { recursive: true });
+    await writeFile(bibliographyBackupPath, originalBibtex, "utf-8");
+    for (const document of updatedDocuments) {
+      const documentBackupPath = join(backupPath, relative(projectPath, document.filePath));
+      await mkdir(dirname(documentBackupPath), { recursive: true });
+      await writeFile(documentBackupPath, document.original, "utf-8");
+    }
+
+    try {
+      for (const document of updatedDocuments) {
+        await writeFile(document.filePath, document.updated, "utf-8");
+      }
+      await writeFile(referencesPath, plan.bibtex, "utf-8");
+    } catch (error) {
+      await Promise.allSettled([
+        writeFile(referencesPath, originalBibtex, "utf-8"),
+        ...updatedDocuments.map((document) =>
+          writeFile(document.filePath, document.original, "utf-8")
+        ),
+      ]);
+      throw error;
+    }
+
+    return {
+      bibtex: plan.bibtex,
+      removedEntries: plan.removedEntries,
+      remappedCitations: updatedDocuments.reduce(
+        (count, document) => count + document.replacementCount,
+        0,
+      ),
+      updatedDocuments: updatedDocuments.length,
+      citekeyRemap: plan.citekeyRemap,
+      backupPath,
+    };
   }
 
   // ── Export ──────────────────────────────────────────────────
@@ -776,12 +951,11 @@ class FileSystemManager {
 
   // ── Migration ───────────────────────────────────────────────
 
-  /** Initialize loose research folders and migrate legacy root manuscripts. */
+  /** Initialize loose research folders and migrate legacy project files. */
   private async migrateProject(projectPath: string): Promise<void> {
     const oldPath = join(projectPath, "manuscript.scholarpen.json");
     const docsDir = join(projectPath, "documents");
     const newPath = join(docsDir, "manuscript.scholarpen.json");
-    const referencesPath = join(projectPath, "references.bib");
 
     await mkdir(docsDir, { recursive: true });
 
@@ -796,17 +970,68 @@ class FileSystemManager {
       // No legacy file — already migrated or never existed
     }
 
-    try {
-      await stat(referencesPath);
-    } catch {
-      await writeFile(referencesPath, "");
+    await this.migrateBibliography(projectPath);
+  }
+
+  private async migrateBibliography(projectPath: string): Promise<void> {
+    const legacyPath = join(projectPath, "references.bib");
+    const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    await mkdir(dirname(referencesPath), { recursive: true });
+
+    const readIfPresent = async (filePath: string): Promise<string | null> => {
+      try {
+        return await readFile(filePath, "utf-8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    };
+
+    const [legacyBibtex, currentBibtex] = await Promise.all([
+      readIfPresent(legacyPath),
+      readIfPresent(referencesPath),
+    ]);
+
+    if (legacyBibtex === null) {
+      if (currentBibtex === null) await writeFile(referencesPath, "");
+      return;
     }
+
+    if (currentBibtex === null) {
+      await rename(legacyPath, referencesPath);
+      console.log(`[Migration] Moved ${legacyPath} → ${referencesPath}`);
+      return;
+    }
+
+    if (legacyBibtex !== currentBibtex) {
+      const backupStamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const backupPath = join(
+        projectPath,
+        ".scholarpen",
+        "backups",
+        `references-root-${backupStamp}.bib`,
+      );
+      await mkdir(dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, legacyBibtex, "utf-8");
+
+      const merged = deduplicateBibtex(
+        [currentBibtex.trim(), legacyBibtex.trim()].filter(Boolean).join("\n\n"),
+      );
+      await writeFile(referencesPath, merged, "utf-8");
+    }
+
+    await unlink(legacyPath);
+    console.log(`[Migration] Consolidated ${legacyPath} into ${referencesPath}`);
   }
 
   private buildFileList(projectPath: string): ProjectFile[] {
     return [
       { name: "documents", path: join(projectPath, "documents"), type: "manuscript" as const },
-      { name: "references.bib", path: join(projectPath, "references.bib"), type: "reference" as const },
+      {
+        name: "references.bib",
+        path: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+        type: "reference" as const,
+      },
     ];
   }
 }

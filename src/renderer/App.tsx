@@ -11,9 +11,11 @@ import { SettingsPage } from "./components/settings/SettingsPage";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
+import { scholarSchema } from "./blocks/schema";
+import { collectDocumentNodes } from "./utils/document-tree";
 import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
-import type { BlockNoteEditor } from "@blocknote/core";
+import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
 
@@ -40,6 +42,7 @@ export function App() {
   const [wordCount, setWordCount]                     = useState(0);
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
+  const [exportTargets, setExportTargets]             = useState<FileNode[]>([]);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
@@ -64,7 +67,9 @@ export function App() {
   );
 
   const editorRef      = useRef<BlockNoteEditor<any, any, any> | null>(null);
+  const exportEditorRef = useRef<BlockNoteEditor<any, any, any> | null>(null);
   const editorGroupRef = useRef<EditorPaneGroupHandle | null>(null);
+  const pendingProjectFindReplaceRef = useRef(false);
 
   // Resize refs — Left sidebar
   const isResizingLeftRef    = useRef(false);
@@ -140,6 +145,8 @@ export function App() {
     setActiveProject(project);
     setActiveFile(null);
     setActiveDocumentFilename(null);
+    setExportTargets([]);
+    setExportDialogOpen(false);
     // Reset graph when switching projects
     setGraphMode(false);
     setKbGraph(null);
@@ -175,7 +182,24 @@ export function App() {
 
   const handleEditorReady = useCallback((editor: BlockNoteEditor<any, any, any> | null) => {
     editorRef.current = editor;
+    if (editor && pendingProjectFindReplaceRef.current) {
+      pendingProjectFindReplaceRef.current = false;
+      requestAnimationFrame(() => {
+        (editor as any).__scholarpenOpenProjectFindReplace?.();
+      });
+    }
   }, []);
+
+  const handleOpenProjectFindReplace = useCallback(() => {
+    if (editorGroupRef.current?.openProjectFindReplace()) return;
+    const target = activeFile?.kind === "document"
+      ? activeFile
+      : collectDocumentNodes(fileTree)[0];
+    if (!target) return;
+    pendingProjectFindReplaceRef.current = true;
+    editorGroupRef.current?.openFile(target);
+    setCurrentView("editor");
+  }, [activeFile, fileTree]);
 
   // ── KB graph handlers ─────────────────────────────────────────────────────
 
@@ -265,15 +289,21 @@ export function App() {
           editorGroupRef.current?.saveActiveEditor();
           break;
         case "exportMarkdown":
-          setExportDialogOpen(true);
+          if (activeFile?.kind === "document") {
+            setExportTargets([activeFile]);
+            setExportDialogOpen(true);
+          }
           break;
         case "importMarkdown":
           handleImportMarkdown();
           break;
+        case "findReplaceDocuments":
+          handleOpenProjectFindReplace();
+          break;
       }
     });
     return unsub;
-  }, [activeProject, activeDocumentFilename]);
+  }, [activeProject, activeDocumentFilename, activeFile, handleOpenProjectFindReplace]);
 
   useEffect(() => {
     const unsub = onImportMarkdown(async (content, suggestedFilename) => {
@@ -318,15 +348,33 @@ export function App() {
     input.click();
   }, [activeProject, refreshFileTree]);
 
+  const openExportDialog = useCallback((documents: FileNode[]) => {
+    if (documents.length === 0) return;
+    setExportTargets(documents);
+    setExportDialogOpen(true);
+  }, []);
+
   const handleExport = useCallback(async (format: ExportFormat) => {
-    if (!activeProject || !editorRef.current) return;
-    const editor   = editorRef.current;
-    const docName  = (activeDocumentFilename || "manuscript").replace(".scholarpen.json", "");
-    const ext      = format === "qmd" ? ".qmd" : ".md";
-    const markdown = await blocksToScholarMarkdown(editor, editor.document as any, format);
-    await rpc.exportFile(activeProject.path, docName + ext, markdown);
+    if (!activeProject || exportTargets.length === 0) return;
+
+    const serializerEditor = editorRef.current ?? (
+      exportEditorRef.current ??= BlockNoteEditor.create({ schema: scholarSchema })
+    );
+    const ext = format === "qmd" ? ".qmd" : ".md";
+
+    for (const target of exportTargets) {
+      const openSnapshot = editorGroupRef.current?.getDocumentSnapshot(target.path);
+      const blocks = openSnapshot ?? await rpc.loadDocument(activeProject.path, target.name);
+      if (!Array.isArray(blocks)) {
+        throw new Error(`Document "${target.name}" does not contain a valid block array.`);
+      }
+      const docName = target.name.replace(/\.scholarpen\.json$/, "");
+      const markdown = await blocksToScholarMarkdown(serializerEditor, blocks as any, format);
+      await rpc.exportFile(activeProject.path, docName + ext, markdown);
+    }
+
     await refreshFileTree();
-  }, [activeProject, activeDocumentFilename, refreshFileTree]);
+  }, [activeProject, exportTargets, refreshFileTree]);
 
   const handleImportFromFile = useCallback(async (filePath: string) => {
     if (!activeProject) return;
@@ -510,7 +558,8 @@ export function App() {
             onFileSelect={handleFileSelect}
             onOpenSettings={() => setCurrentView("settings")}
             onRefreshTree={refreshFileTree}
-            onExportDocument={() => setExportDialogOpen(true)}
+            onExportDocuments={openExportDialog}
+            onFindReplaceDocuments={handleOpenProjectFindReplace}
             onImportFile={handleImportFromFile}
             onFileRenamed={handleFileRenamed}
             onFileDeleted={handleFileDeleted}
@@ -645,9 +694,12 @@ export function App() {
       {/* Export Dialog */}
       <ExportDialog
         open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
+        onOpenChange={(open) => {
+          setExportDialogOpen(open);
+          if (!open) setExportTargets([]);
+        }}
         onExport={handleExport}
-        documentName={(activeDocumentFilename || "manuscript").replace(".scholarpen.json", "")}
+        documentNames={exportTargets.map((target) => target.name.replace(/\.scholarpen\.json$/, ""))}
       />
     </div>
   );

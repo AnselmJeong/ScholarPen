@@ -16,6 +16,7 @@ import type {
   AgentThreadMessage,
   AgentThreadWithMessages,
   OllamaProxyResponse,
+  BibliographyDeduplicationResult,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -28,6 +29,10 @@ type BunRequests = RPCSchema<{
     createProject: { params: { name: string }; response: ProjectInfo };
     // Multi-document support
     saveDocument: { params: { projectPath: string; filename: string; content: unknown }; response: void };
+    saveDocuments: {
+      params: { projectPath: string; documents: Array<{ filename: string; content: unknown }> };
+      response: void;
+    };
     loadDocument: { params: { projectPath: string; filename: string }; response: unknown };
     createDocument: { params: { projectPath: string; filename: string; content?: unknown }; response: string };
     // Legacy (backward compat)
@@ -37,6 +42,10 @@ type BunRequests = RPCSchema<{
     saveBibtex: { params: { projectPath: string; bibtex: string }; response: void };
     saveBibtexRaw: { params: { projectPath: string; bibtex: string }; response: void };
     loadBibtex: { params: { projectPath: string }; response: string };
+    deduplicateBibliography: {
+      params: { projectPath: string; bibtex: string };
+      response: BibliographyDeduplicationResult;
+    };
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
     searchCitations: { params: { query: string }; response: CitationMetadata[] };

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -20,7 +21,11 @@ import {
   Download,
   Upload,
   FilePlus,
+  ListChecks,
+  Minus,
   RefreshCw,
+  Square,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +50,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { ProjectInfo, FileNode } from "@shared/rpc-types";
+import {
+  collectDocumentNodes,
+  documentPathsWithin,
+  selectedDocumentNodes,
+  toggleDocumentSelection,
+} from "./export-selection";
 
 // ── Context Menu ──────────────────────────────────────────────
 interface ContextMenuState {
@@ -64,7 +75,8 @@ interface FileExplorerProps {
   onFileSelect: (file: FileNode) => void;
   onOpenSettings: () => void;
   onRefreshTree: () => Promise<void>;
-  onExportDocument: () => void;
+  onExportDocuments: (documents: FileNode[]) => void;
+  onFindReplaceDocuments: () => void;
   onImportFile: (filePath: string) => Promise<void>;
   onFileRenamed: (newPath: string, newName: string) => void;
   onFileDeleted: (filePath: string) => void;
@@ -112,9 +124,55 @@ interface TreeNodeProps {
   renamingNode: FileNode | null;
   onRenameSubmit: (node: FileNode, newName: string) => void;
   onRenameCancel: () => void;
+  selectionMode: boolean;
+  selectedPaths: ReadonlySet<string>;
+  onToggleSelection: (node: FileNode) => void;
 }
 
-function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu, renamingNode, onRenameSubmit, onRenameCancel }: TreeNodeProps) {
+function SelectionCheckbox({
+  checked,
+  mixed = false,
+  label,
+  onClick,
+}: {
+  checked: boolean;
+  mixed?: boolean;
+  label: string;
+  onClick: (event: React.MouseEvent) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={mixed ? "mixed" : checked}
+      aria-label={label}
+      onClick={onClick}
+      className={cn(
+        "flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-[4px] border transition-colors",
+        checked || mixed
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-muted-foreground/50 bg-background text-transparent hover:border-primary",
+      )}
+    >
+      {mixed ? <Minus className="h-2.5 w-2.5" /> : checked ? <Check className="h-2.5 w-2.5" /> : null}
+    </button>
+  );
+}
+
+function TreeNode({
+  node,
+  depth,
+  activeFile,
+  query,
+  onFileSelect,
+  onContextMenu,
+  renamingNode,
+  onRenameSubmit,
+  onRenameCancel,
+  selectionMode,
+  selectedPaths,
+  onToggleSelection,
+}: TreeNodeProps) {
   const [isOpen, setIsOpen] = useState(depth === 0 && node.name === "documents");
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -149,21 +207,42 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
       (c) => hasMatchingDescendant(c, query)
     );
     if (query && !hasVisibleChildren) return null;
+    const descendantPaths = documentPathsWithin(node);
+    const selectedDescendantCount = descendantPaths.filter((path) => selectedPaths.has(path)).length;
+    const directoryChecked = descendantPaths.length > 0 && selectedDescendantCount === descendantPaths.length;
+    const directoryMixed = selectedDescendantCount > 0 && !directoryChecked;
 
     return (
       <div>
-        <button
-          onClick={() => setIsOpen((v) => !v)}
+        <div
           onContextMenu={(e) => onContextMenu(e, node)}
           className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm text-foreground hover:bg-sidebar-accent transition-colors"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
-          <span className="flex-shrink-0 text-muted-foreground">
-            {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          </span>
-          <FileIcon kind="folder" isDirectory={true} isOpen={isOpen} />
-          <span className="truncate text-xs font-medium">{name}</span>
-        </button>
+          {selectionMode && descendantPaths.length > 0 && (
+            <SelectionCheckbox
+              checked={directoryChecked}
+              mixed={directoryMixed}
+              label={`${directoryChecked ? "Clear" : "Select"} documents in ${name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleSelection(node);
+              }}
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => setIsOpen((v) => !v)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+            aria-expanded={isOpen}
+          >
+            <span className="flex-shrink-0 text-muted-foreground">
+              {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            </span>
+            <FileIcon kind="folder" isDirectory={true} isOpen={isOpen} />
+            <span className="truncate text-xs font-medium">{name}</span>
+          </button>
+        </div>
         {(isOpen || !!query) && node.children && (
           <div>
             {node.children.map((child) => (
@@ -178,6 +257,9 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
                 renamingNode={renamingNode}
                 onRenameSubmit={onRenameSubmit}
                 onRenameCancel={onRenameCancel}
+                selectionMode={selectionMode}
+                selectedPaths={selectedPaths}
+                onToggleSelection={onToggleSelection}
               />
             ))}
           </div>
@@ -216,8 +298,7 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
   }
 
   return (
-    <button
-      onClick={() => onFileSelect(node)}
+    <div
       onContextMenu={(e) => onContextMenu(e, node)}
       className={cn(
         "flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
@@ -235,9 +316,32 @@ function TreeNode({ node, depth, activeFile, query, onFileSelect, onContextMenu,
         })
       }}
     >
-      <FileIcon kind={node.kind} isDirectory={false} />
-      <span className="truncate">{name}</span>
-    </button>
+      {selectionMode && node.kind === "document" && (
+        <SelectionCheckbox
+          checked={selectedPaths.has(node.path)}
+          label={`${selectedPaths.has(node.path) ? "Clear" : "Select"} ${name}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleSelection(node);
+          }}
+        />
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          if (selectionMode && node.kind === "document") {
+            onToggleSelection(node);
+            return;
+          }
+          onFileSelect(node);
+        }}
+        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+        aria-pressed={selectionMode && node.kind === "document" ? selectedPaths.has(node.path) : undefined}
+      >
+        <FileIcon kind={node.kind} isDirectory={false} />
+        <span className="truncate">{name}</span>
+      </button>
+    </div>
   );
 }
 
@@ -252,7 +356,8 @@ export function FileExplorer({
   onFileSelect,
   onOpenSettings,
   onRefreshTree,
-  onExportDocument,
+  onExportDocuments,
+  onFindReplaceDocuments,
   onImportFile,
   onFileRenamed,
   onFileDeleted,
@@ -268,8 +373,15 @@ export function FileExplorer({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<FileNode | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const newProjectInputRef = useRef<HTMLInputElement>(null);
   const newDocInputRef = useRef<HTMLInputElement>(null);
+  const exportableDocuments = useMemo(() => collectDocumentNodes(fileTree), [fileTree]);
+  const selectedDocuments = useMemo(
+    () => selectedDocumentNodes(fileTree, selectedPaths),
+    [fileTree, selectedPaths],
+  );
 
   // Focus inputs when dialogs open
   useEffect(() => {
@@ -286,6 +398,31 @@ export function FileExplorer({
     window.addEventListener("click", handler);
     return () => window.removeEventListener("click", handler);
   }, [contextMenu]);
+
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedPaths(new Set());
+  }, [activeProject?.path]);
+
+  useEffect(() => {
+    const availablePaths = new Set(exportableDocuments.map((document) => document.path));
+    setSelectedPaths((current) => {
+      const next = new Set([...current].filter((path) => availablePaths.has(path)));
+      if (next.size === current.size && [...next].every((path) => current.has(path))) return current;
+      return next;
+    });
+  }, [exportableDocuments]);
+
+  useEffect(() => {
+    if (!selectionMode) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setSelectionMode(false);
+      setSelectedPaths(new Set());
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [selectionMode]);
 
   const handleCreateProject = useCallback(async () => {
     if (!newProjectName.trim() || creating) return;
@@ -386,8 +523,31 @@ export function FileExplorer({
 
   const handleExport = useCallback((node: FileNode) => {
     setContextMenu(null);
-    onExportDocument();
-  }, [onExportDocument]);
+    onExportDocuments([node]);
+  }, [onExportDocuments]);
+
+  const handleToggleSelection = useCallback((node: FileNode) => {
+    setSelectedPaths((current) => toggleDocumentSelection(current, node));
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedPaths(new Set());
+  }, []);
+
+  const handleExportSelected = useCallback(() => {
+    if (selectedDocuments.length === 0) return;
+    onExportDocuments(selectedDocuments);
+    exitSelectionMode();
+  }, [exitSelectionMode, onExportDocuments, selectedDocuments]);
+
+  const handleSelectAll = useCallback(() => {
+    setSelectedPaths((current) => (
+      current.size === exportableDocuments.length
+        ? new Set()
+        : new Set(exportableDocuments.map((document) => document.path))
+    ));
+  }, [exportableDocuments]);
 
   const handleRefreshExplorer = useCallback(async () => {
     if (refreshing) return;
@@ -403,8 +563,32 @@ export function FileExplorer({
   const getContextMenuItems = (node: FileNode) => {
     const items: { label: string; icon: React.ReactNode; action: () => void; className?: string }[] = [];
 
+    if (node.isDirectory && node.name === "documents") {
+      items.push({
+        label: "Find & Replace in Documents...",
+        icon: <Search className="h-3.5 w-3.5" />,
+        action: () => {
+          setContextMenu(null);
+          onFindReplaceDocuments();
+        },
+      });
+    }
+
     if (node.kind === "document") {
       items.push({ label: "Export...", icon: <Download className="h-3.5 w-3.5" />, action: () => handleExport(node) });
+      items.push({
+        label: "Select for export",
+        icon: <ListChecks className="h-3.5 w-3.5" />,
+        action: () => {
+          setContextMenu(null);
+          setSelectionMode(true);
+          setSelectedPaths((current) => {
+            const next = new Set(current);
+            next.add(node.path);
+            return next;
+          });
+        },
+      });
       items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
       items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
     } else if (node.kind === "note") {
@@ -479,11 +663,38 @@ export function FileExplorer({
         {/* Explorer section */}
         <div className="flex flex-col flex-1 min-h-0 pt-1">
           <div className="px-3 pb-1.5 flex items-center justify-between">
-            <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "var(--scholar-muted)" }}>
-              Explorer
-            </p>
+            {selectionMode ? (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <ListChecks className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+                <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-primary">
+                  {selectedDocuments.length} selected
+                </p>
+              </div>
+            ) : (
+              <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "var(--scholar-muted)" }}>
+                Explorer
+              </p>
+            )}
             {activeProject && (
               <div className="flex items-center gap-1">
+                {exportableDocuments.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (selectionMode) exitSelectionMode();
+                      else setSelectionMode(true);
+                    }}
+                    className={cn(
+                      "transition-colors",
+                      selectionMode
+                        ? "text-primary hover:text-primary/70"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    title={selectionMode ? "Cancel selection" : "Select documents to export"}
+                    aria-label={selectionMode ? "Cancel export selection" : "Select documents to export"}
+                  >
+                    {selectionMode ? <X className="h-3.5 w-3.5" /> : <ListChecks className="h-3.5 w-3.5" />}
+                  </button>
+                )}
                 <button
                   onClick={handleRefreshExplorer}
                   disabled={refreshing}
@@ -540,11 +751,48 @@ export function FileExplorer({
                     renamingNode={renamingNode}
                     onRenameSubmit={handleRenameSubmit}
                     onRenameCancel={() => setRenamingNode(null)}
+                    selectionMode={selectionMode}
+                    selectedPaths={selectedPaths}
+                    onToggleSelection={handleToggleSelection}
                   />
                 ))}
               </div>
             )}
           </ScrollArea>
+
+          {selectionMode && exportableDocuments.length > 0 && (
+            <div
+              className="mx-2 mb-2 flex-shrink-0 rounded-xl border p-2 shadow-sm"
+              style={{
+                borderColor: "rgba(91,33,182,0.16)",
+                background: "color-mix(in srgb, var(--sidebar) 92%, white)",
+              }}
+            >
+              <div className="mb-2 flex items-center justify-between px-0.5">
+                <button
+                  onClick={handleSelectAll}
+                  className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {selectedDocuments.length === exportableDocuments.length
+                    ? <Check className="h-3 w-3 text-primary" />
+                    : <Square className="h-3 w-3" />}
+                  {selectedDocuments.length === exportableDocuments.length ? "Clear all" : "Select all"}
+                </button>
+                <span className="text-[10px] tabular-nums text-muted-foreground">
+                  {selectedDocuments.length}/{exportableDocuments.length}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                className="h-7 w-full rounded-lg text-[11px]"
+                disabled={selectedDocuments.length === 0}
+                onClick={handleExportSelected}
+              >
+                <Download className="h-3 w-3" />
+                Export {selectedDocuments.length || ""} {selectedDocuments.length === 1 ? "section" : "sections"}
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* bottom padding */}

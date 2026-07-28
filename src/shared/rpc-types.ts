@@ -50,6 +50,15 @@ export interface ProjectInfo {
   lastModified: number;
 }
 
+export interface BibliographyDeduplicationResult {
+  bibtex: string;
+  removedEntries: number;
+  remappedCitations: number;
+  updatedDocuments: number;
+  citekeyRemap: Record<string, string>;
+  backupPath: string | null;
+}
+
 export interface KBDocument {
   id: string;
   title: string;

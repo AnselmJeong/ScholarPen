@@ -17,6 +17,18 @@ export interface BibtexParseResult {
   issues: BibtexParseIssue[];
 }
 
+export interface BibtexDeduplicationPlan {
+  bibtex: string;
+  duplicateGroups: BibtexEntry[][];
+  removedEntries: number;
+  citekeyRemap: Record<string, string>;
+}
+
+export interface CitationRemapResult {
+  content: unknown;
+  replacementCount: number;
+}
+
 /** Parse all citekeys from a BibTeX string. */
 export function parseBibtexCitekeys(bibtex: string): string[] {
   return parseBibtexEntries(bibtex).entries.map((entry) => entry.citekey);
@@ -214,41 +226,169 @@ function normalizeIdentityPart(value: string | undefined): string {
 }
 
 function firstAuthor(author: string | undefined): string {
-  return normalizeIdentityPart((author ?? "").split(/\s+and\s+/i)[0]);
+  const raw = (author ?? "").split(/\s+and\s+/i)[0].trim();
+  const comma = raw.indexOf(",");
+  if (comma === -1) return normalizeIdentityPart(raw);
+  const family = raw.slice(0, comma);
+  const given = raw.slice(comma + 1);
+  return normalizeIdentityPart(`${given} ${family}`);
 }
 
 export function getBibtexIdentityKey(entry: BibtexEntry): string | null {
+  return getBibtexIdentityKeys(entry)[0] ?? null;
+}
+
+export function getBibtexIdentityKeys(entry: BibtexEntry): string[] {
+  const keys: string[] = [];
   const doi = normalizeDoi(entry.fields.doi);
-  if (doi) return `doi:${doi}`;
+  if (doi) keys.push(`doi:${doi}`);
   const title = normalizeIdentityPart(entry.fields.title);
   const author = firstAuthor(entry.fields.author);
   const year = normalizeIdentityPart(entry.fields.year);
-  if (title && author && year) return `title:${title}|author:${author}|year:${year}`;
-  return null;
+  if (title && author && year) {
+    keys.push(`title:${title}|author:${author}|year:${year}`);
+  }
+  return keys;
+}
+
+export function areBibtexEntriesDuplicates(
+  left: BibtexEntry,
+  right: BibtexEntry,
+): boolean {
+  if (left.citekey.toLocaleLowerCase() === right.citekey.toLocaleLowerCase()) return true;
+  const leftKeys = new Set(getBibtexIdentityKeys(left));
+  return getBibtexIdentityKeys(right).some((key) => leftKeys.has(key));
 }
 
 export function findDuplicateBibtexGroups(entries: BibtexEntry[]): BibtexEntry[][] {
-  const byCitekey = new Map<string, BibtexEntry[]>();
-  const byIdentity = new Map<string, BibtexEntry[]>();
+  const parents = entries.map((_, index) => index);
+  const find = (index: number): number => {
+    while (parents[index] !== index) {
+      parents[index] = parents[parents[index]];
+      index = parents[index];
+    }
+    return index;
+  };
+  const union = (left: number, right: number): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot;
+  };
 
-  for (const entry of entries) {
-    const citekey = entry.citekey.toLowerCase();
-    byCitekey.set(citekey, [...(byCitekey.get(citekey) ?? []), entry]);
-    const identity = getBibtexIdentityKey(entry);
-    if (identity) byIdentity.set(identity, [...(byIdentity.get(identity) ?? []), entry]);
-  }
+  const firstByCitekey = new Map<string, number>();
+  const firstByIdentity = new Map<string, number>();
+  entries.forEach((entry, index) => {
+    const citekey = entry.citekey.toLocaleLowerCase();
+    const citekeyMatch = firstByCitekey.get(citekey);
+    if (citekeyMatch === undefined) firstByCitekey.set(citekey, index);
+    else union(citekeyMatch, index);
 
-  const groups: BibtexEntry[][] = [];
-  const seen = new Set<string>();
-  for (const group of [...byCitekey.values(), ...byIdentity.values()]) {
-    if (group.length < 2) continue;
-    const key = group.map((entry) => entry.start).sort((a, b) => a - b).join(",");
-    if (!seen.has(key)) {
-      seen.add(key);
-      groups.push(group);
+    for (const identity of getBibtexIdentityKeys(entry)) {
+      const identityMatch = firstByIdentity.get(identity);
+      if (identityMatch === undefined) firstByIdentity.set(identity, index);
+      else union(identityMatch, index);
+    }
+  });
+
+  const groupedIndexes = new Map<number, number[]>();
+  entries.forEach((_, index) => {
+    const root = find(index);
+    groupedIndexes.set(root, [...(groupedIndexes.get(root) ?? []), index]);
+  });
+
+  return [...groupedIndexes.values()]
+    .filter((indexes) => indexes.length > 1)
+    .map((indexes) => indexes.sort((a, b) => a - b).map((index) => entries[index]))
+    .sort((left, right) => left[0].start - right[0].start);
+}
+
+/**
+ * Build one deterministic cleanup plan for citekey and bibliographic-identity
+ * duplicates. The first entry in source order survives each duplicate group.
+ */
+export function buildBibtexDeduplicationPlan(bibtex: string): BibtexDeduplicationPlan {
+  const parsed = parseBibtexEntries(bibtex);
+  const duplicateGroups = findDuplicateBibtexGroups(parsed.entries);
+  const entriesToRemove: BibtexEntry[] = [];
+  const citekeyRemap: Record<string, string> = {};
+
+  for (const group of duplicateGroups) {
+    const survivor = group[0];
+    for (const duplicate of group.slice(1)) {
+      entriesToRemove.push(duplicate);
+      if (duplicate.citekey !== survivor.citekey) {
+        citekeyRemap[duplicate.citekey] = survivor.citekey;
+      }
     }
   }
-  return groups;
+
+  let next = bibtex;
+  for (const entry of entriesToRemove.sort((a, b) => b.start - a.start)) {
+    next = `${next.slice(0, entry.start)}${next.slice(entry.end)}`;
+  }
+
+  return {
+    bibtex: entriesToRemove.length > 0
+      ? next.replace(/\n{3,}/g, "\n\n").trim()
+      : bibtex,
+    duplicateGroups,
+    removedEntries: entriesToRemove.length,
+    citekeyRemap,
+  };
+}
+
+/**
+ * Rewrite citekeys only inside structured BlockNote citation nodes.
+ * Prose, locators, formatting, and unrelated metadata remain untouched.
+ */
+export function remapDocumentCitationKeys(
+  content: unknown,
+  citekeyRemap: Record<string, string>,
+): CitationRemapResult {
+  if (Object.keys(citekeyRemap).length === 0) {
+    return { content, replacementCount: 0 };
+  }
+
+  const exact = new Map(Object.entries(citekeyRemap));
+  const caseInsensitive = new Map(
+    Object.entries(citekeyRemap).map(([from, to]) => [from.toLocaleLowerCase(), to]),
+  );
+  const next = JSON.parse(JSON.stringify(content)) as unknown;
+  let replacementCount = 0;
+
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+
+    const obj = value as Record<string, unknown>;
+    if (obj.type === "citation") {
+      const props = obj.props && typeof obj.props === "object"
+        ? obj.props as Record<string, unknown>
+        : null;
+      const citekeyOwner = props && typeof props.citekey === "string"
+        ? props
+        : typeof obj.citekey === "string"
+          ? obj
+          : null;
+      const citekey = citekeyOwner?.citekey;
+      if (citekeyOwner && typeof citekey === "string") {
+        const replacement = exact.get(citekey)
+          ?? caseInsensitive.get(citekey.toLocaleLowerCase());
+        if (replacement && replacement !== citekey) {
+          citekeyOwner.citekey = replacement;
+          replacementCount++;
+        }
+      }
+    }
+
+    Object.values(obj).forEach(visit);
+  };
+
+  visit(next);
+  return { content: next, replacementCount };
 }
 
 /**
