@@ -12,9 +12,10 @@ describe("Find citation request", () => {
 
     expect(isFindCitationMessage(message)).toBe(true);
     expect(message).toContain(request.selectedText);
-    expect(message).toContain("검증된 DOI 후보만");
+    expect(message).toContain("검증된 DOI가 존재하는 후보만");
     expect(message).toContain("https://doi.org/");
-    expect(message).toContain("후보에 없는 논문·DOI·링크는 만들거나 추측하지 마세요");
+    expect(message).toContain("DOI가 확인되지 않은 논문·DOI·링크는 만들거나 추측하지 마세요");
+    expect(message).not.toContain("ScholarPen이 제공한");
     expect(message).toContain("최대 5개");
   });
 
