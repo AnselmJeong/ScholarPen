@@ -55,6 +55,26 @@ describe("AI inline edit protection", () => {
     expect(messages.system).toContain("Write the replacement in English");
   });
 
+  test("uses English when an English passage contains one Korean word", () => {
+    const selection = makeProtectedSelection(
+      "This phenomenon can be interpreted within the predictive coding framework 한국어."
+    );
+    const messages = buildInlineEditMessages("Improve the writing quality", selection);
+
+    expect(selection.sourceLanguage).toBe("English");
+    expect(messages.system).toContain("Write the replacement in English");
+  });
+
+  test("uses Korean when a Korean passage contains one English word", () => {
+    const selection = makeProtectedSelection(
+      "이 현상은 정상적인 조건에서 predictive 부호화 관점으로 해석할 수 있다."
+    );
+    const messages = buildInlineEditMessages("Improve the writing quality", selection);
+
+    expect(selection.sourceLanguage).toBe("Korean");
+    expect(messages.system).toContain("Write the replacement in Korean");
+  });
+
   test("uses the complete manuscript to polish style and surface internal contradictions", () => {
     const selection = makeProtectedSelection();
     const messages = buildInlineEditMessages(

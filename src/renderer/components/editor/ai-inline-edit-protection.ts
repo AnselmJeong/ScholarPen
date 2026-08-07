@@ -51,8 +51,27 @@ function token(namespace: string, label: string) {
 }
 
 function detectSourceLanguage(text: string): SourceLanguage {
-  if (/[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(text)) return "Korean";
-  if (/[A-Za-z]/.test(text)) return "English";
+  const words = text.match(/\p{L}+(?:['’-]\p{L}+)*/gu) ?? [];
+  let koreanWords = 0;
+  let englishWords = 0;
+  let koreanCharacters = 0;
+  let englishCharacters = 0;
+
+  for (const word of words) {
+    const koreanCount = word.match(/[\p{Script=Hangul}]/gu)?.length ?? 0;
+    const englishCount = word.match(/[A-Za-z]/g)?.length ?? 0;
+
+    koreanCharacters += koreanCount;
+    englishCharacters += englishCount;
+
+    if (koreanCount > englishCount) koreanWords += 1;
+    else if (englishCount > koreanCount) englishWords += 1;
+  }
+
+  if (koreanWords > englishWords) return "Korean";
+  if (englishWords > koreanWords) return "English";
+  if (koreanCharacters > englishCharacters) return "Korean";
+  if (englishCharacters > koreanCharacters) return "English";
   return "the original language";
 }
 
