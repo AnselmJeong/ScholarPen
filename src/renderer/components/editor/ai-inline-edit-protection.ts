@@ -38,6 +38,17 @@ export interface InlineEditDocumentContext {
   afterSelection: string;
 }
 
+export type InlineEditWorkflow = "general" | "academic-improve";
+
+export const ACADEMIC_HUMANIZER_INSTRUCTIONS =
+  "For the academic-improve workflow, also humanize the passage without weakening its scholarship. " +
+  "Look for clusters of AI-writing patterns rather than treating any isolated word or punctuation mark as proof: inflated significance or symbolism; promotional language; superficial participial analysis; vague attribution; formulaic challenge or future-outlook framing; stock AI vocabulary; ornate substitutes for is, are, or has; negative parallelism; forced groups of three; synonym cycling; false ranges; unnecessary passive or subjectless phrasing; filler, excessive hedging, generic conclusions, authority tropes, signposting, diff-anchored narration, manufactured punchlines, aphorisms, and fake conversational hooks. " +
+  "Remove chatbot artifacts, sycophancy, knowledge-cutoff disclaimers, and speculative gap-filling. Prefer plain, precise constructions and varied sentence rhythm. " +
+  "Preserve the author's real voice, disciplinary vocabulary, technical terms, specific details, quotations, titles, proper names, citations, argumentative role, and epistemic calibration. Do not flatten formal academic prose merely because it is polished, and do not change a passage based on a single possible tell. " +
+  "Do not invent, strengthen, generalize, or delete any substantive claim, fact, name, number, date, quotation, or citation. Preserve all source information even when changing sentence shape within the protected text boundaries. " +
+  "Unless the surrounding manuscript clearly establishes em or en dashes as part of the author's own punctuation style, replace prose dashes with an appropriate period, comma, colon, parenthesis, or recast sentence. Never alter a protected control marker or protected literal to enforce this preference. " +
+  "Work in embedded mode. Internally produce an academic draft, then ask: 'What still makes this sound obviously AI-generated?' and 'Does the rewrite introduce or remove any fact, name, number, date, quotation, citation, claim, or degree of certainty?' Revise once more from that audit. Output only the final protected passage, never the draft, audit, or commentary.";
+
 const PROTECTED_LITERAL_PATTERN =
   /(`{1,3}[^`\n]*`{1,3}|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^$\n]+\$|!\[[^\]\n]*\]\([^\n)]+\)|\[[^\]\n]+\]\([^\n)]+\)|\[@[^\]\n]+\]|\[\^[^\]\n]+\]|\\(?:cite|citep|citet|autocite|parencite|textcite|ref|eqref|label)\*?(?:\[[^\]\n]*\])?\{[^}\n]+\}|(?<![\w@])@[A-Za-z][\w:.-]*|[*_~]{2,}|[*_]|^(?:#{1,6}|>|(?:[-+] |\d+\. ))(?=\s?))/gm;
 
@@ -194,12 +205,16 @@ export function protectSelectionSlice(
 export function buildInlineEditMessages(
   instruction: string,
   selection: ProtectedSelection,
-  documentContext?: InlineEditDocumentContext
+  documentContext?: InlineEditDocumentContext,
+  workflow: InlineEditWorkflow = "general"
 ) {
   const languageRule =
     selection.sourceLanguage === "the original language"
       ? "Keep the replacement in the same language as the source passage"
       : `The source passage is ${selection.sourceLanguage}. Write the replacement in ${selection.sourceLanguage}`;
+
+  const workflowInstructions =
+    workflow === "academic-improve" ? ` ${ACADEMIC_HUMANIZER_INSTRUCTIONS}` : "";
 
   const system =
     "You are an academic copy editor revising one selected passage from a BlockNote JSON manuscript. " +
@@ -208,6 +223,8 @@ export function buildInlineEditMessages(
     "Revise only the selected passage. Polish its academic style, precision, concision, transitions, and logical flow while preserving the author's intended meaning. " +
     "Compare the selected passage with the complete document and notice internal contradictions, inconsistent terminology, scope, or claims. If the intended resolution is clear from the document, align the selected passage with it. If it is not clear, make the tension or uncertainty explicit in the wording rather than inventing a resolution. " +
     "Do not introduce new facts, evidence, quotations, citations, references, causal claims, or conclusions. Do not add a citation that is not already present. " +
+    workflowInstructions +
+    " " +
     "The passage contains ScholarPen control markers beginning with ⟦SP:. They encode text-node boundaries, " +
     "rich-text marks, Markdown or Quarto typesetting, citations, footnotes, inline math, links, and other custom inline nodes. " +
     "Copy every control marker exactly once and in exactly the same order. Never add, delete, edit, translate, reorder, or move a marker. " +

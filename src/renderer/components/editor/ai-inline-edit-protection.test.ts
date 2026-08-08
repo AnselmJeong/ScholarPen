@@ -96,6 +96,42 @@ describe("AI inline edit protection", () => {
     expect(messages.user).toContain(selection.protectedText);
   });
 
+  test("runs the embedded humanizer audit only for Academic Improve", () => {
+    const selection = makeProtectedSelection(
+      "This pivotal framework stands as a testament to a vibrant research landscape."
+    );
+    const improveMessages = buildInlineEditMessages(
+      "Improve the selected academic passage",
+      selection,
+      undefined,
+      "academic-improve"
+    );
+    const generalMessages = buildInlineEditMessages("Translate to Korean", selection);
+
+    expect(improveMessages.system).toContain("clusters of AI-writing patterns");
+    expect(improveMessages.system).toContain("Preserve the author's real voice");
+    expect(improveMessages.system).toContain("do not change a passage based on a single possible tell");
+    expect(improveMessages.system).toContain("Does the rewrite introduce or remove any fact");
+    expect(improveMessages.system).toContain("Output only the final protected passage");
+    expect(generalMessages.system).not.toContain("clusters of AI-writing patterns");
+  });
+
+  test("keeps the Humanizer subordinate to scholarly and protected-content safety", () => {
+    const selection = makeProtectedSelection();
+    const messages = buildInlineEditMessages(
+      "Improve the selected academic passage",
+      selection,
+      undefined,
+      "academic-improve"
+    );
+
+    expect(messages.system).toContain("disciplinary vocabulary");
+    expect(messages.system).toContain("epistemic calibration");
+    expect(messages.system).toContain("Do not invent, strengthen, generalize, or delete");
+    expect(messages.system).toContain("Never alter a protected control marker");
+    expect(messages.system).toContain("Copy every control marker exactly once");
+  });
+
   test("captures all document text before and after the selected passage", () => {
     const doc = schema.nodes.doc.create(null, [
       schema.nodes.paragraph.create(null, schema.text("Introduction context")),

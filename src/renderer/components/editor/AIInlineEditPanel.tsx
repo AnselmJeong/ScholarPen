@@ -7,6 +7,7 @@ import {
   buildInlineEditMessages,
   protectedRewritePreview,
   type InlineEditDocumentContext,
+  type InlineEditWorkflow,
   type ProtectedSelection,
 } from "./ai-inline-edit-protection";
 
@@ -46,7 +47,11 @@ export const ACADEMIC_IMPROVE_PROMPT =
   "Polish the selected passage as clear, coherent academic prose while considering the complete document. Preserve the author's meaning, terminology, disciplinary voice, and degree of certainty. Improve style, precision, transitions, and logical flow. Check the passage against the rest of the document for internal contradictions, inconsistent terminology, scope, or claims. If the document makes the intended resolution clear, revise the selected passage accordingly; otherwise make the tension or uncertainty explicit without inventing facts, evidence, or citations.";
 
 const QUICK_ACTIONS = [
-  { label: "Improve", prompt: ACADEMIC_IMPROVE_PROMPT },
+  {
+    label: "Improve",
+    prompt: ACADEMIC_IMPROVE_PROMPT,
+    workflow: "academic-improve" as const satisfies InlineEditWorkflow,
+  },
 ];
 
 const TRANSLATE_LANGS = [
@@ -204,7 +209,7 @@ export function AIInlineEditPanel({
   }, []);
 
   const run = useCallback(
-    async (instruction: string) => {
+    async (instruction: string, workflow: InlineEditWorkflow = "general") => {
       if (!instruction.trim()) return;
       setResult("");
       setError("");
@@ -216,7 +221,8 @@ export function AIInlineEditPanel({
         const messages = buildInlineEditMessages(
           instruction,
           snapshot.protection,
-          snapshot.documentContext
+          snapshot.documentContext,
+          workflow
         );
         await rpc.generateTextStream(
           model,
@@ -303,7 +309,7 @@ export function AIInlineEditPanel({
             {QUICK_ACTIONS.map((a, index) => (
               <React.Fragment key={a.label}>
                 <button
-                  onClick={() => { setPrompt(a.prompt); run(a.prompt); }}
+                  onClick={() => { setPrompt(a.prompt); run(a.prompt, a.workflow); }}
                   className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
                 >
                   {a.label}
