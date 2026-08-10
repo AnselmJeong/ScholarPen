@@ -59,6 +59,63 @@ export interface BibliographyDeduplicationResult {
   backupPath: string | null;
 }
 
+export type BibliographyValidationStatus =
+  | "valid"
+  | "changes"
+  | "unverified"
+  | "unsupported"
+  | "error";
+
+export type BibliographyFieldValidationStatus =
+  | "match"
+  | "missing"
+  | "mismatch"
+  | "unavailable";
+
+export interface BibliographyFieldValidation {
+  field: "title" | "author" | "year" | "journal" | "volume" | "number" | "pages" | "doi";
+  status: BibliographyFieldValidationStatus;
+  current?: string;
+  canonical?: string;
+}
+
+export interface JournalAbbreviationValidation {
+  value: string;
+  source: "nlm-iso" | "nlm-title" | "crossref-publisher";
+  verified: boolean;
+}
+
+export interface BibliographyEntryValidation {
+  citekey: string;
+  entryType: string;
+  status: BibliographyValidationStatus;
+  matchMethod?: "doi" | "bibliographic";
+  doi?: string;
+  confidence?: number;
+  fields: BibliographyFieldValidation[];
+  journalAbbreviation?: JournalAbbreviationValidation;
+  suggestedFields?: Record<string, string>;
+  message?: string;
+}
+
+export interface BibliographyValidationProgress {
+  stage: "scan" | "crossref" | "abbreviations" | "save";
+  processed: number;
+  total: number;
+  message: string;
+}
+
+export interface BibliographyMaintenanceResult {
+  bibtex: string;
+  suggestedBibtex: string;
+  removedUnused: number;
+  scannedDocuments: number;
+  usedEntries: number;
+  missingCitekeys: string[];
+  backupPath: string | null;
+  validations: BibliographyEntryValidation[];
+}
+
 export interface KBDocument {
   id: string;
   title: string;

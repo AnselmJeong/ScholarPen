@@ -16,6 +16,7 @@ import {
 } from "../../shared/ollama-connection";
 import {
   buildBibtexDeduplicationPlan,
+  collectDocumentCitationKeys,
   deduplicateBibtex,
   remapDocumentCitationKeys,
 } from "../../shared/bibtex-utils";
@@ -699,6 +700,76 @@ class FileSystemManager {
     } catch {
       return "";
     }
+  }
+
+  async scanBibliographyUsage(projectPath: string): Promise<{
+    usedCitekeys: string[];
+    scannedDocuments: number;
+  }> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    const documentsDir = join(projectPath, "documents");
+    const documentPaths: string[] = [];
+    const collect = async (directory: string): Promise<void> => {
+      const entries = await readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        const entryPath = join(directory, entry.name);
+        if (entry.isDirectory()) await collect(entryPath);
+        else if (entry.name.endsWith(".scholarpen.json")) documentPaths.push(entryPath);
+      }
+    };
+    try {
+      await collect(documentsDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    const usedCitekeys = new Set<string>();
+    for (const filePath of documentPaths) {
+      try {
+        const content = JSON.parse(await readFile(filePath, "utf-8")) as unknown;
+        collectDocumentCitationKeys(content, usedCitekeys);
+      } catch (error) {
+        throw new Error(
+          `인용 스캔 실패: ${relative(projectPath, filePath)} (${error instanceof Error ? error.message : "invalid document"})`,
+        );
+      }
+    }
+    return { usedCitekeys: Array.from(usedCitekeys), scannedDocuments: documentPaths.length };
+  }
+
+  async saveBibliographyMaintenance(
+    projectPath: string,
+    bibtex: string,
+    backupPrefix: string,
+  ): Promise<string | null> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    let original = "";
+    try {
+      original = await readFile(referencesPath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (original === bibtex) return null;
+
+    const backupStamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupPath = join(
+      projectPath,
+      ".scholarpen",
+      "backups",
+      `${backupPrefix}-${backupStamp}`,
+    );
+    const bibliographyBackupPath = join(backupPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    await mkdir(dirname(bibliographyBackupPath), { recursive: true });
+    await writeFile(bibliographyBackupPath, original, "utf-8");
+    try {
+      await mkdir(dirname(referencesPath), { recursive: true });
+      await writeFile(referencesPath, bibtex, "utf-8");
+    } catch (error) {
+      await writeFile(referencesPath, original, "utf-8");
+      throw error;
+    }
+    return backupPath;
   }
 
   async deduplicateBibliography(

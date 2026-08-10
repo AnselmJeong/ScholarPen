@@ -12,6 +12,9 @@ import { streamScholarAgent } from "./agent/service";
 import { listProviderModels } from "./agent/providers";
 import { getAgentThreadStore } from "./agent/thread-store";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
+import { validateBibliography } from "./citation/bibliography-validator";
+import { parseBibtexEntries, removeUnusedBibtexEntries } from "../shared/bibtex-utils";
+import type { BibliographyValidationProgress } from "../shared/rpc-types";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 
 
@@ -46,6 +49,7 @@ let sendProjectUpdated: ((payload: { projectPath: string; filePath?: string }) =
 let sendAiChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
 let sendAgentChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
 let sendOllamaProxyChunk: ((payload: { requestId: string; content: string; done: boolean; error?: string }) => void) | null = null;
+let sendBibliographyValidationProgress: ((payload: BibliographyValidationProgress) => void) | null = null;
 
 // Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
 let activeAiAbortController: AbortController | null = null;
@@ -125,7 +129,7 @@ async function main() {
 
   // ── Define typed RPC ──────────────────────────────────────────
   const scholarRpc = BrowserView.defineRPC<ScholarRPC>({
-    maxRequestTime: 30_000,
+    maxRequestTime: 600_000,
     handlers: {
       requests: {
         getOllamaStatus: () => ollamaClient.getStatus(),
@@ -252,6 +256,79 @@ async function main() {
               });
             }
             return result;
+          } finally {
+            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
+          }
+        },
+
+        validateAndCleanBibliography: async ({ projectPath, bibtex }) => {
+          internallyUpdatingProjects.add(projectPath);
+          try {
+            sendBibliographyValidationProgress?.({
+              stage: "scan",
+              processed: 0,
+              total: 0,
+              message: "프로젝트 문서의 인용을 스캔하는 중",
+            });
+            const usage = await fileSystem.scanBibliographyUsage(projectPath);
+            const cleanup = removeUnusedBibtexEntries(bibtex, usage.usedCitekeys);
+            const availableCitekeys = new Set(
+              parseBibtexEntries(cleanup.bibtex).entries.map(
+                (entry) => entry.citekey.toLocaleLowerCase(),
+              ),
+            );
+            const missingCitekeys = usage.usedCitekeys.filter(
+              (citekey) => !availableCitekeys.has(citekey.toLocaleLowerCase()),
+            );
+            const validation = await validateBibliography(
+              cleanup.bibtex,
+              (progress) => sendBibliographyValidationProgress?.(progress),
+            );
+            sendBibliographyValidationProgress?.({
+              stage: "save",
+              processed: 0,
+              total: 0,
+              message: "미사용 entry 정리본을 백업하고 저장하는 중",
+            });
+            const backupPath = await fileSystem.saveBibliographyMaintenance(
+              projectPath,
+              cleanup.bibtex,
+              "bibliography-validation",
+            );
+            if (cleanup.removedEntries.length > 0) {
+              sendProjectUpdated?.({
+                projectPath,
+                filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+              });
+            }
+            return {
+              bibtex: cleanup.bibtex,
+              suggestedBibtex: validation.suggestedBibtex,
+              removedUnused: cleanup.removedEntries.length,
+              scannedDocuments: usage.scannedDocuments,
+              usedEntries: validation.validations.length,
+              missingCitekeys,
+              backupPath,
+              validations: validation.validations,
+            };
+          } finally {
+            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
+          }
+        },
+
+        applyBibliographyValidation: async ({ projectPath, bibtex }) => {
+          internallyUpdatingProjects.add(projectPath);
+          try {
+            const backupPath = await fileSystem.saveBibliographyMaintenance(
+              projectPath,
+              bibtex,
+              "bibliography-validation-apply",
+            );
+            sendProjectUpdated?.({
+              projectPath,
+              filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+            });
+            return backupPath;
           } finally {
             setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
           }
@@ -495,6 +572,9 @@ async function main() {
         agentChunk: (payload) => {
           console.log("[Bun] agentChunk message:", payload);
         },
+        bibliographyValidationProgress: (payload) => {
+          console.log("[Bun] bibliography validation progress:", payload);
+        },
       },
     },
   });
@@ -517,6 +597,8 @@ async function main() {
   sendAiChunk = (payload) => win.webview.rpc?.send.aiChunk(payload);
   sendAgentChunk = (payload) => win.webview.rpc?.send.agentChunk(payload);
   sendOllamaProxyChunk = (payload) => win.webview.rpc?.send.ollamaProxyChunk(payload);
+  sendBibliographyValidationProgress = (payload) =>
+    win.webview.rpc?.send.bibliographyValidationProgress(payload);
 
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {

@@ -1,15 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RotateCcw, Save, SearchCheck, Trash2 } from "lucide-react";
-import type { FileNode } from "../../../shared/rpc-types";
+import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RotateCcw, Save, SearchCheck, ShieldCheck, Trash2 } from "lucide-react";
+import type {
+  BibliographyMaintenanceResult,
+  BibliographyValidationProgress,
+  FileNode,
+} from "../../../shared/rpc-types";
 import {
   areBibtexEntriesDuplicates,
   findDuplicateBibtexGroups,
   parseBibtexEntries,
   type BibtexEntry,
 } from "../../../shared/bibtex-utils";
-import { rpc } from "../../rpc";
+import { onBibliographyValidationProgress, rpc } from "../../rpc";
 import { TextFindPanel } from "./TextFindPanel";
 import { useTextFind } from "../../hooks/useTextFind";
+import { BibliographyValidationReview } from "./BibliographyValidationReview";
 
 type BibtexView = "entries" | "review";
 const TABLE_ROW_LIMIT = 500;
@@ -137,9 +142,13 @@ export function BibtexEditor({
   const [selectedStart, setSelectedStart] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [addDraft, setAddDraft] = useState("");
+  const [validationResult, setValidationResult] = useState<BibliographyMaintenanceResult | null>(null);
+  const [validationProgress, setValidationProgress] = useState<BibliographyValidationProgress | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const find = useTextFind(contentRef, file.path);
   const dirty = content !== savedContent;
+
+  useEffect(() => onBibliographyValidationProgress(setValidationProgress), []);
 
   useEffect(() => {
     if (content !== savedContent) return;
@@ -149,6 +158,8 @@ export function BibtexEditor({
     setSelectedStart(null);
     setEditDraft("");
   }, [content, file.path, initialContent, reloadTrigger, savedContent]);
+
+  useEffect(() => setValidationResult(null), [file.path, projectPath]);
 
   const parsed = useMemo(() => parseBibtexEntries(content), [content]);
   const selectedEntry = useMemo(
@@ -441,6 +452,80 @@ export function BibtexEditor({
     }
   }, [entryFilter, content, filteredEntries, saveRaw]);
 
+  const handleValidateAndClean = useCallback(async () => {
+    if (parsed.issues.length > 0) {
+      setView("review");
+      setSaveMsg("BibTeX parse issue를 먼저 수정하세요.");
+      return;
+    }
+    const confirmed = await rpc.confirmAction({
+      title: "인용 정리 · 서지정보 검증",
+      message: "모든 문서의 인용을 스캔해 미사용 BibTeX entry를 제거하고, 인용된 entry를 Crossref로 검증할까요?",
+      detail: "삭제 전 references.bib를 자동 백업합니다. DOI가 없는 entry는 제목·저자·연도가 강하게 일치할 때만 DOI를 제안합니다. 저자 등 민감한 차이는 자동 변경하지 않으며 결과에서 검토할 수 있습니다.",
+      confirmLabel: "정리 · 검증",
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    setSaveMsg(null);
+    setValidationResult(null);
+    setView("review");
+    try {
+      await onBeforeBibliographyMaintenance?.();
+      const result = await rpc.validateAndCleanBibliography(projectPath, content);
+      setContent(result.bibtex);
+      setSavedContent(result.bibtex);
+      setUsedCitekeys(null);
+      setSelectedStart(null);
+      setEditDraft("");
+      setValidationResult(result);
+      onSaved?.();
+      flash(`미사용 ${result.removedUnused}개 제거 · 인용된 ${result.usedEntries}개 검증 완료`);
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "서지정보 검증 실패");
+    } finally {
+      setSaving(false);
+      setValidationProgress(null);
+    }
+  }, [
+    content,
+    flash,
+    onBeforeBibliographyMaintenance,
+    onSaved,
+    parsed.issues.length,
+    projectPath,
+  ]);
+
+  const handleApplyValidation = useCallback(async () => {
+    if (!validationResult || validationResult.suggestedBibtex === validationResult.bibtex) return;
+    const suggestedCount = validationResult.validations.filter((item) => item.suggestedFields).length;
+    const confirmed = await rpc.confirmAction({
+      title: "확인된 서지정보 보정 반영",
+      message: `${suggestedCount}개 entry의 확인된 보정을 references.bib에 반영할까요?`,
+      detail: "DOI, 권·호·페이지와 NLM에서 확인된 저널 표준 약어만 자동 반영합니다. 제목·저자 불일치 항목은 변경하지 않습니다.",
+      confirmLabel: "보정 반영",
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await rpc.applyBibliographyValidation(projectPath, validationResult.suggestedBibtex);
+      setContent(validationResult.suggestedBibtex);
+      setSavedContent(validationResult.suggestedBibtex);
+      onSaved?.();
+      flash(`${suggestedCount}개 entry 보정 반영됨`);
+      setValidationResult({
+        ...validationResult,
+        bibtex: validationResult.suggestedBibtex,
+      });
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "보정 반영 실패");
+    } finally {
+      setSaving(false);
+    }
+  }, [flash, onSaved, projectPath, validationResult]);
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
       {findOpen && (
@@ -484,6 +569,10 @@ export function BibtexEditor({
           <button onClick={handleDedup} disabled={saving || editDirty} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40" title="중복 entry 제거 및 documents citation citekey 통일">
             <FilterX className="h-3.5 w-3.5" />
             중복 제거
+          </button>
+          <button onClick={handleValidateAndClean} disabled={saving || editDirty || dirty} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40" title="미사용 entry 제거 후 Crossref 서지정보와 NLM 저널 약어 검증">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            {validationProgress ? "검증 중" : "정리 · 검증"}
           </button>
           <button onClick={() => setView("entries")} className={`flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors ${view === "entries" ? "text-foreground bg-accent" : "text-muted-foreground hover:text-foreground"}`} title="BibTeX entry 목록">
             <List className="h-3.5 w-3.5" />
@@ -655,6 +744,29 @@ export function BibtexEditor({
         {view === "review" && (
           <div className="h-full overflow-y-auto p-4">
             <div className="mx-auto max-w-5xl space-y-4">
+            {validationProgress && (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs text-foreground">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 animate-pulse text-primary" />
+                  <span>{validationProgress.message}</span>
+                </div>
+                {validationProgress.total > 0 && (
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-primary transition-[width]"
+                      style={{ width: `${Math.round((validationProgress.processed / validationProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {validationResult && (
+              <BibliographyValidationReview
+                result={validationResult}
+                applying={saving}
+                onApply={handleApplyValidation}
+              />
+            )}
             {parsed.issues.length > 0 && (
               <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
                 <div className="font-semibold mb-1">Parse issues</div>

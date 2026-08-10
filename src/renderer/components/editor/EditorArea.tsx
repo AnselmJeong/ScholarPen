@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { parseBibtexCitekeys, parseBibtexDOIMap, parseBibtexEntries } from "../../../shared/bibtex-utils";
+import {
+  buildDoiCitationInsertionPlan,
+  normalizeDoi,
+  parseBibtexCitekeys,
+  parseBibtexEntries,
+} from "../../../shared/bibtex-utils";
 import { useIsDark } from "../../main";
 import {
   useCreateBlockNote,
@@ -451,20 +456,18 @@ export function EditorArea({
       // Check by DOI first (catches same paper with different citekeys),
       // then fall back to citekey check.
       const existing = await rpc.loadBibtex(project.path);
-      const doiMap = parseBibtexDOIMap(existing ?? "");
-      const normalizedDOI = meta.doi.toLowerCase().replace(/^https?:\/\/doi\.org\//i, "");
-      const existingCitekey = doiMap.get(normalizedDOI);
-      const effectiveCitekey = existingCitekey ?? meta.citekey;
+      const normalizedDOI = normalizeDoi(meta.doi);
+      const plan = buildDoiCitationInsertionPlan(existing ?? "", meta.bibtex, normalizedDOI);
+      const effectiveCitekey = plan.citekey;
 
-      if (!existingCitekey && !parseBibtexCitekeys(existing ?? "").includes(meta.citekey)) {
-        if (!meta.bibtex.trim()) {
-          throw new Error(`Resolved DOI ${meta.doi} but no BibTeX entry was returned.`);
-        }
-        const updated = existing ? `${existing.trimEnd()}\n\n${meta.bibtex}` : meta.bibtex;
-        await rpc.saveBibtex(project.path, updated);
+      if (plan.changed) {
+        await rpc.saveBibtex(project.path, plan.bibtex);
         const saved = await rpc.loadBibtex(project.path);
-        if (!parseBibtexCitekeys(saved ?? "").includes(meta.citekey)) {
-          throw new Error(`Could not verify '${meta.citekey}' in references.bib after saving.`);
+        const savedEntry = parseBibtexEntries(saved ?? "").entries.find(
+          (entry) => entry.citekey === effectiveCitekey,
+        );
+        if (!savedEntry || normalizeDoi(savedEntry.fields.doi) !== normalizedDOI) {
+          throw new Error(`Could not verify DOI for '${effectiveCitekey}' in references.bib after saving.`);
         }
         applyBibtexState(saved ?? "");
       }

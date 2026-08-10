@@ -29,6 +29,17 @@ export interface CitationRemapResult {
   replacementCount: number;
 }
 
+export interface BibtexUnusedCleanupPlan {
+  bibtex: string;
+  removedEntries: BibtexEntry[];
+}
+
+export interface DoiCitationInsertionPlan {
+  bibtex: string;
+  citekey: string;
+  changed: boolean;
+}
+
 /** Parse all citekeys from a BibTeX string. */
 export function parseBibtexCitekeys(bibtex: string): string[] {
   return parseBibtexEntries(bibtex).entries.map((entry) => entry.citekey);
@@ -136,6 +147,161 @@ export function parseBibtexEntries(bibtex: string): BibtexParseResult {
   }
 
   return { entries, issues };
+}
+
+/** Collect citekeys only from structured BlockNote citation nodes. */
+export function collectDocumentCitationKeys(
+  value: unknown,
+  keys = new Set<string>(),
+): Set<string> {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectDocumentCitationKeys(item, keys));
+    return keys;
+  }
+  if (!value || typeof value !== "object") return keys;
+
+  const obj = value as Record<string, unknown>;
+  const props = obj.props && typeof obj.props === "object"
+    ? obj.props as Record<string, unknown>
+    : null;
+  if (obj.type === "citation") {
+    const citekey = typeof props?.citekey === "string"
+      ? props.citekey
+      : typeof obj.citekey === "string"
+        ? obj.citekey
+        : "";
+    if (citekey.trim()) keys.add(citekey.trim());
+  }
+  Object.values(obj).forEach((nested) => collectDocumentCitationKeys(nested, keys));
+  return keys;
+}
+
+export function removeUnusedBibtexEntries(
+  bibtex: string,
+  usedCitekeys: Iterable<string>,
+): BibtexUnusedCleanupPlan {
+  const parsed = parseBibtexEntries(bibtex);
+  if (parsed.issues.length > 0) {
+    throw new Error(`BibTeX parse error: ${parsed.issues[0].message}`);
+  }
+  const used = new Set(
+    Array.from(usedCitekeys, (citekey) => citekey.toLocaleLowerCase()),
+  );
+  const removedEntries = parsed.entries.filter(
+    (entry) => !used.has(entry.citekey.toLocaleLowerCase()),
+  );
+  let next = bibtex;
+  for (const entry of [...removedEntries].sort((left, right) => right.start - left.start)) {
+    next = `${next.slice(0, entry.start)}${next.slice(entry.end)}`;
+  }
+  return {
+    bibtex: removedEntries.length > 0
+      ? next.replace(/\n{3,}/g, "\n\n").trim()
+      : bibtex,
+    removedEntries,
+  };
+}
+
+function serializeBibtexEntry(entry: BibtexEntry, updates: Record<string, string>): string {
+  const fields = { ...entry.fields };
+  const orderedFields = Object.keys(fields);
+  for (const [field, value] of Object.entries(updates)) {
+    if (!Object.prototype.hasOwnProperty.call(fields, field)) orderedFields.push(field);
+    fields[field] = value;
+  }
+  const lines = orderedFields.map((field) => `  ${field} = {${fields[field]}},`);
+  if (lines.length > 0) lines[lines.length - 1] = lines[lines.length - 1].replace(/,$/, "");
+  return [`@${entry.entryType}{${entry.citekey},`, ...lines, "}"].join("\n");
+}
+
+/** Apply reviewed field updates without changing citekeys or entry order. */
+export function applyBibtexFieldUpdates(
+  bibtex: string,
+  updatesByCitekey: Record<string, Record<string, string>>,
+): string {
+  const parsed = parseBibtexEntries(bibtex);
+  let next = bibtex;
+  for (const entry of [...parsed.entries].sort((left, right) => right.start - left.start)) {
+    const updates = updatesByCitekey[entry.citekey];
+    if (!updates || Object.keys(updates).length === 0) continue;
+    const replacement = serializeBibtexEntry(entry, updates);
+    next = `${next.slice(0, entry.start)}${replacement}${next.slice(entry.end)}`;
+  }
+  return next;
+}
+
+function replaceEntryCitekey(raw: string, citekey: string): string {
+  return raw.replace(/^(@[a-zA-Z]+\s*\{)\s*([^,]+)(,)/, `$1${citekey}$3`);
+}
+
+function entriesShareTitleAuthorYear(left: BibtexEntry, right: BibtexEntry): boolean {
+  const leftKeys = getBibtexIdentityKeys(left).filter((key) => key.startsWith("title:"));
+  const rightKeys = new Set(
+    getBibtexIdentityKeys(right).filter((key) => key.startsWith("title:")),
+  );
+  return leftKeys.some((key) => rightKeys.has(key));
+}
+
+/**
+ * Merge one DOI-resolved entry into a bibliography. A DOI is mandatory, an
+ * existing DOI wins regardless of citekey, and citekey collisions never point
+ * a new citation at an unrelated entry.
+ */
+export function buildDoiCitationInsertionPlan(
+  bibtex: string,
+  resolvedBibtex: string,
+  expectedDoi: string,
+): DoiCitationInsertionPlan {
+  const normalizedExpectedDoi = normalizeDoi(expectedDoi);
+  if (!normalizedExpectedDoi) throw new Error("Resolved citation is missing a DOI.");
+
+  const resolved = parseBibtexEntries(resolvedBibtex);
+  if (resolved.issues.length > 0 || resolved.entries.length !== 1) {
+    throw new Error("DOI lookup did not return exactly one valid BibTeX entry.");
+  }
+  const candidate = resolved.entries[0];
+  if (normalizeDoi(candidate.fields.doi) !== normalizedExpectedDoi) {
+    throw new Error("Resolved BibTeX entry does not contain the requested DOI.");
+  }
+
+  const existing = parseBibtexEntries(bibtex);
+  if (existing.issues.length > 0) {
+    throw new Error(`Existing BibTeX cannot be updated: ${existing.issues[0].message}`);
+  }
+  const doiMatch = existing.entries.find(
+    (entry) => normalizeDoi(entry.fields.doi) === normalizedExpectedDoi,
+  );
+  if (doiMatch) return { bibtex, citekey: doiMatch.citekey, changed: false };
+
+  const citekeyMatch = existing.entries.find(
+    (entry) => entry.citekey.toLocaleLowerCase() === candidate.citekey.toLocaleLowerCase(),
+  );
+  if (citekeyMatch && !normalizeDoi(citekeyMatch.fields.doi)
+    && entriesShareTitleAuthorYear(citekeyMatch, candidate)) {
+    return {
+      bibtex: applyBibtexFieldUpdates(bibtex, {
+        [citekeyMatch.citekey]: { doi: normalizedExpectedDoi },
+      }),
+      citekey: citekeyMatch.citekey,
+      changed: true,
+    };
+  }
+
+  const usedCitekeys = new Set(existing.entries.map((entry) => entry.citekey.toLocaleLowerCase()));
+  let citekey = candidate.citekey;
+  if (usedCitekeys.has(citekey.toLocaleLowerCase())) {
+    let suffix = "a";
+    while (usedCitekeys.has(`${candidate.citekey}${suffix}`.toLocaleLowerCase())) {
+      suffix = String.fromCharCode(suffix.charCodeAt(0) + 1);
+    }
+    citekey = `${candidate.citekey}${suffix}`;
+  }
+  const raw = replaceEntryCitekey(candidate.raw, citekey);
+  return {
+    bibtex: [bibtex.trim(), raw.trim()].filter(Boolean).join("\n\n"),
+    citekey,
+    changed: true,
+  };
 }
 
 function findTopLevelComma(text: string): number {

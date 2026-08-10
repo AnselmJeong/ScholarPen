@@ -17,6 +17,8 @@ import type {
   AgentThreadWithMessages,
   OllamaProxyResponse,
   BibliographyDeduplicationResult,
+  BibliographyMaintenanceResult,
+  BibliographyValidationProgress,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -54,6 +56,14 @@ type BunRequests = RPCSchema<{
     deduplicateBibliography: {
       params: { projectPath: string; bibtex: string };
       response: BibliographyDeduplicationResult;
+    };
+    validateAndCleanBibliography: {
+      params: { projectPath: string; bibtex: string };
+      response: BibliographyMaintenanceResult;
+    };
+    applyBibliographyValidation: {
+      params: { projectPath: string; bibtex: string };
+      response: string | null;
     };
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
@@ -121,6 +131,7 @@ type BunRequests = RPCSchema<{
   messages: {
     aiChunk: { content: string };
     agentChunk: { content: string; done: boolean };
+    bibliographyValidationProgress: BibliographyValidationProgress;
   };
 }>;
 
@@ -134,6 +145,7 @@ type WebviewRequests = RPCSchema<{
     projectUpdated: { projectPath: string; filePath?: string };
     menuAction: { action: string };
     importMarkdownContent: { content: string; suggestedFilename: string };
+    bibliographyValidationProgress: BibliographyValidationProgress;
   };
 }>;
 

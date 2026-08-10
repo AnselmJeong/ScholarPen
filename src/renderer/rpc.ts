@@ -21,6 +21,8 @@ import type {
   AgentThreadWithMessages,
   OllamaProxyResponse,
   BibliographyDeduplicationResult,
+  BibliographyMaintenanceResult,
+  BibliographyValidationProgress,
 } from "../shared/rpc-types";
 import {
   DEFAULT_OLLAMA_BASE_URL,
@@ -33,6 +35,7 @@ type AiChunkHandler = (content: string, done: boolean) => void;
 type AgentChunkHandler = (content: string, done: boolean) => void;
 type OllamaProxyChunkHandler = (payload: { requestId: string; content: string; done: boolean; error?: string }) => void;
 type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
+type BibliographyValidationProgressHandler = (progress: BibliographyValidationProgress) => void;
 
 const strictRpcMethods = new Set([
   "createProject",
@@ -45,6 +48,8 @@ const strictRpcMethods = new Set([
   "saveBibtex",
   "saveBibtexRaw",
   "deduplicateBibliography",
+  "validateAndCleanBibliography",
+  "applyBibliographyValidation",
   "exportFile",
   "renameFile",
   "deleteFile",
@@ -64,7 +69,7 @@ const strictRpcMethods = new Set([
 // This properly initializes the transport system
 const electrobun = new Electroview({
   rpc: Electroview.defineRPC<ScholarRPC>({
-    maxRequestTime: 30_000,
+    maxRequestTime: 600_000,
     handlers: {
       requests: {},
       messages: {
@@ -88,6 +93,9 @@ const electrobun = new Electroview({
         projectUpdated: ({ projectPath, filePath }) => {
           projectUpdatedListeners.forEach((handler) => handler(projectPath, filePath));
         },
+        bibliographyValidationProgress: (progress) => {
+          bibliographyValidationProgressListeners.forEach((handler) => handler(progress));
+        },
       },
     },
   }),
@@ -100,6 +108,7 @@ const aiChunkListeners: AiChunkHandler[] = [];
 const agentChunkListeners: AgentChunkHandler[] = [];
 const ollamaProxyChunkListeners: OllamaProxyChunkHandler[] = [];
 const projectUpdatedListeners: ProjectUpdatedHandler[] = [];
+const bibliographyValidationProgressListeners: BibliographyValidationProgressHandler[] = [];
 
 export function onMenuAction(handler: MenuActionHandler) {
   menuActionListeners.push(handler);
@@ -149,6 +158,16 @@ export function onProjectUpdated(handler: ProjectUpdatedHandler): () => void {
   };
 }
 
+export function onBibliographyValidationProgress(
+  handler: BibliographyValidationProgressHandler,
+): () => void {
+  bibliographyValidationProgressListeners.push(handler);
+  return () => {
+    const idx = bibliographyValidationProgressListeners.indexOf(handler);
+    if (idx >= 0) bibliographyValidationProgressListeners.splice(idx, 1);
+  };
+}
+
 // Fallback mock for browser development
 function mockRpc(method: string, _args: unknown[]): unknown {
   console.warn(`[RPC] Using mock for ${method}`);
@@ -176,6 +195,17 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       citekeyRemap: {},
       backupPath: null,
     },
+    validateAndCleanBibliography: {
+      bibtex: "",
+      suggestedBibtex: "",
+      removedUnused: 0,
+      scannedDocuments: 0,
+      usedEntries: 0,
+      missingCitekeys: [],
+      backupPath: null,
+      validations: [],
+    },
+    applyBibliographyValidation: null,
     resolveDOI: null,
     searchCitations: [],
     searchKnowledgeBase: [],
@@ -281,6 +311,13 @@ export const rpc = {
       projectPath,
       bibtex,
     }),
+  validateAndCleanBibliography: (projectPath: string, bibtex: string) =>
+    call<BibliographyMaintenanceResult>("validateAndCleanBibliography", {
+      projectPath,
+      bibtex,
+    }),
+  applyBibliographyValidation: (projectPath: string, bibtex: string) =>
+    call<string | null>("applyBibliographyValidation", { projectPath, bibtex }),
   // ── Citation ──────────────────────────────────────────
   resolveDOI: (doi: string) => call<CitationMetadata>("resolveDOI", { doi }),
   searchCitations: (query: string) =>
