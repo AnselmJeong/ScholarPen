@@ -12,8 +12,7 @@ import { streamScholarAgent } from "./agent/service";
 import { listProviderModels } from "./agent/providers";
 import { getAgentThreadStore } from "./agent/thread-store";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
-import { validateBibliography } from "./citation/bibliography-validator";
-import { parseBibtexEntries, removeUnusedBibtexEntries } from "../shared/bibtex-utils";
+import { cleanValidateAndApplyBibliography } from "./citation/bibliography-maintenance";
 import type { BibliographyValidationProgress } from "../shared/rpc-types";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 
@@ -264,71 +263,19 @@ async function main() {
         validateAndCleanBibliography: async ({ projectPath, bibtex }) => {
           internallyUpdatingProjects.add(projectPath);
           try {
-            sendBibliographyValidationProgress?.({
-              stage: "scan",
-              processed: 0,
-              total: 0,
-              message: "프로젝트 문서의 인용을 스캔하는 중",
-            });
-            const usage = await fileSystem.scanBibliographyUsage(projectPath);
-            const cleanup = removeUnusedBibtexEntries(bibtex, usage.usedCitekeys);
-            const availableCitekeys = new Set(
-              parseBibtexEntries(cleanup.bibtex).entries.map(
-                (entry) => entry.citekey.toLocaleLowerCase(),
-              ),
-            );
-            const missingCitekeys = usage.usedCitekeys.filter(
-              (citekey) => !availableCitekeys.has(citekey.toLocaleLowerCase()),
-            );
-            const validation = await validateBibliography(
-              cleanup.bibtex,
-              (progress) => sendBibliographyValidationProgress?.(progress),
-            );
-            sendBibliographyValidationProgress?.({
-              stage: "save",
-              processed: 0,
-              total: 0,
-              message: "미사용 entry 정리본을 백업하고 저장하는 중",
-            });
-            const backupPath = await fileSystem.saveBibliographyMaintenance(
+            const result = await cleanValidateAndApplyBibliography({
               projectPath,
-              cleanup.bibtex,
-              "bibliography-validation",
-            );
-            if (cleanup.removedEntries.length > 0) {
+              bibtex,
+              fileSystem,
+              onProgress: (progress) => sendBibliographyValidationProgress?.(progress),
+            });
+            if (result.backupPath) {
               sendProjectUpdated?.({
                 projectPath,
                 filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
               });
             }
-            return {
-              bibtex: cleanup.bibtex,
-              suggestedBibtex: validation.suggestedBibtex,
-              removedUnused: cleanup.removedEntries.length,
-              scannedDocuments: usage.scannedDocuments,
-              usedEntries: validation.validations.length,
-              missingCitekeys,
-              backupPath,
-              validations: validation.validations,
-            };
-          } finally {
-            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
-          }
-        },
-
-        applyBibliographyValidation: async ({ projectPath, bibtex }) => {
-          internallyUpdatingProjects.add(projectPath);
-          try {
-            const backupPath = await fileSystem.saveBibliographyMaintenance(
-              projectPath,
-              bibtex,
-              "bibliography-validation-apply",
-            );
-            sendProjectUpdated?.({
-              projectPath,
-              filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-            });
-            return backupPath;
+            return result;
           } finally {
             setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
           }

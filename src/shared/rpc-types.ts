@@ -107,7 +107,6 @@ export interface BibliographyValidationProgress {
 
 export interface BibliographyMaintenanceResult {
   bibtex: string;
-  suggestedBibtex: string;
   removedUnused: number;
   scannedDocuments: number;
   usedEntries: number;

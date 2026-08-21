@@ -49,7 +49,6 @@ const strictRpcMethods = new Set([
   "saveBibtexRaw",
   "deduplicateBibliography",
   "validateAndCleanBibliography",
-  "applyBibliographyValidation",
   "exportFile",
   "renameFile",
   "deleteFile",
@@ -197,7 +196,6 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     },
     validateAndCleanBibliography: {
       bibtex: "",
-      suggestedBibtex: "",
       removedUnused: 0,
       scannedDocuments: 0,
       usedEntries: 0,
@@ -205,7 +203,6 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       backupPath: null,
       validations: [],
     },
-    applyBibliographyValidation: null,
     resolveDOI: null,
     searchCitations: [],
     searchKnowledgeBase: [],
@@ -316,8 +313,6 @@ export const rpc = {
       projectPath,
       bibtex,
     }),
-  applyBibliographyValidation: (projectPath: string, bibtex: string) =>
-    call<string | null>("applyBibliographyValidation", { projectPath, bibtex }),
   // ── Citation ──────────────────────────────────────────
   resolveDOI: (doi: string) => call<CitationMetadata>("resolveDOI", { doi }),
   searchCitations: (query: string) =>

@@ -460,8 +460,8 @@ export function BibtexEditor({
     }
     const confirmed = await rpc.confirmAction({
       title: "인용 정리 · 서지정보 검증",
-      message: "모든 문서의 인용을 스캔해 미사용 BibTeX entry를 제거하고, 인용된 entry를 Crossref로 검증할까요?",
-      detail: "삭제 전 references.bib를 자동 백업합니다. DOI가 없는 entry는 제목·저자·연도가 강하게 일치할 때만 DOI를 제안합니다. 저자 등 민감한 차이는 자동 변경하지 않으며 결과에서 검토할 수 있습니다.",
+      message: "모든 문서의 인용을 스캔해 미사용 BibTeX entry를 제거하고, 인용된 entry를 Crossref로 검증한 뒤 확인된 보정을 바로 반영할까요?",
+      detail: "references.bib를 자동 백업한 뒤 DOI, 권·호·페이지와 NLM 공식 저널 약어를 반영합니다. DOI가 없는 entry는 제목·저자·연도가 강하게 일치할 때만 보정하며, 제목·저자 불일치 항목은 변경하지 않습니다.",
       confirmLabel: "정리 · 검증",
     });
     if (!confirmed) return;
@@ -480,7 +480,8 @@ export function BibtexEditor({
       setEditDraft("");
       setValidationResult(result);
       onSaved?.();
-      flash(`미사용 ${result.removedUnused}개 제거 · 인용된 ${result.usedEntries}개 검증 완료`);
+      const appliedCount = result.validations.filter((item) => item.suggestedFields).length;
+      flash(`미사용 ${result.removedUnused}개 제거 · 인용 ${result.usedEntries}개 검증 · 확인된 보정 ${appliedCount}개 반영`);
     } catch (error) {
       setSaveMsg(error instanceof Error ? error.message : "서지정보 검증 실패");
     } finally {
@@ -495,36 +496,6 @@ export function BibtexEditor({
     parsed.issues.length,
     projectPath,
   ]);
-
-  const handleApplyValidation = useCallback(async () => {
-    if (!validationResult || validationResult.suggestedBibtex === validationResult.bibtex) return;
-    const suggestedCount = validationResult.validations.filter((item) => item.suggestedFields).length;
-    const confirmed = await rpc.confirmAction({
-      title: "확인된 서지정보 보정 반영",
-      message: `${suggestedCount}개 entry의 확인된 보정을 references.bib에 반영할까요?`,
-      detail: "DOI, 권·호·페이지와 NLM에서 확인된 저널 표준 약어만 자동 반영합니다. 제목·저자 불일치 항목은 변경하지 않습니다.",
-      confirmLabel: "보정 반영",
-    });
-    if (!confirmed) return;
-
-    setSaving(true);
-    setSaveMsg(null);
-    try {
-      await rpc.applyBibliographyValidation(projectPath, validationResult.suggestedBibtex);
-      setContent(validationResult.suggestedBibtex);
-      setSavedContent(validationResult.suggestedBibtex);
-      onSaved?.();
-      flash(`${suggestedCount}개 entry 보정 반영됨`);
-      setValidationResult({
-        ...validationResult,
-        bibtex: validationResult.suggestedBibtex,
-      });
-    } catch (error) {
-      setSaveMsg(error instanceof Error ? error.message : "보정 반영 실패");
-    } finally {
-      setSaving(false);
-    }
-  }, [flash, onSaved, projectPath, validationResult]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
@@ -761,11 +732,7 @@ export function BibtexEditor({
               </div>
             )}
             {validationResult && (
-              <BibliographyValidationReview
-                result={validationResult}
-                applying={saving}
-                onApply={handleApplyValidation}
-              />
+              <BibliographyValidationReview result={validationResult} />
             )}
             {parsed.issues.length > 0 && (
               <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">

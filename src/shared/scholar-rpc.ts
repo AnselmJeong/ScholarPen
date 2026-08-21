@@ -61,10 +61,6 @@ type BunRequests = RPCSchema<{
       params: { projectPath: string; bibtex: string };
       response: BibliographyMaintenanceResult;
     };
-    applyBibliographyValidation: {
-      params: { projectPath: string; bibtex: string };
-      response: string | null;
-    };
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
     searchCitations: { params: { query: string }; response: CitationMetadata[] };
