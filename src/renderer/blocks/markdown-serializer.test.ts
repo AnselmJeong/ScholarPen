@@ -41,3 +41,72 @@ describe("Quarto export frontmatter", () => {
     expect(qmd).not.toContain('title: "Document"\n\ndate:');
   });
 });
+
+describe("Quarto citation export", () => {
+  const editor = {
+    blocksToMarkdownLossy: async () => "",
+  } as unknown as BlockNoteEditor;
+
+  test("merges adjacent citations into one Pandoc citation group", async () => {
+    const blocks = [{
+      id: "paragraph-1",
+      type: "paragraph",
+      props: {},
+      content: [
+        {
+          type: "citation",
+          props: { citekey: "kaptchuk1998intentional", locator: "" },
+        },
+        {
+          type: "citation",
+          props: { citekey: "jutte2012early", locator: "p. 24" },
+        },
+      ],
+      children: [],
+    }];
+
+    const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd");
+
+    expect(qmd).toContain(
+      "[@kaptchuk1998intentional; @jutte2012early, p. 24]",
+    );
+    expect(qmd).not.toContain(
+      "[@kaptchuk1998intentional][@jutte2012early, p. 24]",
+    );
+  });
+
+  test("does not merge citations separated by text", async () => {
+    const blocks = [{
+      id: "paragraph-1",
+      type: "paragraph",
+      props: {},
+      content: [
+        { type: "citation", props: { citekey: "first2024", locator: "" } },
+        { type: "text", text: " and ", styles: {} },
+        { type: "citation", props: { citekey: "second2025", locator: "" } },
+      ],
+      children: [],
+    }];
+
+    const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd");
+
+    expect(qmd).toContain("[@first2024] and [@second2025]");
+  });
+
+  test("keeps separate citation groups in ordinary Markdown export", async () => {
+    const blocks = [{
+      id: "paragraph-1",
+      type: "paragraph",
+      props: {},
+      content: [
+        { type: "citation", props: { citekey: "first2024", locator: "" } },
+        { type: "citation", props: { citekey: "second2025", locator: "" } },
+      ],
+      children: [],
+    }];
+
+    const markdown = await blocksToScholarMarkdown(editor, blocks, "md");
+
+    expect(markdown).toBe("[@first2024][@second2025]");
+  });
+});
