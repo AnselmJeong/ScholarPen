@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
+import { randomUUID } from "crypto";
 import type {
   ProjectInfo,
   ProjectFile,
@@ -9,6 +10,7 @@ import type {
   AppSettings,
   AppSettingsUpdate,
   BibliographyDeduplicationResult,
+  BibliographyMergeResult,
 } from "../../shared/rpc-types";
 import {
   DEFAULT_OLLAMA_BASE_URL,
@@ -16,8 +18,11 @@ import {
 } from "../../shared/ollama-connection";
 import {
   buildBibtexDeduplicationPlan,
+  buildBibtexAppendPlan,
   collectDocumentCitationKeys,
   deduplicateBibtex,
+  parseBibtexEntries,
+  partitionBibtexAdditions,
   remapDocumentCitationKeys,
 } from "../../shared/bibtex-utils";
 import { seedAppInstructions } from "../agent/app-skills";
@@ -450,6 +455,32 @@ class FileSystemManager {
     return filename;
   }
 
+  private assertValidBibtex(bibtex: string): void {
+    const issue = parseBibtexEntries(bibtex).issues[0];
+    if (issue) {
+      throw new Error(
+        `BibTeX parse error at line ${issue.line}, column ${issue.column}: ${issue.message}`,
+      );
+    }
+  }
+
+  private async writeFileAtomically(filePath: string, content: string): Promise<void> {
+    await mkdir(dirname(filePath), { recursive: true });
+    const temporaryPath = join(
+      dirname(filePath),
+      `.${basename(filePath)}.${randomUUID()}.tmp`,
+    );
+    try {
+      await writeFile(temporaryPath, content, "utf-8");
+      await rename(temporaryPath, filePath);
+    } catch (error) {
+      try {
+        await unlink(temporaryPath);
+      } catch {}
+      throw error;
+    }
+  }
+
   private async getProjectsRootDir(): Promise<string> {
     try {
       const settings = await this.getSettings();
@@ -682,24 +713,93 @@ class FileSystemManager {
   async saveBibtex(projectPath: string, bibtex: string): Promise<void> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
-    await mkdir(dirname(referencesPath), { recursive: true });
-    await writeFile(referencesPath, deduplicateBibtex(bibtex));
+    this.assertValidBibtex(bibtex);
+    await this.writeFileAtomically(referencesPath, deduplicateBibtex(bibtex));
   }
 
   async saveBibtexRaw(projectPath: string, bibtex: string): Promise<void> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
-    await mkdir(dirname(referencesPath), { recursive: true });
-    await writeFile(referencesPath, bibtex);
+    await this.writeFileAtomically(referencesPath, bibtex);
+  }
+
+  async saveBibtexValidated(
+    projectPath: string,
+    bibtex: string,
+    expectedCurrentBibtex: string,
+  ): Promise<void> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    this.assertValidBibtex(bibtex);
+    const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
+    let current = "";
+    try {
+      current = await readFile(referencesPath, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (current !== expectedCurrentBibtex) {
+      throw new Error(
+        "references.bib changed outside this editor. Reload it before saving to avoid overwriting newer changes.",
+      );
+    }
+    await this.writeFileAtomically(referencesPath, bibtex);
   }
 
   async loadBibtex(projectPath: string): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     try {
       return await readFile(join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH), "utf-8");
-    } catch {
-      return "";
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw error;
     }
+  }
+
+  async mergeBibtex(
+    projectPath: string,
+    importedBibtex: string,
+  ): Promise<BibliographyMergeResult> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    const currentBibtex = await this.loadBibtex(projectPath);
+    const appendPlan = buildBibtexAppendPlan(currentBibtex, importedBibtex);
+    const currentEntries = parseBibtexEntries(currentBibtex).entries;
+    const { accepted, skipped } = partitionBibtexAdditions(
+      currentEntries,
+      appendPlan.addedEntries,
+    );
+
+    if (accepted.length === 0) {
+      return {
+        bibtex: currentBibtex,
+        addedEntries: 0,
+        skippedDuplicates: skipped.map(({ entry, duplicateOf }) => ({
+          citekey: entry.citekey,
+          duplicateOfCitekey: duplicateOf.citekey,
+        })),
+        backupPath: null,
+      };
+    }
+
+    const merged = buildBibtexAppendPlan(
+      currentBibtex,
+      accepted.map((entry) => entry.raw).join("\n\n"),
+    ).bibtex;
+    const backupPath = await this.saveBibliographyMaintenance(
+      projectPath,
+      merged,
+      "bibliography-import",
+      currentBibtex,
+    );
+
+    return {
+      bibtex: merged,
+      addedEntries: accepted.length,
+      skippedDuplicates: skipped.map(({ entry, duplicateOf }) => ({
+        citekey: entry.citekey,
+        duplicateOfCitekey: duplicateOf.citekey,
+      })),
+      backupPath,
+    };
   }
 
   async scanBibliographyUsage(projectPath: string): Promise<{
@@ -741,14 +841,21 @@ class FileSystemManager {
     projectPath: string,
     bibtex: string,
     backupPrefix: string,
+    expectedOriginal?: string,
   ): Promise<string | null> {
     projectPath = await this.assertKnownProjectPath(projectPath);
+    this.assertValidBibtex(bibtex);
     const referencesPath = join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH);
     let original = "";
     try {
       original = await readFile(referencesPath, "utf-8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (expectedOriginal !== undefined && original !== expectedOriginal) {
+      throw new Error(
+        "references.bib changed outside ScholarPen. Reload it before applying this operation to avoid overwriting newer changes.",
+      );
     }
     if (original === bibtex) return null;
 
@@ -763,8 +870,7 @@ class FileSystemManager {
     await mkdir(dirname(bibliographyBackupPath), { recursive: true });
     await writeFile(bibliographyBackupPath, original, "utf-8");
     try {
-      await mkdir(dirname(referencesPath), { recursive: true });
-      await writeFile(referencesPath, bibtex, "utf-8");
+      await this.writeFileAtomically(referencesPath, bibtex);
     } catch (error) {
       await writeFile(referencesPath, original, "utf-8");
       throw error;
@@ -777,6 +883,7 @@ class FileSystemManager {
     bibtex: string,
   ): Promise<BibliographyDeduplicationResult> {
     projectPath = await this.assertKnownProjectPath(projectPath);
+    this.assertValidBibtex(bibtex);
     const plan = buildBibtexDeduplicationPlan(bibtex);
     if (plan.removedEntries === 0) {
       return {
@@ -833,6 +940,11 @@ class FileSystemManager {
       originalBibtex = await readFile(referencesPath, "utf-8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (originalBibtex !== bibtex) {
+      throw new Error(
+        "references.bib changed outside this editor. Reload it before deduplicating to avoid overwriting newer changes.",
+      );
     }
 
     const backupStamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -935,9 +1047,13 @@ class FileSystemManager {
 
   // ── File Tree ───────────────────────────────────────────────
 
-  async listProjectFiles(projectPath: string, depth = 0): Promise<FileNode[]> {
+  async listProjectFiles(
+    projectPath: string,
+    depth = 0,
+    maxDepth = 5,
+  ): Promise<FileNode[]> {
     if (depth === 0) projectPath = await this.assertKnownProjectPath(projectPath);
-    if (depth > 5) return [];
+    if (depth > maxDepth) return [];
     const entries = await readdir(projectPath, { withFileTypes: true });
 
     // Files/folders generated by Electrobun or other internal tools
@@ -965,7 +1081,7 @@ class FileSystemManager {
       };
 
       if (isDir) {
-        node.children = await this.listProjectFiles(fullPath, depth + 1);
+        node.children = await this.listProjectFiles(fullPath, depth + 1, maxDepth);
       }
 
       return node;

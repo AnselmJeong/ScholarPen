@@ -13,6 +13,10 @@ import { listProviderModels } from "./agent/providers";
 import { getAgentThreadStore } from "./agent/thread-store";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
 import { validateBibliography } from "./citation/bibliography-validator";
+import {
+  proposeBibliographyRepair,
+  validateBibliographyRepair,
+} from "./citation/bibliography-repair";
 import { parseBibtexEntries, removeUnusedBibtexEntries } from "../shared/bibtex-utils";
 import type { BibliographyValidationProgress } from "../shared/rpc-types";
 import type { ScholarRPC } from "../shared/scholar-rpc";
@@ -242,7 +246,63 @@ async function main() {
           });
         },
 
+        saveBibtexValidated: async ({ projectPath, bibtex, expectedCurrentBibtex }) => {
+          recentlySavedFiles.add(BIBLIOGRAPHY_RELATIVE_PATH);
+          recentlySavedFiles.add("references.bib");
+          setTimeout(() => {
+            recentlySavedFiles.delete(BIBLIOGRAPHY_RELATIVE_PATH);
+            recentlySavedFiles.delete("references.bib");
+          }, 3000);
+          await fileSystem.saveBibtexValidated(projectPath, bibtex, expectedCurrentBibtex);
+          sendProjectUpdated?.({
+            projectPath,
+            filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+          });
+        },
+
         loadBibtex: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
+
+        mergeBibtex: async ({ projectPath, importedBibtex }) => {
+          internallyUpdatingProjects.add(projectPath);
+          try {
+            const result = await fileSystem.mergeBibtex(projectPath, importedBibtex);
+            if (result.addedEntries > 0) {
+              sendProjectUpdated?.({
+                projectPath,
+                filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+              });
+            }
+            return result;
+          } finally {
+            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
+          }
+        },
+
+        proposeBibliographyRepair: async ({ projectPath, bibtex, mode }) => {
+          await fileSystem.loadBibtex(projectPath);
+          const settings = await fileSystem.getSettings();
+          return proposeBibliographyRepair(bibtex, mode, settings);
+        },
+
+        applyBibliographyRepair: async ({ projectPath, originalBibtex, repairedBibtex }) => {
+          validateBibliographyRepair(originalBibtex, repairedBibtex);
+          internallyUpdatingProjects.add(projectPath);
+          try {
+            const backupPath = await fileSystem.saveBibliographyMaintenance(
+              projectPath,
+              repairedBibtex,
+              "bibliography-syntax-repair",
+              originalBibtex,
+            );
+            sendProjectUpdated?.({
+              projectPath,
+              filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
+            });
+            return backupPath;
+          } finally {
+            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
+          }
+        },
 
         deduplicateBibliography: async ({ projectPath, bibtex }) => {
           internallyUpdatingProjects.add(projectPath);
@@ -294,6 +354,7 @@ async function main() {
               projectPath,
               cleanup.bibtex,
               "bibliography-validation",
+              bibtex,
             );
             if (cleanup.removedEntries.length > 0) {
               sendProjectUpdated?.({
@@ -316,13 +377,14 @@ async function main() {
           }
         },
 
-        applyBibliographyValidation: async ({ projectPath, bibtex }) => {
+        applyBibliographyValidation: async ({ projectPath, bibtex, expectedCurrentBibtex }) => {
           internallyUpdatingProjects.add(projectPath);
           try {
             const backupPath = await fileSystem.saveBibliographyMaintenance(
               projectPath,
               bibtex,
               "bibliography-validation-apply",
+              expectedCurrentBibtex,
             );
             sendProjectUpdated?.({
               projectPath,

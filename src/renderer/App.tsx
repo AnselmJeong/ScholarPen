@@ -185,11 +185,21 @@ export function App() {
     setCurrentView("editor");
   }, []);
 
-  const handleShowReferences = useCallback(() => {
+  const handleShowReferences = useCallback(async () => {
     if (!activeProject) return;
-    const bibliography = findBibliographyNode(fileTree);
-    if (bibliography) handleFileSelect(bibliography);
-  }, [activeProject, fileTree, handleFileSelect]);
+    try {
+      // The canonical file may have been replaced by an external editor or a
+      // cloud-sync client without producing a reliable fs.watch event. Refresh
+      // both the tree metadata and the already-open viewer from disk.
+      const latestTree = await rpc.listProjectFiles(activeProject.path);
+      setFileTree(latestTree);
+      setBibReloadTrigger((value) => value + 1);
+      const bibliography = findBibliographyNode(latestTree);
+      if (bibliography) handleFileSelect(bibliography);
+    } catch (error) {
+      console.error("Could not refresh references.bib:", error);
+    }
+  }, [activeProject, handleFileSelect]);
 
   const handleOpenQuartoBookDialog = useCallback(() => {
     if (!activeProject) return;

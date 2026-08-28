@@ -1,20 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RotateCcw, Save, SearchCheck, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RotateCcw, Save, SearchCheck, ShieldCheck, Trash2, Upload, WandSparkles, Wrench } from "lucide-react";
 import type {
   BibliographyMaintenanceResult,
+  BibliographyRepairProposal,
   BibliographyValidationProgress,
   FileNode,
 } from "../../../shared/rpc-types";
 import {
   areBibtexEntriesDuplicates,
+  buildBibtexAppendPlan,
   findDuplicateBibtexGroups,
   parseBibtexEntries,
+  partitionBibtexAdditions,
   type BibtexEntry,
+  type BibtexParseIssue,
 } from "../../../shared/bibtex-utils";
 import { onBibliographyValidationProgress, rpc } from "../../rpc";
 import { TextFindPanel } from "./TextFindPanel";
 import { useTextFind } from "../../hooks/useTextFind";
 import { BibliographyValidationReview } from "./BibliographyValidationReview";
+import { decideExternalBibtexSync } from "./bibtex-external-sync";
 
 type BibtexView = "entries" | "review";
 const TABLE_ROW_LIMIT = 500;
@@ -83,24 +88,11 @@ function replaceEntryInBibtex(source: string, entry: BibtexEntry, nextRaw: strin
   return [before, nextRaw.trim(), after].filter(Boolean).join("\n\n");
 }
 
-function appendEntriesToBibtex(source: string, rawEntries: BibtexEntry[]): string {
-  return [source.trim(), rawEntries.map((entry) => entry.raw.trim()).join("\n\n")]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 function validateSingleEntry(raw: string): { entry?: BibtexEntry; error?: string } {
   const parsed = parseBibtexEntries(raw);
   if (parsed.issues.length > 0) return { error: parsed.issues[0].message };
   if (parsed.entries.length !== 1) return { error: "BibTeX entry를 하나만 입력하세요." };
   return { entry: parsed.entries[0] };
-}
-
-function validateMultipleEntries(raw: string): { entries?: BibtexEntry[]; error?: string } {
-  const parsed = parseBibtexEntries(raw);
-  if (parsed.issues.length > 0) return { error: parsed.issues[0].message };
-  if (parsed.entries.length === 0) return { error: "BibTeX entry를 입력하세요." };
-  return { entries: parsed.entries };
 }
 
 function findDuplicateForEntry(entries: BibtexEntry[], candidate: BibtexEntry, ignoreStart?: number): string | null {
@@ -118,6 +110,14 @@ function findDuplicateForEntry(entries: BibtexEntry[], candidate: BibtexEntry, i
 function parsedEntryByStart(entries: BibtexEntry[], start: number | null): BibtexEntry | null {
   if (start === null) return null;
   return entries.find((entry) => entry.start === start) ?? null;
+}
+
+function parseIssueLabel(code: string): string {
+  if (code === "unclosed_entry") return "닫히지 않은 entry";
+  if (code === "invalid_header") return "잘못된 entry header";
+  if (code === "missing_citekey") return "citekey 뒤 comma 누락";
+  if (code === "empty_citekey") return "빈 citekey";
+  return "BibTeX syntax issue";
 }
 
 export function BibtexEditor({
@@ -144,24 +144,22 @@ export function BibtexEditor({
   const [addDraft, setAddDraft] = useState("");
   const [validationResult, setValidationResult] = useState<BibliographyMaintenanceResult | null>(null);
   const [validationProgress, setValidationProgress] = useState<BibliographyValidationProgress | null>(null);
+  const [repairProposal, setRepairProposal] = useState<BibliographyRepairProposal | null>(null);
+  const [repairDraft, setRepairDraft] = useState(initialContent);
+  const [repairing, setRepairing] = useState<"deterministic" | "llm" | null>(null);
+  const [externalContent, setExternalContent] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const repairEditorRef = useRef<HTMLTextAreaElement>(null);
+  const bibtexImportRef = useRef<HTMLInputElement>(null);
   const find = useTextFind(contentRef, file.path);
   const dirty = content !== savedContent;
 
   useEffect(() => onBibliographyValidationProgress(setValidationProgress), []);
 
-  useEffect(() => {
-    if (content !== savedContent) return;
-    setContent(initialContent);
-    setSavedContent(initialContent);
-    setUsedCitekeys(null);
-    setSelectedStart(null);
-    setEditDraft("");
-  }, [content, file.path, initialContent, reloadTrigger, savedContent]);
-
   useEffect(() => setValidationResult(null), [file.path, projectPath]);
 
   const parsed = useMemo(() => parseBibtexEntries(content), [content]);
+  const repairDraftParsed = useMemo(() => parseBibtexEntries(repairDraft), [repairDraft]);
   const selectedEntry = useMemo(
     () => parsedEntryByStart(parsed.entries, selectedStart),
     [parsed.entries, selectedStart]
@@ -185,6 +183,32 @@ export function BibtexEditor({
   const visibleDuplicateGroups = useMemo(() => duplicateGroups.slice(0, REVIEW_ITEM_LIMIT), [duplicateGroups]);
 
   useEffect(() => {
+    const decision = decideExternalBibtexSync(
+      savedContent,
+      initialContent,
+      dirty || editDirty,
+    );
+    if (decision === "unchanged") return;
+    if (decision === "conflict") {
+      setExternalContent(initialContent);
+      return;
+    }
+
+    setExternalContent(null);
+    setContent(initialContent);
+    setSavedContent(initialContent);
+    setUsedCitekeys(null);
+    setSelectedStart(null);
+    setEditDraft("");
+    setValidationResult(null);
+  }, [dirty, editDirty, file.path, initialContent, reloadTrigger, savedContent]);
+
+  useEffect(() => {
+    setRepairDraft(content);
+    setRepairProposal(null);
+  }, [content, file.path]);
+
+  useEffect(() => {
     if (parsed.entries.length === 0) {
       setSelectedStart(null);
       setEditDraft("");
@@ -203,14 +227,80 @@ export function BibtexEditor({
   }, []);
 
   const saveRaw = useCallback(async (next: string, text = "저장됨") => {
-    await rpc.saveBibtexRaw(projectPath, next);
+    await rpc.saveBibtexValidated(projectPath, next, savedContent);
+    setExternalContent(null);
     setContent(next);
     setSavedContent(next);
     onSaved?.();
     flash(text);
-  }, [flash, onSaved, projectPath]);
+  }, [flash, onSaved, projectPath, savedContent]);
+
+  const handleReloadExternal = useCallback(async () => {
+    if (externalContent === null) return;
+    const confirmed = await rpc.confirmAction({
+      title: "Reload external bibliography",
+      message: "Discard the unsaved entry edit and load the externally changed references.bib?",
+      detail: "ScholarPen will not write the older in-memory copy back to disk.",
+      confirmLabel: "Load external file",
+    });
+    if (!confirmed) return;
+    setContent(externalContent);
+    setSavedContent(externalContent);
+    setExternalContent(null);
+    setSelectedStart(null);
+    setEditDraft("");
+    setUsedCitekeys(null);
+    setValidationResult(null);
+    flash("Externally changed references.bib loaded");
+  }, [externalContent, flash]);
+
+  const handleMergeBibtexFile = useCallback(async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const selectedFile = event.target.files?.[0];
+    event.target.value = "";
+    if (!selectedFile) return;
+    if (dirty || editDirty || externalContent !== null) {
+      setSaveMsg("Save or reload the current bibliography before importing another .bib file.");
+      return;
+    }
+
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const importedBibtex = await selectedFile.text();
+      const result = await rpc.mergeBibtex(projectPath, importedBibtex);
+      setContent(result.bibtex);
+      setSavedContent(result.bibtex);
+      setExternalContent(null);
+      setSelectedStart(null);
+      setEditDraft("");
+      setUsedCitekeys(null);
+      setValidationResult(null);
+      onSaved?.();
+
+      const skipped = result.skippedDuplicates.length;
+      const examples = result.skippedDuplicates.slice(0, 3).map((entry) => (
+        `${entry.citekey} → ${entry.duplicateOfCitekey}`
+      )).join(", ");
+      const summary = result.addedEntries > 0
+        ? `${selectedFile.name}: ${result.addedEntries} added · ${skipped} duplicates skipped`
+        : `${selectedFile.name}: all ${skipped} entries were duplicates; no changes written`;
+      flash(`${summary}${examples ? ` (${examples})` : ""}`);
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "BibTeX file import failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [dirty, editDirty, externalContent, flash, onSaved, projectPath]);
 
   const handleSave = useCallback(async () => {
+    if (parsed.issues.length > 0) {
+      setView("review");
+      const issue = parsed.issues[0];
+      setSaveMsg(`line ${issue.line}, column ${issue.column}: ${issue.message}`);
+      return;
+    }
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -222,7 +312,7 @@ export function BibtexEditor({
     } finally {
       setSaving(false);
     }
-  }, [content, saveRaw]);
+  }, [content, parsed.issues, saveRaw]);
 
   const handleSelectEntry = useCallback(async (entry: BibtexEntry) => {
     if (editDirty) {
@@ -268,40 +358,65 @@ export function BibtexEditor({
   }, [content, editDraft, parsed.entries, saveRaw, selectedEntry]);
 
   const handleAppendEntry = useCallback(async () => {
-    const validation = validateMultipleEntries(addDraft);
-    if (validation.error || !validation.entries) {
-      setSaveMsg(validation.error ?? "BibTeX entry를 확인하세요.");
+    if (parsed.issues.length > 0) {
+      setView("review");
+      const issue = parsed.issues[0];
+      setSaveMsg(
+        `기존 bibliography가 line ${issue.line}, column ${issue.column}에서 유효하지 않아 append하지 않았습니다.`,
+      );
       return;
     }
-    const pendingEntries: BibtexEntry[] = [];
-    for (const entry of validation.entries) {
-      const duplicate = findDuplicateForEntry([...parsed.entries, ...pendingEntries], entry);
-      if (duplicate) {
-        setSaveMsg(duplicate);
-        return;
-      }
-      pendingEntries.push(entry);
+    let appendPlan;
+    try {
+      appendPlan = buildBibtexAppendPlan(content, addDraft);
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "BibTeX entry를 확인하세요.");
+      return;
+    }
+    const { accepted: pendingEntries, skipped } = partitionBibtexAdditions(
+      parsed.entries,
+      appendPlan.addedEntries,
+    );
+    if (pendingEntries.length === 0) {
+      const examples = skipped.slice(0, 3).map(({ entry, duplicateOf }) => (
+        `${entry.citekey} → ${duplicateOf.citekey}`
+      )).join(", ");
+      setAddDraft("");
+      setSaveMsg(`${skipped.length}개 중복을 건너뜀 · 추가할 새 entry 없음${examples ? ` (${examples})` : ""}`);
+      return;
     }
 
     setSaving(true);
     setSaveMsg(null);
     try {
-      const next = appendEntriesToBibtex(content, pendingEntries);
+      const uniquePlan = buildBibtexAppendPlan(
+        content,
+        pendingEntries.map((entry) => entry.raw).join("\n\n"),
+      );
+      const next = uniquePlan.bibtex;
       const count = pendingEntries.length;
-      await saveRaw(next, count === 1 ? `'${pendingEntries[0].citekey}' 추가됨` : `${count}개 BibTeX entries 추가됨`);
+      const skippedExamples = skipped.slice(0, 3).map(({ entry, duplicateOf }) => (
+        `${entry.citekey} → ${duplicateOf.citekey}`
+      )).join(", ");
+      const resultMessage = skipped.length > 0
+        ? `${count}개 추가 · ${skipped.length}개 중복 건너뜀${skippedExamples ? ` (${skippedExamples})` : ""}`
+        : count === 1
+          ? `'${pendingEntries[0].citekey}' 추가됨`
+          : `${count}개 BibTeX entries 추가됨`;
+      await saveRaw(next, resultMessage);
       const lastCitekey = pendingEntries.at(-1)?.citekey;
       const savedEntry = parseBibtexEntries(next).entries.find((entry) => entry.citekey === lastCitekey);
       setSelectedStart(savedEntry?.start ?? null);
       setEditDraft(savedEntry?.raw ?? "");
       setAddDraft("");
-      setSaveMsg(count === 1 ? "추가됨" : `${count}개 추가됨`);
+      setSaveMsg(skipped.length > 0 ? resultMessage : count === 1 ? "추가됨" : `${count}개 추가됨`);
       setTimeout(() => setSaveMsg(null), 2500);
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : "추가 실패");
     } finally {
       setSaving(false);
     }
-  }, [addDraft, content, parsed.entries, saveRaw]);
+  }, [addDraft, content, parsed.entries, parsed.issues, saveRaw]);
 
   useEffect(() => {
     if (!onSaveReady) return;
@@ -510,7 +625,11 @@ export function BibtexEditor({
     setSaving(true);
     setSaveMsg(null);
     try {
-      await rpc.applyBibliographyValidation(projectPath, validationResult.suggestedBibtex);
+      await rpc.applyBibliographyValidation(
+        projectPath,
+        validationResult.suggestedBibtex,
+        validationResult.bibtex,
+      );
       setContent(validationResult.suggestedBibtex);
       setSavedContent(validationResult.suggestedBibtex);
       onSaved?.();
@@ -525,6 +644,69 @@ export function BibtexEditor({
       setSaving(false);
     }
   }, [flash, onSaved, projectPath, validationResult]);
+
+  const handleProposeRepair = useCallback(async (mode: "deterministic" | "llm") => {
+    setRepairing(mode);
+    setSaveMsg(null);
+    try {
+      const proposal = await rpc.proposeBibliographyRepair(projectPath, content, mode);
+      setRepairProposal(proposal);
+      setRepairDraft(proposal.repairedBibtex);
+      flash(
+        proposal.method === "llm"
+          ? `${proposal.model ?? "LLM"} syntax repair proposal ready`
+          : "Safe syntax repair proposal ready",
+      );
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "Bibliography repair proposal failed");
+    } finally {
+      setRepairing(null);
+    }
+  }, [content, flash, projectPath]);
+
+  const focusRepairIssue = useCallback((issue: BibtexParseIssue) => {
+    const editor = repairEditorRef.current;
+    if (!editor) return;
+    editor.focus();
+    editor.setSelectionRange(
+      Math.min(issue.offset, repairDraft.length),
+      Math.min(issue.offset + Math.max(1, issue.entryHint?.length ?? 1), repairDraft.length),
+    );
+    editor.scrollTop = Math.max(0, (issue.line - 3) * 20);
+  }, [repairDraft.length]);
+
+  const handleApplyRepair = useCallback(async () => {
+    if (repairDraft === content) return;
+    if (repairDraftParsed.issues.length > 0) {
+      const issue = repairDraftParsed.issues[0];
+      setSaveMsg(`Repair draft is invalid at line ${issue.line}, column ${issue.column}: ${issue.message}`);
+      return;
+    }
+    const confirmed = await rpc.confirmAction({
+      title: "Apply bibliography syntax repair",
+      message: "Apply the validated repair to references.bib?",
+      detail: "The current bibliography is backed up first. The repair is rejected if entries or parsed metadata changed, or if references.bib changed after this proposal was created.",
+      confirmLabel: "Apply repair",
+    });
+    if (!confirmed) return;
+
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const backupPath = await rpc.applyBibliographyRepair(projectPath, content, repairDraft);
+      setContent(repairDraft);
+      setSavedContent(repairDraft);
+      setSelectedStart(null);
+      setEditDraft("");
+      setRepairProposal(null);
+      onSaved?.();
+      flash(backupPath ? "Syntax repaired · original bibliography backed up" : "Syntax repaired");
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "Bibliography repair failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [content, flash, onSaved, projectPath, repairDraft, repairDraftParsed.issues]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
@@ -544,7 +726,7 @@ export function BibtexEditor({
         <span>{file.name}</span>
         <span className="text-xs text-muted-foreground/60 ml-2">BibTeX</span>
         <div className="ml-auto flex items-center gap-2">
-          {saveMsg && <span className={`text-xs ${saveMsg.includes("실패") || saveMsg.includes("이미") || saveMsg.includes("확인") || saveMsg.includes("입력") ? "text-red-400" : "text-emerald-500"}`}>{saveMsg}</span>}
+          {saveMsg && <span className={`text-xs ${/(실패|이미|확인|입력|유효하지|invalid|error|line \d+)/i.test(saveMsg) ? "text-red-400" : "text-emerald-500"}`}>{saveMsg}</span>}
           {editDirty && <span className="text-xs text-amber-500">entry 수정됨</span>}
           {dirty && !editDirty && <span className="text-xs text-amber-500">수정됨</span>}
           {message && <span className="text-xs text-emerald-500">{message}</span>}
@@ -584,6 +766,21 @@ export function BibtexEditor({
           </button>
         </div>
       </div>
+
+      {externalContent !== null && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-amber-300 bg-amber-50 px-6 py-2 text-xs text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            references.bib changed outside ScholarPen while this tab had an unsaved entry edit. The external file has not been overwritten.
+          </span>
+          <button
+            onClick={handleReloadExternal}
+            className="rounded border border-amber-400/70 px-2 py-1 font-medium transition-colors hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-950"
+          >
+            Load external file
+          </button>
+        </div>
+      )}
 
       <div ref={contentRef} className="flex-1 overflow-hidden">
         {view === "entries" && (
@@ -723,6 +920,23 @@ export function BibtexEditor({
                 <div className="flex items-center gap-2 border-b border-border px-3 py-2">
                   <FilePlus2 className="h-4 w-4 text-emerald-500" />
                   <div className="flex-1 text-sm font-medium text-foreground">Add new entry</div>
+                  <input
+                    ref={bibtexImportRef}
+                    type="file"
+                    accept=".bib,text/x-bibtex,text/plain"
+                    onChange={handleMergeBibtexFile}
+                    className="hidden"
+                    aria-label="Select a BibTeX file to merge"
+                  />
+                  <button
+                    onClick={() => bibtexImportRef.current?.click()}
+                    disabled={saving || dirty || editDirty || externalContent !== null}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+                    title="외부 .bib 파일을 병합하고 중복 entry만 건너뜁니다"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    Merge .bib
+                  </button>
                   <button onClick={handleAppendEntry} disabled={saving || !addDraft.trim()} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40" title="새 BibTeX entry append">
                     <FilePlus2 className="h-3.5 w-3.5" />
                     Append
@@ -768,10 +982,107 @@ export function BibtexEditor({
               />
             )}
             {parsed.issues.length > 0 && (
-              <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
-                <div className="font-semibold mb-1">Parse issues</div>
-                {parsed.issues.map((issue, idx) => <div key={idx} className="text-xs">offset {issue.offset}: {issue.message}</div>)}
-              </div>
+              <section className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">BibTeX integrity issues</div>
+                    <p className="mt-1 text-xs opacity-80">
+                      유효하지 않은 bibliography에는 새 entry를 추가하거나 저장할 수 없습니다. 위치를 확인한 뒤 안전 보정 또는 AI 보정을 검토하세요.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handleProposeRepair("deterministic")}
+                      disabled={saving || repairing !== null}
+                      className="flex items-center gap-1 rounded border border-red-300/70 px-2 py-1 text-xs transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-900 dark:hover:bg-red-950"
+                      title="명확한 brace 누락처럼 안전하게 판단할 수 있는 syntax만 보정"
+                    >
+                      <Wrench className="h-3.5 w-3.5" />
+                      {repairing === "deterministic" ? "분석 중" : "안전 보정"}
+                    </button>
+                    <button
+                      onClick={() => handleProposeRepair("llm")}
+                      disabled={saving || repairing !== null}
+                      className="flex items-center gap-1 rounded border border-red-300/70 px-2 py-1 text-xs transition-colors hover:bg-red-100 disabled:opacity-40 dark:border-red-900 dark:hover:bg-red-950"
+                      title="현재 Sidebar provider/model로 syntax-only repair proposal 생성"
+                    >
+                      <WandSparkles className="h-3.5 w-3.5" />
+                      {repairing === "llm" ? "AI 분석 중" : "AI 보정 제안"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  {parsed.issues.map((issue) => (
+                    <div key={`${issue.code}-${issue.offset}`} className="rounded border border-red-300/70 bg-background/60 p-2.5 dark:border-red-900/70">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-semibold">{parseIssueLabel(issue.code)}</span>
+                        {issue.entryHint && <span className="font-mono">{issue.entryHint}</span>}
+                        <span className="opacity-75">line {issue.line}, column {issue.column} · offset {issue.offset}</span>
+                        <button
+                          onClick={() => focusRepairIssue(issue)}
+                          className="ml-auto rounded px-1.5 py-0.5 text-[11px] transition-colors hover:bg-red-100 dark:hover:bg-red-950"
+                        >
+                          소스 위치 열기
+                        </button>
+                      </div>
+                      <p className="mt-1 text-xs">{issue.message}</p>
+                      <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-2 font-mono text-[11px] leading-4 text-foreground">{issue.context}</pre>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-3 rounded border border-border bg-background/70">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs">
+                    <div>
+                      <span className="font-semibold text-foreground">Repair preview</span>
+                      {repairProposal && (
+                        <span className="ml-2 text-muted-foreground">
+                          {repairProposal.method === "llm"
+                            ? `${repairProposal.provider}/${repairProposal.model}`
+                            : "deterministic syntax repair"}
+                        </span>
+                      )}
+                    </div>
+                    <span className={repairDraftParsed.issues.length === 0 ? "text-emerald-500" : "text-red-400"}>
+                      {repairDraftParsed.issues.length === 0
+                        ? `${repairDraftParsed.entries.length} entries · syntax valid`
+                        : `${repairDraftParsed.issues.length} issues remain`}
+                    </span>
+                  </div>
+                  <textarea
+                    ref={repairEditorRef}
+                    value={repairDraft}
+                    onChange={(event) => {
+                      setRepairDraft(event.target.value);
+                      setRepairProposal(null);
+                    }}
+                    spellCheck={false}
+                    className="h-64 w-full resize-y bg-transparent p-3 font-mono text-xs leading-5 text-foreground outline-none"
+                    aria-label="Bibliography syntax repair editor"
+                  />
+                  <div className="flex justify-end gap-2 border-t border-border px-3 py-2">
+                    <button
+                      onClick={() => {
+                        setRepairDraft(content);
+                        setRepairProposal(null);
+                      }}
+                      disabled={repairDraft === content}
+                      className="rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+                    >
+                      제안 취소
+                    </button>
+                    <button
+                      onClick={handleApplyRepair}
+                      disabled={saving || repairDraft === content || repairDraftParsed.issues.length > 0}
+                      className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-xs text-primary-foreground transition-opacity disabled:opacity-40"
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      검증 후 보정 반영
+                    </button>
+                  </div>
+                </div>
+              </section>
             )}
             <section className="rounded-md border border-border p-3">
               <div className="mb-3 flex items-center justify-between gap-3">

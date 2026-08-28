@@ -1,5 +1,7 @@
 // Shared RPC type definitions between Main process and Webview
 
+import type { BibtexParseIssue } from "./bibtex-utils";
+
 export interface OllamaMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -59,6 +61,16 @@ export interface BibliographyDeduplicationResult {
   backupPath: string | null;
 }
 
+export interface BibliographyMergeResult {
+  bibtex: string;
+  addedEntries: number;
+  skippedDuplicates: Array<{
+    citekey: string;
+    duplicateOfCitekey: string;
+  }>;
+  backupPath: string | null;
+}
+
 export type BibliographyValidationStatus =
   | "valid"
   | "changes"
@@ -114,6 +126,14 @@ export interface BibliographyMaintenanceResult {
   missingCitekeys: string[];
   backupPath: string | null;
   validations: BibliographyEntryValidation[];
+}
+
+export interface BibliographyRepairProposal {
+  repairedBibtex: string;
+  method: "deterministic" | "llm";
+  issuesBefore: BibtexParseIssue[];
+  provider?: LLMProvider;
+  model?: string;
 }
 
 export interface KBDocument {

@@ -8,8 +8,14 @@ export interface BibtexEntry {
 }
 
 export interface BibtexParseIssue {
+  code: "invalid_header" | "unclosed_entry" | "missing_citekey" | "empty_citekey";
   message: string;
   offset: number;
+  endOffset: number;
+  line: number;
+  column: number;
+  context: string;
+  entryHint?: string;
 }
 
 export interface BibtexParseResult {
@@ -38,6 +44,21 @@ export interface DoiCitationInsertionPlan {
   bibtex: string;
   citekey: string;
   changed: boolean;
+}
+
+export interface BibtexAppendPlan {
+  bibtex: string;
+  addedEntries: BibtexEntry[];
+}
+
+export interface BibtexDuplicateSkip {
+  entry: BibtexEntry;
+  duplicateOf: BibtexEntry;
+}
+
+export interface BibtexAdditionPartition {
+  accepted: BibtexEntry[];
+  skipped: BibtexDuplicateSkip[];
 }
 
 /** Parse all citekeys from a BibTeX string. */
@@ -79,7 +100,13 @@ export function parseBibtexEntries(bibtex: string): BibtexParseResult {
 
     const header = bibtex.slice(at).match(/^@([a-zA-Z]+)\s*\{/);
     if (!header) {
-      issues.push({ message: "Invalid BibTeX entry header.", offset: at });
+      issues.push(createBibtexIssue(
+        bibtex,
+        "invalid_header",
+        "Invalid BibTeX entry header. Expected @type{citekey, ...}.",
+        at,
+        Math.min(bibtex.length, at + 1),
+      ));
       i = at + 1;
       continue;
     }
@@ -115,7 +142,13 @@ export function parseBibtexEntries(bibtex: string): BibtexParseResult {
     }
 
     if (depth !== 0) {
-      issues.push({ message: "Unclosed BibTeX entry.", offset: at });
+      issues.push(createBibtexIssue(
+        bibtex,
+        "unclosed_entry",
+        "Unclosed BibTeX entry. A closing brace or quote is missing before the end of the file.",
+        at,
+        bibtex.length,
+      ));
       break;
     }
 
@@ -123,14 +156,26 @@ export function parseBibtexEntries(bibtex: string): BibtexParseResult {
     const body = bibtex.slice(bodyStart, pos);
     const comma = findTopLevelComma(body);
     if (comma === -1) {
-      issues.push({ message: "BibTeX entry is missing a citekey.", offset: at });
+      issues.push(createBibtexIssue(
+        bibtex,
+        "missing_citekey",
+        "BibTeX entry is missing the comma after its citekey.",
+        at,
+        pos + 1,
+      ));
       i = pos + 1;
       continue;
     }
 
     const citekey = body.slice(0, comma).trim();
     if (!citekey) {
-      issues.push({ message: "BibTeX entry has an empty citekey.", offset: at });
+      issues.push(createBibtexIssue(
+        bibtex,
+        "empty_citekey",
+        "BibTeX entry has an empty citekey.",
+        at,
+        pos + 1,
+      ));
       i = pos + 1;
       continue;
     }
@@ -147,6 +192,77 @@ export function parseBibtexEntries(bibtex: string): BibtexParseResult {
   }
 
   return { entries, issues };
+}
+
+function formatFirstParseIssue(prefix: string, issues: BibtexParseIssue[]): string {
+  const issue = issues[0];
+  return `${prefix} at line ${issue.line}, column ${issue.column}: ${issue.message}`;
+}
+
+/** Build an append only when both the current file and the combined result stay parseable. */
+export function buildBibtexAppendPlan(
+  currentBibtex: string,
+  additions: string,
+): BibtexAppendPlan {
+  const current = parseBibtexEntries(currentBibtex);
+  if (current.issues.length > 0) {
+    throw new Error(formatFirstParseIssue("Existing BibTeX is invalid", current.issues));
+  }
+  const added = parseBibtexEntries(additions);
+  if (added.issues.length > 0) {
+    throw new Error(formatFirstParseIssue("New BibTeX is invalid", added.issues));
+  }
+  if (added.entries.length === 0) throw new Error("Enter at least one BibTeX entry.");
+
+  const bibtex = [
+    currentBibtex.trim(),
+    added.entries.map((entry) => entry.raw.trim()).join("\n\n"),
+  ].filter(Boolean).join("\n\n");
+  const combined = parseBibtexEntries(bibtex);
+  if (combined.issues.length > 0) {
+    throw new Error(formatFirstParseIssue("Combined BibTeX is invalid", combined.issues));
+  }
+  if (combined.entries.length !== current.entries.length + added.entries.length) {
+    throw new Error("BibTeX append did not preserve every existing and new entry.");
+  }
+  return { bibtex, addedEntries: added.entries };
+}
+
+function createBibtexIssue(
+  bibtex: string,
+  code: BibtexParseIssue["code"],
+  message: string,
+  offset: number,
+  endOffset: number,
+): BibtexParseIssue {
+  const before = bibtex.slice(0, offset);
+  const line = before.split("\n").length;
+  const previousLineBreak = before.lastIndexOf("\n");
+  const column = offset - previousLineBreak;
+  const lines = bibtex.split("\n");
+  const contextStart = Math.max(0, line - 2);
+  const contextEnd = Math.min(lines.length, line + 2);
+  const context = lines
+    .slice(contextStart, contextEnd)
+    .map((value, index) => `${contextStart + index + 1}: ${value}`)
+    .join("\n");
+  const header = bibtex.slice(offset).match(/^@([a-zA-Z]+)\s*\{\s*([^,}\s]*)/);
+  const entryHint = header
+    ? header[2]
+      ? `@${header[1]}{${header[2]}}`
+      : `@${header[1]}`
+    : undefined;
+
+  return {
+    code,
+    message,
+    offset,
+    endOffset,
+    line,
+    column,
+    context,
+    entryHint,
+  };
 }
 
 /** Collect citekeys only from structured BlockNote citation nodes. */
@@ -182,7 +298,7 @@ export function removeUnusedBibtexEntries(
 ): BibtexUnusedCleanupPlan {
   const parsed = parseBibtexEntries(bibtex);
   if (parsed.issues.length > 0) {
-    throw new Error(`BibTeX parse error: ${parsed.issues[0].message}`);
+    throw new Error(formatFirstParseIssue("BibTeX parse error", parsed.issues));
   }
   const used = new Set(
     Array.from(usedCitekeys, (citekey) => citekey.toLocaleLowerCase()),
@@ -266,7 +382,7 @@ export function buildDoiCitationInsertionPlan(
 
   const existing = parseBibtexEntries(bibtex);
   if (existing.issues.length > 0) {
-    throw new Error(`Existing BibTeX cannot be updated: ${existing.issues[0].message}`);
+    throw new Error(formatFirstParseIssue("Existing BibTeX cannot be updated", existing.issues));
   }
   const doiMatch = existing.entries.find(
     (entry) => normalizeDoi(entry.fields.doi) === normalizedExpectedDoi,
@@ -426,6 +542,23 @@ export function areBibtexEntriesDuplicates(
   return getBibtexIdentityKeys(right).some((key) => leftKeys.has(key));
 }
 
+/** Keep first-seen new entries while reporting duplicates against the file and batch. */
+export function partitionBibtexAdditions(
+  existingEntries: BibtexEntry[],
+  candidateEntries: BibtexEntry[],
+): BibtexAdditionPartition {
+  const accepted: BibtexEntry[] = [];
+  const skipped: BibtexDuplicateSkip[] = [];
+  for (const entry of candidateEntries) {
+    const duplicateOf = [...existingEntries, ...accepted].find((candidate) =>
+      areBibtexEntriesDuplicates(candidate, entry)
+    );
+    if (duplicateOf) skipped.push({ entry, duplicateOf });
+    else accepted.push(entry);
+  }
+  return { accepted, skipped };
+}
+
 export function findDuplicateBibtexGroups(entries: BibtexEntry[]): BibtexEntry[][] {
   const parents = entries.map((_, index) => index);
   const find = (index: number): number => {
@@ -562,7 +695,12 @@ export function remapDocumentCitationKeys(
  * Entries are assumed to be separated by blank lines or a new `@` at the start of a line.
  */
 export function deduplicateBibtex(bibtex: string): string {
-  const entries = parseBibtexEntries(bibtex).entries.map((entry) => entry.raw);
+  const parsed = parseBibtexEntries(bibtex);
+  if (parsed.issues.length > 0) {
+    const issue = parsed.issues[0];
+    throw new Error(`BibTeX parse error at line ${issue.line}, column ${issue.column}: ${issue.message}`);
+  }
+  const entries = parsed.entries.map((entry) => entry.raw);
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const entry of entries) {

@@ -1,5 +1,6 @@
 import { extname, relative } from "path";
 import type { AgentMentionableFile, FileNode } from "../../shared/rpc-types";
+import { parseFileMentions, type ParsedFileMention } from "../../shared/file-mentions";
 import { fileSystem } from "../fs/manager";
 
 const TEXT_EXTENSIONS = new Set([
@@ -21,6 +22,11 @@ export interface MentionedFileContext {
   displayPath: string;
   content: string;
   truncated: boolean;
+}
+
+interface MentionResolverDependencies {
+  listMentionableFiles?: (projectPath: string) => Promise<AgentMentionableFile[]>;
+  readTextFile?: (filePath: string) => Promise<string>;
 }
 
 function flatten(nodes: FileNode[]): FileNode[] {
@@ -47,7 +53,14 @@ function trimContent(content: string, limit = 20_000): { content: string; trunca
 }
 
 export async function listAgentMentionableFiles(projectPath: string): Promise<AgentMentionableFile[]> {
-  const nodes = await fileSystem.listProjectFiles(projectPath);
+  const nodes = await fileSystem.listProjectFiles(projectPath, 0, Number.POSITIVE_INFINITY);
+  return buildMentionableFiles(projectPath, nodes);
+}
+
+export function buildMentionableFiles(
+  projectPath: string,
+  nodes: FileNode[],
+): AgentMentionableFile[] {
   return flatten(nodes)
     .filter((file) => isSupportedTextFile(file.path))
     .map((file) => ({
@@ -63,26 +76,23 @@ export async function resolveMentionedFiles(params: {
   message: string;
   explicitFilePaths: string[];
   projectPath: string;
-}): Promise<MentionedFileContext[]> {
-  const mentionTokens = [...params.message.matchAll(/(^|\s)@([^\s]+)/g)].map((match) => match[2]);
-  const mentionable = await listAgentMentionableFiles(params.projectPath);
+}, dependencies: MentionResolverDependencies = {}): Promise<MentionedFileContext[]> {
+  const mentions = parseFileMentions(params.message);
+  const listFiles = dependencies.listMentionableFiles ?? listAgentMentionableFiles;
+  const readTextFile = dependencies.readTextFile ?? ((filePath: string) => fileSystem.readTextFile(filePath));
+  const mentionable = await listFiles(params.projectPath);
   const selected = new Map<string, string>();
+  const explicitPaths = new Set(params.explicitFilePaths);
 
   for (const filePath of params.explicitFilePaths) {
     selected.set(filePath, filePath);
   }
 
-  for (const token of mentionTokens) {
-    const normalized = token.toLowerCase();
-    const matches = mentionable.filter(
-      (file) =>
-        file.name.toLowerCase() === normalized ||
-        file.displayPath.toLowerCase() === normalized ||
-        file.name.toLowerCase().startsWith(normalized)
-    );
-    if (matches.length === 1) selected.set(matches[0].path, token);
-    else if (matches.length > 1) {
-      throw new Error(`@${token} is ambiguous. Select the exact file from the dropdown.`);
+  for (const mention of mentions) {
+    const matches = matchMention(mention, mentionable);
+    if (matches.length === 1) selected.set(matches[0].path, mention.value);
+    else if (matches.length > 1 && !matches.some((file) => explicitPaths.has(file.path))) {
+      throw new Error(`@${mention.value} is ambiguous. Select the exact file from the dropdown.`);
     }
   }
 
@@ -91,7 +101,7 @@ export async function resolveMentionedFiles(params: {
     const meta = mentionable.find((file) => file.path === filePath);
     if (!meta) throw new Error(`Selected file is not part of the current project: ${filePath}`);
     if (!isSupportedTextFile(filePath)) throw new Error(`Unsupported @file type: ${meta.displayPath}`);
-    const raw = await fileSystem.readTextFile(filePath);
+    const raw = await readTextFile(filePath);
     const { content, truncated } = trimContent(raw);
     contexts.push({
       token,
@@ -104,4 +114,18 @@ export async function resolveMentionedFiles(params: {
   }
 
   return contexts;
+}
+
+function matchMention(
+  mention: ParsedFileMention,
+  mentionable: AgentMentionableFile[],
+): AgentMentionableFile[] {
+  const normalized = mention.value.toLowerCase();
+  const exact = mentionable.filter(
+    (file) =>
+      file.name.toLowerCase() === normalized ||
+      file.displayPath.toLowerCase() === normalized,
+  );
+  if (exact.length > 0 || mention.syntax !== "legacy") return exact;
+  return mentionable.filter((file) => file.name.toLowerCase().startsWith(normalized));
 }
