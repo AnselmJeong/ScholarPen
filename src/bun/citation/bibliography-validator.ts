@@ -450,7 +450,10 @@ export async function validateBibliography(
   fetchFn: typeof fetch = fetch,
 ): Promise<{ validations: BibliographyEntryValidation[]; suggestedBibtex: string }> {
   const parsed = parseBibtexEntries(bibtex);
-  if (parsed.issues.length > 0) throw new Error(`BibTeX parse error: ${parsed.issues[0].message}`);
+  if (parsed.issues.length > 0) {
+    const issue = parsed.issues[0];
+    throw new Error(`BibTeX parse error at line ${issue.line}, column ${issue.column}: ${issue.message}`);
+  }
   const resolved: ResolvedEntry[] = [];
   for (let index = 0; index < parsed.entries.length; index++) {
     const entry = parsed.entries[index];

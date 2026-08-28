@@ -31,6 +31,10 @@ import type {
   OllamaStatus,
   ProjectInfo,
 } from "@shared/rpc-types";
+import {
+  findActiveFileMention,
+  replaceActiveFileMention,
+} from "@shared/file-mentions";
 import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
 import {
   buildDeepenAnalysisMessage,
@@ -90,8 +94,8 @@ function formatThreadTime(value: number): string {
 
 function analyzeInput(value: string): { mode: DropdownMode; query: string } {
   if (value.startsWith("/")) return { mode: "slash", query: value.slice(1).toLowerCase() };
-  const lastWord = value.split(/\s+/).at(-1) ?? "";
-  if (lastWord.startsWith("@")) return { mode: "file", query: lastWord.slice(1).toLowerCase() };
+  const mention = findActiveFileMention(value);
+  if (mention) return { mode: "file", query: mention.query };
   return { mode: null, query: "" };
 }
 
@@ -517,6 +521,7 @@ function AssistantComposer({
   setKbEnabled,
   setSelectedSkillIds,
   setSelectedFilePaths,
+  onRefreshFiles,
 }: {
   editor: BlockNoteEditor<any, any, any> | null;
   project: ProjectInfo | null;
@@ -529,6 +534,7 @@ function AssistantComposer({
   setKbEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setSelectedSkillIds: React.Dispatch<React.SetStateAction<string[]>>;
   setSelectedFilePaths: React.Dispatch<React.SetStateAction<string[]>>;
+  onRefreshFiles: () => Promise<void>;
 }) {
   const aui = useAui();
   const input = useAuiState((s) => s.composer.text);
@@ -548,7 +554,7 @@ function AssistantComposer({
     if (dropdownMode === "file") {
       const items = dropdownQuery
         ? files.filter((file) => file.displayPath.toLowerCase().includes(dropdownQuery) || file.name.toLowerCase().includes(dropdownQuery))
-        : files;
+        : [...files];
       return items
         .sort((a, b) => {
           const aStarts = a.name.toLowerCase().startsWith(dropdownQuery);
@@ -556,8 +562,7 @@ function AssistantComposer({
           if (aStarts && !bStarts) return -1;
           if (!aStarts && bStarts) return 1;
           return a.displayPath.localeCompare(b.displayPath);
-        })
-        .slice(0, 30);
+        });
     }
     return [];
   }, [dropdownMode, dropdownQuery, slashCommands, files]);
@@ -566,20 +571,21 @@ function AssistantComposer({
     setDropdownIndex(0);
   }, [dropdownMode, dropdownQuery]);
 
+  const previousDropdownMode = useRef<DropdownMode>(null);
+  useEffect(() => {
+    if (dropdownMode === "file" && previousDropdownMode.current !== "file") {
+      onRefreshFiles().catch(console.error);
+    }
+    previousDropdownMode.current = dropdownMode;
+  }, [dropdownMode, onRefreshFiles]);
+
   const replaceCurrentToken = useCallback(
     (replacement: string) => {
       if (dropdownMode === "slash") {
         aui.composer().setText(`${replacement} `);
         return;
       }
-      const words = input.split(/(\s+)/);
-      for (let i = words.length - 1; i >= 0; i--) {
-        if (words[i].startsWith("@")) {
-          words[i] = replacement;
-          break;
-        }
-      }
-      aui.composer().setText(`${words.join("")} `);
+      aui.composer().setText(replacement);
     },
     [aui, dropdownMode, input],
   );
@@ -592,11 +598,11 @@ function AssistantComposer({
         setSelectedSkillIds((prev) => (prev.includes(skill.id) ? prev : [...prev, skill.id]));
       } else if (dropdownMode === "file") {
         const file = item as AgentMentionableFile;
-        replaceCurrentToken(`@${file.name}`);
+        replaceCurrentToken(replaceActiveFileMention(input, file.displayPath));
         setSelectedFilePaths((prev) => (prev.includes(file.path) ? prev : [...prev, file.path]));
       }
     },
-    [dropdownMode, replaceCurrentToken, setSelectedFilePaths, setSelectedSkillIds],
+    [dropdownMode, input, replaceCurrentToken, setSelectedFilePaths, setSelectedSkillIds],
   );
 
   const handleKeyDown = useCallback(
@@ -826,6 +832,14 @@ export function AISidebar({
     setThreads(nextThreads);
   }, [project?.path]);
 
+  const refreshMentionableFiles = useCallback(async () => {
+    if (!project?.path) {
+      setMentionableFiles([]);
+      return;
+    }
+    setMentionableFiles(await rpc.listAgentMentionableFiles(project.path));
+  }, [project?.path]);
+
   const startNewThread = useCallback(() => {
     setActiveThread(null);
     setLoadedMessages([]);
@@ -1023,7 +1037,7 @@ export function AISidebar({
     if (project?.path) {
       setKbStatus(null);
       refreshThreads().catch(console.error);
-      rpc.listAgentMentionableFiles(project.path).then(setMentionableFiles).catch(console.error);
+      refreshMentionableFiles().catch(console.error);
       rpc.getKBStatus(project.path)
         .then((status) => {
           setKbStatus(status);
@@ -1043,7 +1057,7 @@ export function AISidebar({
       setMentionableFiles([]);
       setThreads([]);
     }
-  }, [project?.path, refreshThreads, startNewThread]);
+  }, [project?.path, refreshMentionableFiles, refreshThreads, startNewThread]);
 
   useEffect(() => {
     if (modelKeyRef.current === null) {
@@ -1130,6 +1144,7 @@ export function AISidebar({
           setKbEnabled={setKbEnabled}
           setSelectedSkillIds={setSelectedSkillIds}
           setSelectedFilePaths={setSelectedFilePaths}
+          onRefreshFiles={refreshMentionableFiles}
         />
       </div>
     </AssistantRuntimeProvider>

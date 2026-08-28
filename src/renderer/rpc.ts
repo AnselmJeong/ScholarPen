@@ -21,8 +21,10 @@ import type {
   AgentThreadWithMessages,
   OllamaProxyResponse,
   BibliographyDeduplicationResult,
+  BibliographyMergeResult,
   BibliographyMaintenanceResult,
   BibliographyValidationProgress,
+  BibliographyRepairProposal,
 } from "../shared/rpc-types";
 import {
   DEFAULT_OLLAMA_BASE_URL,
@@ -47,6 +49,9 @@ const strictRpcMethods = new Set([
   "saveManuscript",
   "saveBibtex",
   "saveBibtexRaw",
+  "saveBibtexValidated",
+  "mergeBibtex",
+  "applyBibliographyRepair",
   "deduplicateBibliography",
   "validateAndCleanBibliography",
   "exportFile",
@@ -185,7 +190,20 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     loadManuscript: [],
     loadDocument: [],
     loadBibtex: "",
+    mergeBibtex: {
+      bibtex: "",
+      addedEntries: 0,
+      skippedDuplicates: [],
+      backupPath: null,
+    },
     saveBibtexRaw: null,
+    saveBibtexValidated: null,
+    proposeBibliographyRepair: {
+      repairedBibtex: "",
+      method: "deterministic",
+      issuesBefore: [],
+    },
+    applyBibliographyRepair: null,
     deduplicateBibliography: {
       bibtex: "",
       removedEntries: 0,
@@ -302,7 +320,29 @@ export const rpc = {
     call<void>("saveBibtex", { projectPath, bibtex }),
   saveBibtexRaw: (projectPath: string, bibtex: string) =>
     call<void>("saveBibtexRaw", { projectPath, bibtex }),
+  saveBibtexValidated: (projectPath: string, bibtex: string, expectedCurrentBibtex: string) =>
+    call<void>("saveBibtexValidated", { projectPath, bibtex, expectedCurrentBibtex }),
   loadBibtex: (projectPath: string) => call<string>("loadBibtex", { projectPath }),
+  mergeBibtex: (projectPath: string, importedBibtex: string) =>
+    call<BibliographyMergeResult>("mergeBibtex", { projectPath, importedBibtex }),
+  proposeBibliographyRepair: (
+    projectPath: string,
+    bibtex: string,
+    mode: "deterministic" | "llm",
+  ) => call<BibliographyRepairProposal>("proposeBibliographyRepair", {
+    projectPath,
+    bibtex,
+    mode,
+  }),
+  applyBibliographyRepair: (
+    projectPath: string,
+    originalBibtex: string,
+    repairedBibtex: string,
+  ) => call<string | null>("applyBibliographyRepair", {
+    projectPath,
+    originalBibtex,
+    repairedBibtex,
+  }),
   deduplicateBibliography: (projectPath: string, bibtex: string) =>
     call<BibliographyDeduplicationResult>("deduplicateBibliography", {
       projectPath,

@@ -98,6 +98,125 @@ describe("bibliography storage", () => {
     expect(await pathExists(join(projectPath, "references.bib"))).toBe(false);
   });
 
+  test("does not overwrite a malformed bibliography during validated append", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-invalid-append-");
+    await fileSystem.openProjectByPath(projectPath);
+    const referencesPath = join(projectPath, "exports", "references.bib");
+    const malformed = "@article{broken, title={Unclosed entry}";
+    const combined = `${malformed}\n\n@article{newEntry, title={New entry}}`;
+    await fileSystem.saveBibtexRaw(projectPath, malformed);
+
+    await expect(
+      fileSystem.saveBibtexValidated(projectPath, combined, malformed),
+    ).rejects.toThrow("BibTeX parse error at line 1, column 1");
+    expect(await readFile(referencesPath, "utf-8")).toBe(malformed);
+  });
+
+  test("saves a valid bibliography only when the editor baseline is current", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-validated-save-");
+    await fileSystem.openProjectByPath(projectPath);
+    const original = "@article{original, title={Original}}";
+    const external = "@article{external, title={External change}}";
+    const proposed = `${original}\n\n@article{newEntry, title={New entry}}`;
+    await fileSystem.saveBibtexRaw(projectPath, original);
+    await fileSystem.saveBibtexRaw(projectPath, external);
+
+    await expect(
+      fileSystem.saveBibtexValidated(projectPath, proposed, original),
+    ).rejects.toThrow("changed outside this editor");
+    expect(await fileSystem.loadBibtex(projectPath)).toBe(external);
+  });
+
+  test("merges a BibTeX file while skipping only duplicate entries", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-import-");
+    await fileSystem.openProjectByPath(projectPath);
+    const current = `@article{existing,
+  author={Ada Author},
+  title={Existing paper},
+  year={2024},
+  doi={10.1000/existing}
+}`;
+    await fileSystem.saveBibtexRaw(projectPath, current);
+
+    const result = await fileSystem.mergeBibtex(projectPath, `@article{duplicateByDoi,
+  author={Different Formatting},
+  title={Existing paper copy},
+  year={2024},
+  doi={https://doi.org/10.1000/existing}
+}
+
+@article{newEntry,
+  author={New Author},
+  title={New paper},
+  year={2025}
+}
+
+@article{newEntry,
+  author={New Author},
+  title={Repeated inside import},
+  year={2025}
+}`);
+
+    expect(result.addedEntries).toBe(1);
+    expect(result.skippedDuplicates).toEqual([
+      { citekey: "duplicateByDoi", duplicateOfCitekey: "existing" },
+      { citekey: "newEntry", duplicateOfCitekey: "newEntry" },
+    ]);
+    expect(result.bibtex).toContain("@article{existing");
+    expect(result.bibtex).toContain("@article{newEntry");
+    expect(result.bibtex).not.toContain("@article{duplicateByDoi");
+    expect((result.bibtex.match(/@article\{newEntry/g) ?? [])).toHaveLength(1);
+    expect(await fileSystem.loadBibtex(projectPath)).toBe(result.bibtex);
+    expect(result.backupPath).not.toBeNull();
+  });
+
+  test("does not change the bibliography when every imported entry is a duplicate", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-import-duplicates-");
+    await fileSystem.openProjectByPath(projectPath);
+    const current = "@article{existing, title={Existing paper}, year={2024}}";
+    await fileSystem.saveBibtexRaw(projectPath, current);
+
+    const result = await fileSystem.mergeBibtex(
+      projectPath,
+      "@article{existing, title={Replacement must not win}, year={2025}}",
+    );
+
+    expect(result.addedEntries).toBe(0);
+    expect(result.skippedDuplicates).toEqual([
+      { citekey: "existing", duplicateOfCitekey: "existing" },
+    ]);
+    expect(result.backupPath).toBeNull();
+    expect(await fileSystem.loadBibtex(projectPath)).toBe(current);
+  });
+
+  test("rejects a malformed imported BibTeX file without changing the bibliography", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-import-invalid-");
+    await fileSystem.openProjectByPath(projectPath);
+    const current = "@article{existing, title={Existing paper}}";
+    await fileSystem.saveBibtexRaw(projectPath, current);
+
+    await expect(
+      fileSystem.mergeBibtex(projectPath, "@article{broken, title={Missing brace}"),
+    ).rejects.toThrow("New BibTeX is invalid");
+    expect(await fileSystem.loadBibtex(projectPath)).toBe(current);
+  });
+
+  test("does not let duplicate cleanup overwrite an externally changed bibliography", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-stale-dedup-");
+    await fileSystem.openProjectByPath(projectPath);
+    const staleEditor = `@article{first, title={Same}, author={Author}, year={2024}}
+
+@article{duplicate, title={Same}, author={Author}, year={2024}}`;
+    const external = "@article{external, title={Added outside ScholarPen}, year={2025}}";
+    await fileSystem.saveBibtexRaw(projectPath, staleEditor);
+    await fileSystem.saveBibtexRaw(projectPath, external);
+
+    await expect(
+      fileSystem.deduplicateBibliography(projectPath, staleEditor),
+    ).rejects.toThrow("changed outside this editor");
+    expect(await fileSystem.loadBibtex(projectPath)).toBe(external);
+  });
+
   test("deduplicates by identity and remaps citations across documents", async () => {
     const projectPath = await createTemporaryProject("scholarpen-bib-dedup-");
     await fileSystem.openProjectByPath(projectPath);

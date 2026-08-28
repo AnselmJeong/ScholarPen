@@ -58,13 +58,57 @@ function containsCustomInline(content: unknown): boolean {
   return false;
 }
 
+function citationToMarkdown(content: unknown): string | null {
+  if (typeof content !== "object" || content === null) return null;
+
+  const obj = content as Record<string, unknown>;
+  if (obj.type !== "citation") return null;
+
+  const citekey = inlineProp(obj, "citekey");
+  if (typeof citekey !== "string" || !citekey.trim()) return null;
+
+  const locator = inlineProp(obj, "locator");
+  const locatorSuffix = typeof locator === "string" && locator.trim()
+    ? `, ${locator}`
+    : "";
+  return `@${citekey}${locatorSuffix}`;
+}
+
 /**
  * Convert inline content to Markdown with styling preserved.
  */
-function inlineContentToMarkdown(content: unknown): string {
+function inlineContentToMarkdown(content: unknown, format: ExportFormat): string {
   if (!content) return "";
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return (content as unknown[]).map(inlineContentToMarkdown).join("");
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+
+    for (let index = 0; index < content.length;) {
+      const citation = format === "qmd"
+        ? citationToMarkdown(content[index])
+        : null;
+
+      if (citation) {
+        const citations = [citation];
+        index += 1;
+
+        while (index < content.length) {
+          const nextCitation = citationToMarkdown(content[index]);
+          if (!nextCitation) break;
+          citations.push(nextCitation);
+          index += 1;
+        }
+
+        parts.push(`[${citations.join("; ")}]`);
+        continue;
+      }
+
+      parts.push(inlineContentToMarkdown(content[index], format));
+      index += 1;
+    }
+
+    return parts.join("");
+  }
 
   if (typeof content === "object" && content !== null) {
     const obj = content as Record<string, unknown>;
@@ -73,13 +117,8 @@ function inlineContentToMarkdown(content: unknown): string {
 
     // Citation inline: [@citekey]
     if (obj.type === "citation") {
-      const citekey = inlineProp(obj, "citekey");
-      const locator = inlineProp(obj, "locator");
-      if (typeof citekey === "string" && citekey.trim()) {
-        return locator && typeof locator === "string" && locator.trim()
-          ? `[@${citekey}, ${locator}]`
-          : `[@${citekey}]`;
-      }
+      const citation = citationToMarkdown(obj);
+      if (citation) return `[${citation}]`;
     }
 
     // Footnote inline: [^N]
@@ -159,7 +198,7 @@ async function blockToMarkdown(
 
     default:
       if (containsCustomInline(block.content)) {
-        const custom = standardBlockToMarkdown(block, depth);
+        const custom = standardBlockToMarkdown(block, depth, format);
         if (block.children && block.children.length > 0) {
           const childLines: string[] = [];
           for (const child of block.children) {
@@ -196,9 +235,13 @@ async function blockToMarkdown(
   }
 }
 
-function standardBlockToMarkdown(block: Block, depth: number): string {
+function standardBlockToMarkdown(
+  block: Block,
+  depth: number,
+  format: ExportFormat,
+): string {
   const indent = depth > 0 ? "  ".repeat(depth) : "";
-  const text = inlineContentToMarkdown(block.content);
+  const text = inlineContentToMarkdown(block.content, format);
 
   switch (block.type) {
     case "heading": {
@@ -248,7 +291,7 @@ function figureBlockToMarkdown(block: Block, format: ExportFormat): string {
 }
 
 function abstractBlockToMarkdown(block: Block, format: ExportFormat): string {
-  const text = inlineContentToMarkdown(block.content);
+  const text = inlineContentToMarkdown(block.content, format);
 
   if (format === "qmd") {
     // Quarto fenced div

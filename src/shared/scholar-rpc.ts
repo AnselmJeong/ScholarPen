@@ -17,8 +17,10 @@ import type {
   AgentThreadWithMessages,
   OllamaProxyResponse,
   BibliographyDeduplicationResult,
+  BibliographyMergeResult,
   BibliographyMaintenanceResult,
   BibliographyValidationProgress,
+  BibliographyRepairProposal,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -52,7 +54,23 @@ type BunRequests = RPCSchema<{
     // BibTeX
     saveBibtex: { params: { projectPath: string; bibtex: string }; response: void };
     saveBibtexRaw: { params: { projectPath: string; bibtex: string }; response: void };
+    saveBibtexValidated: {
+      params: { projectPath: string; bibtex: string; expectedCurrentBibtex: string };
+      response: void;
+    };
     loadBibtex: { params: { projectPath: string }; response: string };
+    mergeBibtex: {
+      params: { projectPath: string; importedBibtex: string };
+      response: BibliographyMergeResult;
+    };
+    proposeBibliographyRepair: {
+      params: { projectPath: string; bibtex: string; mode: "deterministic" | "llm" };
+      response: BibliographyRepairProposal;
+    };
+    applyBibliographyRepair: {
+      params: { projectPath: string; originalBibtex: string; repairedBibtex: string };
+      response: string | null;
+    };
     deduplicateBibliography: {
       params: { projectPath: string; bibtex: string };
       response: BibliographyDeduplicationResult;
