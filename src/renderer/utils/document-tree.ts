@@ -8,20 +8,19 @@ export function collectDocumentNodes(nodes: FileNode[]): FileNode[] {
 }
 
 export function findBibliographyNode(nodes: FileNode[]): FileNode | null {
-  for (const node of nodes) {
-    if (
+  // Draft and resource folders can contain their own references.bib files.
+  // They are not the bibliography used by ScholarPen's save/reload RPCs,
+  // which always target exports/references.bib. Selecting one recursively
+  // would therefore show one file initially and a different file after Reload.
+  const exportsDirectory = nodes.find(
+    (node) => node.isDirectory && node.name.toLowerCase() === "exports",
+  );
+  if (!exportsDirectory?.children) return null;
+
+  return exportsDirectory.children.find(
+    (node) =>
       !node.isDirectory
       && node.kind === "reference"
-      && node.name.toLowerCase() === "references.bib"
-    ) {
-      return node;
-    }
-
-    if (node.children) {
-      const bibliography = findBibliographyNode(node.children);
-      if (bibliography) return bibliography;
-    }
-  }
-
-  return null;
+      && node.name.toLowerCase() === "references.bib",
+  ) ?? null;
 }
