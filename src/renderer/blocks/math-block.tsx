@@ -27,7 +27,7 @@ function MathRenderer({ formula, onEdit }: { formula: string; onEdit: () => void
     <div
       ref={ref}
       onClick={onEdit}
-      className="cursor-pointer text-center py-2 hover:bg-blue-50 rounded transition-colors"
+      className="cursor-pointer rounded py-2 text-center text-foreground transition-colors hover:bg-accent/60"
       title="Click to edit"
     />
   );
@@ -64,7 +64,7 @@ function MathEditor({
     <div className="flex flex-col gap-2 py-2">
       <div ref={previewRef} className="text-center" />
       {preview && (
-        <p className="text-xs text-red-500 px-2">{preview}</p>
+        <p className="px-2 text-xs text-destructive">{preview}</p>
       )}
       <textarea
         autoFocus
@@ -79,9 +79,9 @@ function MathEditor({
         }}
         onBlur={commit}
         placeholder="LaTeX formula, e.g. E = mc^2"
-        className="w-full text-sm font-mono border border-blue-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none bg-gray-50"
+        className="w-full resize-none rounded border border-input bg-background px-2 py-1 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
       />
-      <p className="text-xs text-gray-400">Enter or Escape to confirm · Shift+Enter for new line</p>
+      <p className="text-xs text-muted-foreground">Enter or Escape to confirm · Shift+Enter for new line</p>
     </div>
   );
 }
@@ -104,8 +104,8 @@ export const mathBlock = createReactBlockSpec(
       };
 
       return (
-        <div className="w-full border border-gray-200 rounded-md px-4 py-1 my-1 bg-white select-none">
-          <div className="text-xs text-gray-400 mb-1">Math</div>
+        <div className="my-1 w-full select-none rounded-md border border-border bg-card px-4 py-1 text-card-foreground">
+          <div className="mb-1 text-xs text-muted-foreground">Math</div>
           {editing ? (
             <MathEditor formula={block.props.formula} onCommit={handleCommit} />
           ) : (

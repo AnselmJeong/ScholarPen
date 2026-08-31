@@ -71,7 +71,7 @@ export function DOIInputDialog({
           </div>
 
           {error && (
-            <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded px-3 py-2">
+            <p className="rounded border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {error}
             </p>
           )}
@@ -88,7 +88,7 @@ export function DOIInputDialog({
             <button
               type="submit"
               disabled={isLoading || !doi.trim()}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isLoading ? (
                 <>

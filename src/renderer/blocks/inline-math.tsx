@@ -27,7 +27,7 @@ function InlineMathRenderer({ formula, onEdit }: { formula: string; onEdit: () =
     <span
       ref={ref}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); onEdit(); }}
-      className="cursor-pointer hover:bg-blue-50 rounded px-0.5 transition-colors"
+      className="cursor-pointer rounded px-0.5 text-foreground transition-colors hover:bg-accent/60"
       title="Click to edit"
     />
   );
@@ -48,8 +48,8 @@ function InlineMathEditor({
   }, []);
 
   return (
-    <span className="inline-flex items-center gap-0.5 bg-blue-50 border border-blue-200 rounded px-1">
-      <span className="text-xs text-blue-400 select-none">$</span>
+    <span className="inline-flex items-center gap-0.5 rounded border border-primary/30 bg-primary/10 px-1 text-foreground">
+      <span className="select-none text-xs text-primary">$</span>
       <input
         ref={inputRef}
         value={value}
@@ -63,9 +63,9 @@ function InlineMathEditor({
         }}
         onBlur={() => onCommit(value)}
         placeholder="E=mc^2"
-        className="text-xs font-mono bg-transparent border-none outline-none w-24 min-w-[3rem]"
+        className="min-w-[3rem] w-24 border-none bg-transparent font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground"
       />
-      <span className="text-xs text-blue-400 select-none">$</span>
+      <span className="select-none text-xs text-primary">$</span>
     </span>
   );
 }

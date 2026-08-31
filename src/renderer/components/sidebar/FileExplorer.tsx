@@ -765,7 +765,7 @@ export function FileExplorer({
               className="mx-2 mb-2 flex-shrink-0 rounded-xl border p-2 shadow-sm"
               style={{
                 borderColor: "rgba(91,33,182,0.16)",
-                background: "color-mix(in srgb, var(--sidebar) 92%, white)",
+                background: "hsl(var(--sidebar-accent) / 0.35)",
               }}
             >
               <div className="mb-2 flex items-center justify-between px-0.5">

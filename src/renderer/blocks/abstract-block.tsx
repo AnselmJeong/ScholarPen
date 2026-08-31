@@ -13,13 +13,13 @@ export const abstractBlock = createReactBlockSpec(
   },
   {
     render: ({ contentRef }) => (
-      <div className="w-full border-l-4 border-blue-400 bg-blue-50 rounded-r-md my-2 px-5 py-3">
-        <div className="text-xs font-bold uppercase tracking-widest text-blue-500 mb-2 select-none">
+      <div className="my-2 w-full rounded-md border border-primary/25 bg-primary/10 px-5 py-3 text-foreground">
+        <div className="mb-2 select-none text-xs font-bold uppercase tracking-widest text-primary">
           Abstract
         </div>
         <div
           ref={contentRef}
-          className="text-sm text-gray-800 leading-relaxed focus:outline-none"
+          className="text-sm leading-relaxed text-foreground focus:outline-none"
         />
       </div>
     ),

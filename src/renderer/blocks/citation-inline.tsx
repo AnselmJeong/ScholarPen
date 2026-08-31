@@ -88,13 +88,13 @@ export const footnoteInline = createReactInlineContentSpec(
       const { index, text } = inlineContent.props;
       return (
         <span
-          className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold bg-gray-200 text-gray-600 cursor-default select-none mx-0.5 relative group"
+          className="group relative mx-0.5 inline-flex h-4 w-4 cursor-default select-none items-center justify-center rounded-full border border-border bg-muted text-[10px] font-bold text-muted-foreground"
           title={text}
           data-footnote={index}
         >
           {index}
           {text && (
-            <span className="absolute bottom-5 left-0 w-48 text-xs text-gray-700 bg-white border border-gray-200 rounded shadow-lg p-2 invisible group-hover:visible z-10 leading-snug font-normal">
+            <span className="invisible absolute bottom-5 left-0 z-10 w-48 rounded border border-border bg-popover p-2 text-xs font-normal leading-snug text-popover-foreground shadow-lg group-hover:visible">
               {text}
             </span>
           )}

@@ -552,8 +552,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                 flex-1 flex items-center justify-center transition-colors duration-75
                 border-2 border-dashed
                 ${dropSide === "left"
-                  ? "bg-blue-500/20 border-blue-500"
-                  : "bg-blue-500/8 border-blue-300/50"
+                  ? "bg-primary/20 border-primary"
+                  : "bg-primary/[0.08] border-primary/40"
                 }
               `}
             >
@@ -562,8 +562,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                   px-3 py-1.5 text-xs font-medium rounded-md border shadow-sm select-none
                   transition-colors duration-75
                   ${dropSide === "left"
-                    ? "bg-blue-600 text-white border-blue-600"
-                    : "bg-white/90 text-blue-600 border-blue-200"
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-popover/90 text-primary border-border"
                   }
                 `}
               >
@@ -576,8 +576,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                 flex-1 flex items-center justify-center transition-colors duration-75
                 border-2 border-dashed
                 ${dropSide === "right"
-                  ? "bg-blue-500/20 border-blue-500"
-                  : "bg-blue-500/8 border-blue-300/50"
+                  ? "bg-primary/20 border-primary"
+                  : "bg-primary/[0.08] border-primary/40"
                 }
               `}
             >
@@ -586,8 +586,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                   px-3 py-1.5 text-xs font-medium rounded-md border shadow-sm select-none
                   transition-colors duration-75
                   ${dropSide === "right"
-                    ? "bg-blue-600 text-white border-blue-600"
-                    : "bg-white/90 text-blue-600 border-blue-200"
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-popover/90 text-primary border-border"
                   }
                 `}
               >
@@ -614,7 +614,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
 
             {/* Resize handle */}
             <div
-              className="w-1 flex-shrink-0 cursor-col-resize bg-border hover:bg-blue-400/60 active:bg-blue-500/80 transition-colors"
+              className="w-1 flex-shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary/60 active:bg-primary/80"
               onMouseDown={handleSplitResizeMouseDown}
             />
 

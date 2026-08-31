@@ -24,9 +24,7 @@ function RailIcon({ icon, active, onClick, title }: RailIconProps) {
       title={title}
       className={cn(
         "w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-150",
-        active
-          ? "text-white"
-          : "text-[#6d6d8e] hover:text-[#1e1b4b] hover:bg-white/50"
+        active ? "text-white" : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
       style={active ? {
         background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)",

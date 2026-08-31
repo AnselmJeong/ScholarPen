@@ -542,7 +542,7 @@ export function App() {
                style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}>
             <PenLine className="h-4 w-4 text-white" />
           </div>
-          <span className="text-sm font-bold tracking-tight" style={{ color: "#1e1b4b" }}>ScholarPen</span>
+          <span className="text-sm font-bold tracking-tight text-foreground">ScholarPen</span>
         </div>
         <div className="flex items-center gap-2">
           <TooltipProvider delayDuration={400}>
