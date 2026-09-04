@@ -13,6 +13,7 @@ import { getAgentThreadStore } from "./agent/thread-store";
 import { getProjectSourceIndex, isProjectSourceDigestPath } from "./project-sources";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
 import { cleanValidateAndApplyBibliography } from "./citation/bibliography-maintenance";
+import { renderQuartoBookProject } from "./quarto/render";
 import {
   proposeBibliographyRepair,
   validateBibliographyRepair,
@@ -378,6 +379,16 @@ async function main() {
         // ── Export ─────────────────────────────────────────
         exportFile: ({ projectPath, filename, content }) =>
           fileSystem.exportFile(projectPath, filename, content),
+
+        renderQuartoBook: async ({ projectPath, format }) => {
+          const result = await renderQuartoBookProject({
+            projectDirectory: await fileSystem.getQuartoProjectDirectory(projectPath),
+            format,
+            environment: buildSubprocessEnv(),
+          });
+          if (result.status === "success") sendProjectUpdated?.({ projectPath });
+          return result;
+        },
 
         // ── File Management ────────────────────────────────
         readTextFile: ({ filePath }) => fileSystem.readTextFile(filePath),

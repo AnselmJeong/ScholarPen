@@ -5,6 +5,7 @@ import {
   buildQuartoBookConfig,
   collectQuartoChapterFilenames,
   findQuartoConfigNode,
+  getQuartoRenderFormats,
   parseQuartoBookConfig,
   sortQuartoChapterFilenames,
 } from "./quarto-config";
@@ -104,6 +105,7 @@ format:
       language: "ko",
       outputDir: "_book",
       bibliographyFiles: ["references.bib"],
+      formats: ["docx"],
     });
   });
 
@@ -116,6 +118,7 @@ format:
       language: "ko",
       outputDir: "_book",
       bibliographyFiles: ["references.bib"],
+      formats: ["docx", "html", "pdf"],
     });
     const parsed = parse(yaml);
 
@@ -129,10 +132,12 @@ format:
     expect(parsed.bibliography).toBe("references.bib");
     expect(parsed.csl).toBe("journal-style.csl");
     expect(parsed.format.docx).toEqual({
-      theme: "yeti",
       toc: false,
       "number-sections": false,
     });
+    expect(parsed.format.html).toEqual({});
+    expect(parsed.format.typst).toEqual({});
+    expect(parsed.format.pdf).toBeUndefined();
   });
 
   test("updates editable fields without discarding other Quarto options or comments", () => {
@@ -165,6 +170,7 @@ format:
       language: "en",
       outputDir: "rendered-book",
       bibliographyFiles: ["references.bib", "additional.bib"],
+      formats: ["html", "pdf"],
       existingYaml,
     });
     const parsed = parse(yaml);
@@ -175,8 +181,57 @@ format:
     expect(parsed.book.chapters).toEqual(["02 methods.qmd", "index.qmd"]);
     expect(parsed.bibliography).toEqual(["references.bib", "additional.bib"]);
     expect(parsed.format).toEqual({
-      docx: { toc: false },
       html: { theme: "cosmo" },
+      typst: {},
+    });
+  });
+
+  test("maps the editor PDF option to Typst and exposes renderable formats", () => {
+    const existingYaml = `format:
+  docx:
+    toc: true
+  html:
+    theme: cosmo
+  typst:
+    papersize: a4
+`;
+
+    expect(parseQuartoBookConfig(existingYaml, []).formats).toEqual([
+      "docx",
+      "html",
+      "pdf",
+    ]);
+    expect(getQuartoRenderFormats(existingYaml)).toEqual(["docx", "html", "typst"]);
+  });
+
+  test("preserves selected format options and unrelated custom formats", () => {
+    const existingYaml = `format:
+  docx:
+    toc: true
+  html:
+    theme: cosmo
+  typst:
+    papersize: a4
+  epub:
+    toc: false
+`;
+    const yaml = buildQuartoBookConfig({
+      title: "Formats",
+      authors: ["Author"],
+      cslFilename: "style.csl",
+      qmdFilenames: ["index.qmd"],
+      language: "en",
+      outputDir: "_book",
+      bibliographyFiles: ["references.bib"],
+      formats: ["html", "pdf"],
+      existingYaml,
+    });
+    const parsed = parse(yaml);
+
+    expect(parsed.format).toEqual({
+      html: { theme: "cosmo" },
+      typst: { papersize: "a4" },
+      epub: { toc: false },
     });
   });
 });

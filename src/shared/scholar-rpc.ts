@@ -19,6 +19,8 @@ import type {
   BibliographyValidationProgress,
   BibliographyRepairProposal,
   ProjectSourcesStatus,
+  QuartoRenderFormat,
+  QuartoRenderResult,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -99,6 +101,10 @@ type BunRequests = RPCSchema<{
     openFolderDialog: { params: void; response: string | null };
     // Export
     exportFile: { params: { projectPath: string; filename: string; content: string }; response: string };
+    renderQuartoBook: {
+      params: { projectPath: string; format: QuartoRenderFormat };
+      response: QuartoRenderResult;
+    };
     // File management
     readTextFile: { params: { filePath: string }; response: string };
     readBinaryFile: { params: { filePath: string }; response: string };

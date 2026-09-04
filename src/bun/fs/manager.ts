@@ -765,6 +765,11 @@ class FileSystemManager {
 
   // ── Export ──────────────────────────────────────────────────
 
+  async getQuartoProjectDirectory(projectPath: string): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    return join(projectPath, "exports");
+  }
+
   async exportFile(projectPath: string, filename: string, content: string): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     filename = this.safeFilename(filename);

@@ -1,5 +1,7 @@
 import { Document, parseDocument } from "yaml";
-import type { FileNode } from "./rpc-types";
+import type { FileNode, QuartoRenderFormat } from "./rpc-types";
+
+export type QuartoBookFormat = "docx" | "html" | "pdf";
 
 export interface QuartoBookConfigInput {
   title: string;
@@ -9,6 +11,7 @@ export interface QuartoBookConfigInput {
   language: string;
   outputDir: string;
   bibliographyFiles: string[];
+  formats: QuartoBookFormat[];
   existingYaml?: string | null;
 }
 
@@ -20,11 +23,14 @@ export interface QuartoBookEditorValues {
   language: string;
   outputDir: string;
   bibliographyFiles: string[];
+  formats: QuartoBookFormat[];
 }
 
 const DEFAULT_LANGUAGE = "ko";
 const DEFAULT_OUTPUT_DIR = "_book";
 const DEFAULT_BIBLIOGRAPHY = "references.bib";
+const QUARTO_BOOK_FORMAT_ORDER = ["docx", "html", "pdf"] as const satisfies readonly QuartoBookFormat[];
+const QUARTO_RENDER_FORMAT_ORDER = ["docx", "html", "typst"] as const satisfies readonly QuartoRenderFormat[];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -105,6 +111,84 @@ function readMapping(root: Record<string, unknown>, key: string): Record<string,
   return value;
 }
 
+function readFormatKeys(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value.trim()] : [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => typeof item === "string" && item.trim() ? [item.trim()] : []);
+  }
+  if (isRecord(value)) return Object.keys(value);
+  if (value === undefined || value === null) return [];
+  throw new Error('Invalid _quarto.yml: "format" must be a string, list, or mapping.');
+}
+
+function readBookFormats(value: unknown): QuartoBookFormat[] {
+  const keys = new Set(readFormatKeys(value));
+  return QUARTO_BOOK_FORMAT_ORDER.filter((format) => (
+    format === "pdf" ? keys.has("typst") || keys.has("pdf") : keys.has(format)
+  ));
+}
+
+export function getQuartoRenderFormats(source: string): QuartoRenderFormat[] {
+  const root = parseYamlRoot(source);
+  const keys = new Set(readFormatKeys(root.format));
+  return QUARTO_RENDER_FORMAT_ORDER.filter((format) => keys.has(format));
+}
+
+function defaultFormatOptions(
+  format: QuartoRenderFormat,
+  isNewConfiguration: boolean,
+): Record<string, unknown> {
+  if (format === "docx" && isNewConfiguration) {
+    return {
+      toc: false,
+      "number-sections": false,
+    };
+  }
+  return {};
+}
+
+function updateManagedFormats(
+  document: Document,
+  currentValue: unknown,
+  formats: QuartoBookFormat[],
+  isNewConfiguration: boolean,
+): void {
+  const selected = new Set(formats);
+  const selectedKeys: QuartoRenderFormat[] = formats.map(
+    (format) => format === "pdf" ? "typst" : format,
+  );
+
+  if (!isRecord(currentValue)) {
+    const preservedUnknownKeys = readFormatKeys(currentValue).filter(
+      (key) => !["docx", "html", "pdf", "typst"].includes(key),
+    );
+    const next: Record<string, unknown> = {};
+    for (const key of preservedUnknownKeys) next[key] = {};
+    for (const key of selectedKeys) next[key] = defaultFormatOptions(key, isNewConfiguration);
+    document.set("format", next);
+    return;
+  }
+
+  for (const format of ["docx", "html"] as const) {
+    if (selected.has(format)) {
+      if (!(format in currentValue)) {
+        document.setIn(["format", format], defaultFormatOptions(format, isNewConfiguration));
+      }
+    } else {
+      document.deleteIn(["format", format]);
+    }
+  }
+
+  if (selected.has("pdf")) {
+    if (!("typst" in currentValue)) {
+      document.setIn(["format", "typst"], defaultFormatOptions("typst", isNewConfiguration));
+    }
+  } else {
+    document.deleteIn(["format", "typst"]);
+  }
+  document.deleteIn(["format", "pdf"]);
+}
+
 export function parseQuartoBookConfig(
   source: string | null | undefined,
   availableQmdFilenames: string[],
@@ -119,6 +203,7 @@ export function parseQuartoBookConfig(
       language: DEFAULT_LANGUAGE,
       outputDir: DEFAULT_OUTPUT_DIR,
       bibliographyFiles: [DEFAULT_BIBLIOGRAPHY],
+      formats: ["docx"],
     };
   }
 
@@ -142,6 +227,7 @@ export function parseQuartoBookConfig(
     bibliographyFiles: bibliographyFiles.length > 0
       ? bibliographyFiles
       : [DEFAULT_BIBLIOGRAPHY],
+    formats: readBookFormats(root.format),
   };
 }
 
@@ -190,6 +276,7 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
     .map((filename) => filename.trim())
     .filter(Boolean);
   const bibliographyFiles = normalizeResourcePaths(requestedBibliographies, ".bib");
+  const formats = QUARTO_BOOK_FORMAT_ORDER.filter((format) => input.formats.includes(format));
 
   if (!title) throw new Error("A book title is required.");
   if (authors.length === 0) throw new Error("At least one author is required.");
@@ -207,6 +294,13 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
   }
   if (bibliographyFiles.length !== requestedBibliographies.length) {
     throw new Error("One or more bibliography paths are invalid or duplicated.");
+  }
+  if (formats.length === 0) throw new Error("Select at least one output format.");
+  if (
+    formats.length !== input.formats.length
+    || new Set(input.formats).size !== input.formats.length
+  ) {
+    throw new Error("One or more output formats are invalid or duplicated.");
   }
 
   const existingYaml = input.existingYaml ?? "";
@@ -240,16 +334,7 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
     bibliographyFiles.length === 1 ? bibliographyFiles[0] : bibliographyFiles,
   );
   document.set("csl", cslFilename);
-
-  if (!existingSource && !document.has("format")) {
-    document.set("format", {
-      docx: {
-        theme: "yeti",
-        toc: false,
-        "number-sections": false,
-      },
-    });
-  }
+  updateManagedFormats(document, rootValue.format, formats, !existingSource);
 
   return document.toString({ lineWidth: 0 });
 }

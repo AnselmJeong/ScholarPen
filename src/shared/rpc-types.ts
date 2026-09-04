@@ -52,6 +52,27 @@ export interface ProjectInfo {
   lastModified: number;
 }
 
+export type QuartoRenderFormat = "docx" | "html" | "typst";
+
+export type QuartoRenderResult =
+  | {
+      status: "success";
+      format: QuartoRenderFormat;
+      outputDirectory: string;
+      stdout: string;
+      stderr: string;
+      durationMs: number;
+    }
+  | {
+      status: "error";
+      format: QuartoRenderFormat;
+      message: string;
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      durationMs: number;
+    };
+
 export interface BibliographyDeduplicationResult {
   bibtex: string;
   removedEntries: number;

@@ -3,7 +3,9 @@ import {
   ArrowDown,
   ArrowUp,
   BookMarked,
+  FileText,
   FileCode2,
+  Globe2,
   Loader2,
   Plus,
   Upload,
@@ -21,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { parseQuartoBookConfig } from "@shared/quarto-config";
+import type { QuartoBookFormat } from "@shared/quarto-config";
 
 export interface QuartoBookSetup {
   title: string;
@@ -31,6 +34,7 @@ export interface QuartoBookSetup {
   language: string;
   outputDir: string;
   bibliographyFiles: string[];
+  formats: QuartoBookFormat[];
   existingYaml: string | null;
 }
 
@@ -52,6 +56,8 @@ function moveItem(items: string[], index: number, direction: -1 | 1): string[] {
   return next;
 }
 
+const FORMAT_ORDER = ["docx", "html", "pdf"] as const satisfies readonly QuartoBookFormat[];
+
 export function QuartoBookDialog({
   open,
   onOpenChange,
@@ -69,6 +75,7 @@ export function QuartoBookDialog({
   const [language, setLanguage] = useState("ko");
   const [outputDir, setOutputDir] = useState("_book");
   const [bibliographyFiles, setBibliographyFiles] = useState(["references.bib"]);
+  const [formats, setFormats] = useState<QuartoBookFormat[]>(["docx"]);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initializationError, setInitializationError] = useState<string | null>(null);
@@ -86,6 +93,7 @@ export function QuartoBookDialog({
       setLanguage(values.language);
       setOutputDir(values.outputDir);
       setBibliographyFiles(values.bibliographyFiles);
+      setFormats(values.formats);
       setError(null);
       setInitializationError(null);
     } catch (parseError) {
@@ -114,7 +122,8 @@ export function QuartoBookDialog({
     && selectedChapters.length > 0
     && language.trim()
     && outputDir.trim()
-    && normalizedBibliographies.length > 0,
+    && normalizedBibliographies.length > 0
+    && formats.length > 0,
   );
 
   const updateAuthor = (index: number, value: string) => {
@@ -145,6 +154,15 @@ export function QuartoBookDialog({
     );
   };
 
+  const toggleFormat = (format: QuartoBookFormat) => {
+    setFormats((current) => {
+      const selected = new Set(current);
+      if (selected.has(format)) selected.delete(format);
+      else selected.add(format);
+      return FORMAT_ORDER.filter((candidate) => selected.has(candidate));
+    });
+  };
+
   const handleGenerate = async () => {
     if (!canGenerate || generating) return;
     setGenerating(true);
@@ -159,6 +177,7 @@ export function QuartoBookDialog({
         language: language.trim(),
         outputDir: outputDir.trim(),
         bibliographyFiles: normalizedBibliographies,
+        formats,
         existingYaml: initialYaml,
       });
       onOpenChange(false);
@@ -263,6 +282,69 @@ export function QuartoBookDialog({
                     placeholder="_book"
                   />
                 </div>
+              </div>
+
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <Label>Output formats</Label>
+                  <span className="text-[11px] text-muted-foreground">Select one or more</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <label className={`cursor-pointer rounded-xl border px-3 py-3 transition-colors ${formats.includes("docx") ? "border-primary/50 bg-primary/[0.06]" : "border-border hover:bg-muted/40"}`}>
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={formats.includes("docx")}
+                        onChange={() => toggleFormat("docx")}
+                        className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold">
+                          <FileText className="h-3.5 w-3.5 text-primary" />
+                          Word
+                        </div>
+                        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">DOCX for editing and review</p>
+                      </div>
+                    </div>
+                  </label>
+                  <label className={`cursor-pointer rounded-xl border px-3 py-3 transition-colors ${formats.includes("html") ? "border-primary/50 bg-primary/[0.06]" : "border-border hover:bg-muted/40"}`}>
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={formats.includes("html")}
+                        onChange={() => toggleFormat("html")}
+                        className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold">
+                          <Globe2 className="h-3.5 w-3.5 text-primary" />
+                          HTML
+                        </div>
+                        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">Interactive browser book</p>
+                      </div>
+                    </div>
+                  </label>
+                  <label className={`cursor-pointer rounded-xl border px-3 py-3 transition-colors ${formats.includes("pdf") ? "border-primary/50 bg-primary/[0.06]" : "border-border hover:bg-muted/40"}`}>
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={formats.includes("pdf")}
+                        onChange={() => toggleFormat("pdf")}
+                        className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold">
+                          <FileCode2 className="h-3.5 w-3.5 text-primary" />
+                          PDF
+                        </div>
+                        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">Fast PDF via Typst</p>
+                      </div>
+                    </div>
+                  </label>
+                </div>
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  PDF is stored as <span className="font-mono">typst</span> in YAML. Existing options for selected formats are preserved.
+                </p>
               </div>
 
               <div className="space-y-2.5">

@@ -23,6 +23,8 @@ import type {
   BibliographyValidationProgress,
   BibliographyRepairProposal,
   ProjectSourcesStatus,
+  QuartoRenderFormat,
+  QuartoRenderResult,
 } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 
@@ -50,6 +52,7 @@ const strictRpcMethods = new Set([
   "deduplicateBibliography",
   "validateAndCleanBibliography",
   "exportFile",
+  "renderQuartoBook",
   "renameFile",
   "deleteFile",
   "saveSettings",
@@ -224,6 +227,14 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     openFolderDialog: null,
     createDocument: "new-doc.scholarpen.json",
     exportFile: "/demo/exports/doc.md",
+    renderQuartoBook: {
+      status: "success",
+      format: "html",
+      outputDirectory: "/demo/exports/_book",
+      stdout: "",
+      stderr: "",
+      durationMs: 0,
+    },
     readTextFile: "# Hello\n\nThis is a demo file.",
     readBinaryFile: "",
     renameFile: "/demo/documents/renamed.scholarpen.json",
@@ -357,6 +368,8 @@ export const rpc = {
   // ── Export ────────────────────────────────────────────
   exportFile: (projectPath: string, filename: string, content: string) =>
     call<string>("exportFile", { projectPath, filename, content }),
+  renderQuartoBook: (projectPath: string, format: QuartoRenderFormat) =>
+    call<QuartoRenderResult>("renderQuartoBook", { projectPath, format }),
   // ── File Management ───────────────────────────────────
   readTextFile: (filePath: string) =>
     call<string>("readTextFile", { filePath }),

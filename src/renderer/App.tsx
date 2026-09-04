@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { BookMarked, BookOpen, PenLine, Plus } from "lucide-react";
+import { BookMarked, BookOpen, PenLine, Play, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
@@ -9,6 +9,7 @@ import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor
 import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog } from "./components/editor/ExportDialog";
 import { QuartoBookDialog, type QuartoBookSetup } from "./components/editor/QuartoBookDialog";
+import { QuartoRenderDialog } from "./components/editor/QuartoRenderDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import {
@@ -19,12 +20,20 @@ import {
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import { scholarSchema } from "./blocks/schema";
 import { collectDocumentNodes, findBibliographyNode } from "./utils/document-tree";
-import type { OllamaStatus, ProjectInfo, FileNode, AppSettings } from "../shared/rpc-types";
+import type {
+  AppSettings,
+  FileNode,
+  OllamaStatus,
+  ProjectInfo,
+  QuartoRenderFormat,
+  QuartoRenderResult,
+} from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import {
   buildQuartoBookConfig,
   collectQuartoChapterFilenames,
   findQuartoConfigNode,
+  getQuartoRenderFormats,
 } from "../shared/quarto-config";
 import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
@@ -58,6 +67,10 @@ export function App() {
   const [quartoBookYaml, setQuartoBookYaml]           = useState<string | null>(null);
   const [quartoBookLoading, setQuartoBookLoading]     = useState(false);
   const [quartoBookLoadError, setQuartoBookLoadError] = useState<string | null>(null);
+  const [quartoRenderDialogOpen, setQuartoRenderDialogOpen] = useState(false);
+  const [quartoRenderFormats, setQuartoRenderFormats] = useState<QuartoRenderFormat[]>([]);
+  const [quartoRenderLoading, setQuartoRenderLoading] = useState(false);
+  const [quartoRenderLoadError, setQuartoRenderLoadError] = useState<string | null>(null);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
@@ -173,6 +186,9 @@ export function App() {
     setQuartoBookDialogOpen(false);
     setQuartoBookYaml(null);
     setQuartoBookLoadError(null);
+    setQuartoRenderDialogOpen(false);
+    setQuartoRenderFormats([]);
+    setQuartoRenderLoadError(null);
     try {
       const tree = await rpc.listProjectFiles(project.path);
       setFileTree(tree);
@@ -255,6 +271,45 @@ export function App() {
       setQuartoBookLoading(false);
     }
   }, [activeProject]);
+
+  const handleOpenQuartoRenderDialog = useCallback(async () => {
+    if (!activeProject) return;
+    setQuartoRenderDialogOpen(true);
+    setQuartoRenderLoading(true);
+    setQuartoRenderLoadError(null);
+    setQuartoRenderFormats([]);
+    try {
+      const latestTree = await rpc.listProjectFiles(activeProject.path);
+      setFileTree(latestTree);
+      const configNode = findQuartoConfigNode(latestTree);
+      if (!configNode) {
+        throw new Error("Create exports/_quarto.yml in the Quarto book editor before rendering.");
+      }
+      const configSource = await rpc.readTextFile(configNode.path);
+      const formats = getQuartoRenderFormats(configSource);
+      if (formats.length === 0) {
+        throw new Error(
+          "No supported format is configured in exports/_quarto.yml. Select Word, HTML, or PDF in the Quarto book editor.",
+        );
+      }
+      setQuartoRenderFormats(formats);
+    } catch (error) {
+      setQuartoRenderLoadError(
+        error instanceof Error ? error.message : "Could not read the Quarto render configuration.",
+      );
+    } finally {
+      setQuartoRenderLoading(false);
+    }
+  }, [activeProject]);
+
+  const handleRenderQuartoBook = useCallback(async (
+    format: QuartoRenderFormat,
+  ): Promise<QuartoRenderResult> => {
+    if (!activeProject) throw new Error("Open a project first.");
+    const result = await rpc.renderQuartoBook(activeProject.path, format);
+    if (result.status === "success") await refreshFileTree();
+    return result;
+  }, [activeProject, refreshFileTree]);
 
   const handleEditorReady = useCallback((editor: BlockNoteEditor<any, any, any> | null) => {
     editorRef.current = editor;
@@ -400,6 +455,7 @@ export function App() {
     language,
     outputDir,
     bibliographyFiles,
+    formats,
     existingYaml,
   }: QuartoBookSetup) => {
     if (!activeProject) throw new Error("Open a project first.");
@@ -423,6 +479,7 @@ export function App() {
       language,
       outputDir,
       bibliographyFiles,
+      formats,
       existingYaml,
     });
 
@@ -577,6 +634,23 @@ export function App() {
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">Configure Quarto book</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <TooltipProvider delayDuration={400}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleOpenQuartoRenderDialog}
+                  disabled={!activeProject}
+                  aria-label="Render Quarto book"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  <Play className="h-4 w-4" strokeWidth={1.8} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Render Quarto book</TooltipContent>
             </Tooltip>
           </TooltipProvider>
 
@@ -784,6 +858,16 @@ export function App() {
         loading={quartoBookLoading}
         loadError={quartoBookLoadError}
         onGenerate={handleGenerateQuartoBook}
+      />
+
+      <QuartoRenderDialog
+        key={`render-${activeProject?.path ?? "no-project"}`}
+        open={quartoRenderDialogOpen}
+        onOpenChange={setQuartoRenderDialogOpen}
+        formats={quartoRenderFormats}
+        loading={quartoRenderLoading}
+        loadError={quartoRenderLoadError}
+        onRender={handleRenderQuartoBook}
       />
     </div>
   );
