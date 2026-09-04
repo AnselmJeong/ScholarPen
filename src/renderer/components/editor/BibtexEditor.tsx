@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RotateCcw, Save, SearchCheck, ShieldCheck, Trash2, Upload, WandSparkles, Wrench } from "lucide-react";
+import { AlertTriangle, BookOpen, FilePlus2, FilterX, List, RefreshCw, RotateCcw, Save, SearchCheck, ShieldCheck, Trash2, Upload, WandSparkles, Wrench } from "lucide-react";
 import type {
   BibliographyMaintenanceResult,
   BibliographyRepairProposal,
@@ -8,10 +8,8 @@ import type {
 } from "../../../shared/rpc-types";
 import {
   areBibtexEntriesDuplicates,
-  buildBibtexAppendPlan,
   findDuplicateBibtexGroups,
   parseBibtexEntries,
-  partitionBibtexAdditions,
   type BibtexEntry,
   type BibtexParseIssue,
 } from "../../../shared/bibtex-utils";
@@ -153,6 +151,8 @@ export function BibtexEditor({
   const bibtexImportRef = useRef<HTMLInputElement>(null);
   const find = useTextFind(contentRef, file.path);
   const dirty = content !== savedContent;
+  const savedContentRef = useRef(savedContent);
+  savedContentRef.current = savedContent;
 
   useEffect(() => onBibliographyValidationProgress(setValidationProgress), []);
 
@@ -165,6 +165,8 @@ export function BibtexEditor({
     [parsed.entries, selectedStart]
   );
   const editDirty = Boolean(selectedEntry && editDraft.trim() !== selectedEntry.raw.trim());
+  const hasUnsavedChangesRef = useRef(dirty || editDirty);
+  hasUnsavedChangesRef.current = dirty || editDirty;
   const duplicateGroups = useMemo(() => findDuplicateBibtexGroups(parsed.entries), [parsed.entries]);
   const unusedEntries = useMemo(
     () => usedCitekeys ? parsed.entries.filter((entry) => !usedCitekeys.has(entry.citekey)) : [],
@@ -184,9 +186,9 @@ export function BibtexEditor({
 
   useEffect(() => {
     const decision = decideExternalBibtexSync(
-      savedContent,
+      savedContentRef.current,
       initialContent,
-      dirty || editDirty,
+      hasUnsavedChangesRef.current,
     );
     if (decision === "unchanged") return;
     if (decision === "conflict") {
@@ -201,7 +203,7 @@ export function BibtexEditor({
     setSelectedStart(null);
     setEditDraft("");
     setValidationResult(null);
-  }, [dirty, editDirty, file.path, initialContent, reloadTrigger, savedContent]);
+  }, [file.path, initialContent, reloadTrigger]);
 
   useEffect(() => {
     setRepairDraft(content);
@@ -226,8 +228,30 @@ export function BibtexEditor({
     setTimeout(() => setMessage(null), 3500);
   }, []);
 
+  const applyReloadedBibtex = useCallback((latest: string) => {
+    setExternalContent(null);
+    setContent(latest);
+    setSavedContent(latest);
+    setUsedCitekeys(null);
+    setSelectedStart(null);
+    setEditDraft("");
+    setValidationResult(null);
+  }, []);
+
   const saveRaw = useCallback(async (next: string, text = "저장됨") => {
-    await rpc.saveBibtexValidated(projectPath, next, savedContent);
+    try {
+      await rpc.saveBibtexValidated(projectPath, next, savedContent);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("changed outside this editor")) {
+        try {
+          const latest = await rpc.loadBibtex(projectPath);
+          if (latest !== savedContent) setExternalContent(latest);
+        } catch {
+          // Preserve the original concurrency error when a refresh also fails.
+        }
+      }
+      throw error;
+    }
     setExternalContent(null);
     setContent(next);
     setSavedContent(next);
@@ -244,15 +268,32 @@ export function BibtexEditor({
       confirmLabel: "Load external file",
     });
     if (!confirmed) return;
-    setContent(externalContent);
-    setSavedContent(externalContent);
-    setExternalContent(null);
-    setSelectedStart(null);
-    setEditDraft("");
-    setUsedCitekeys(null);
-    setValidationResult(null);
+    applyReloadedBibtex(externalContent);
     flash("Externally changed references.bib loaded");
-  }, [externalContent, flash]);
+  }, [applyReloadedBibtex, externalContent, flash]);
+
+  const handleReload = useCallback(async () => {
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      const latest = await rpc.loadBibtex(projectPath);
+      if (dirty || editDirty) {
+        const confirmed = await rpc.confirmAction({
+          title: "Reload references.bib",
+          message: "Discard the unsaved entry edit and reload references.bib from disk?",
+          detail: "The new-entry draft is kept. ScholarPen will not overwrite the file on disk.",
+          confirmLabel: "Reload file",
+        });
+        if (!confirmed) return;
+      }
+      applyReloadedBibtex(latest);
+      flash(latest === savedContent ? "references.bib is already up to date" : "references.bib reloaded from disk");
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "Reload failed");
+    } finally {
+      setSaving(false);
+    }
+  }, [applyReloadedBibtex, dirty, editDirty, flash, projectPath, savedContent]);
 
   const handleMergeBibtexFile = useCallback(async (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -358,65 +399,46 @@ export function BibtexEditor({
   }, [content, editDraft, parsed.entries, saveRaw, selectedEntry]);
 
   const handleAppendEntry = useCallback(async () => {
-    if (parsed.issues.length > 0) {
-      setView("review");
-      const issue = parsed.issues[0];
-      setSaveMsg(
-        `기존 bibliography가 line ${issue.line}, column ${issue.column}에서 유효하지 않아 append하지 않았습니다.`,
-      );
-      return;
-    }
-    let appendPlan;
-    try {
-      appendPlan = buildBibtexAppendPlan(content, addDraft);
-    } catch (error) {
-      setSaveMsg(error instanceof Error ? error.message : "BibTeX entry를 확인하세요.");
-      return;
-    }
-    const { accepted: pendingEntries, skipped } = partitionBibtexAdditions(
-      parsed.entries,
-      appendPlan.addedEntries,
-    );
-    if (pendingEntries.length === 0) {
-      const examples = skipped.slice(0, 3).map(({ entry, duplicateOf }) => (
-        `${entry.citekey} → ${duplicateOf.citekey}`
-      )).join(", ");
-      setAddDraft("");
-      setSaveMsg(`${skipped.length}개 중복을 건너뜀 · 추가할 새 entry 없음${examples ? ` (${examples})` : ""}`);
+    if (dirty || editDirty) {
+      setSaveMsg("현재 entry 수정사항을 먼저 저장하거나 되돌린 뒤 새 entry를 추가하세요.");
       return;
     }
 
     setSaving(true);
     setSaveMsg(null);
     try {
-      const uniquePlan = buildBibtexAppendPlan(
-        content,
-        pendingEntries.map((entry) => entry.raw).join("\n\n"),
-      );
-      const next = uniquePlan.bibtex;
-      const count = pendingEntries.length;
-      const skippedExamples = skipped.slice(0, 3).map(({ entry, duplicateOf }) => (
-        `${entry.citekey} → ${duplicateOf.citekey}`
+      // Append against the authoritative on-disk bibliography. This keeps
+      // external/cloud-sync changes and avoids rejecting a new entry merely
+      // because the open tab's baseline is stale.
+      const result = await rpc.mergeBibtex(projectPath, addDraft);
+      const count = result.addedEntries;
+      const skippedExamples = result.skippedDuplicates.slice(0, 3).map((entry) => (
+        `${entry.citekey} → ${entry.duplicateOfCitekey}`
       )).join(", ");
-      const resultMessage = skipped.length > 0
-        ? `${count}개 추가 · ${skipped.length}개 중복 건너뜀${skippedExamples ? ` (${skippedExamples})` : ""}`
+      const resultMessage = result.skippedDuplicates.length > 0
+        ? count > 0
+          ? `${count}개 추가 · ${result.skippedDuplicates.length}개 중복 건너뜀${skippedExamples ? ` (${skippedExamples})` : ""}`
+          : `${result.skippedDuplicates.length}개 중복을 건너뜀 · 추가할 새 entry 없음${skippedExamples ? ` (${skippedExamples})` : ""}`
         : count === 1
-          ? `'${pendingEntries[0].citekey}' 추가됨`
+          ? `'${parseBibtexEntries(addDraft).entries[0]?.citekey ?? "entry"}' 추가됨`
           : `${count}개 BibTeX entries 추가됨`;
-      await saveRaw(next, resultMessage);
-      const lastCitekey = pendingEntries.at(-1)?.citekey;
-      const savedEntry = parseBibtexEntries(next).entries.find((entry) => entry.citekey === lastCitekey);
+      const requestedEntries = parseBibtexEntries(addDraft).entries;
+      const lastCitekey = requestedEntries.at(-1)?.citekey;
+      const savedEntry = parseBibtexEntries(result.bibtex).entries.find((entry) => entry.citekey === lastCitekey);
+      applyReloadedBibtex(result.bibtex);
       setSelectedStart(savedEntry?.start ?? null);
       setEditDraft(savedEntry?.raw ?? "");
       setAddDraft("");
-      setSaveMsg(skipped.length > 0 ? resultMessage : count === 1 ? "추가됨" : `${count}개 추가됨`);
+      onSaved?.();
+      flash(resultMessage);
+      setSaveMsg(result.skippedDuplicates.length > 0 ? resultMessage : count === 1 ? "추가됨" : `${count}개 추가됨`);
       setTimeout(() => setSaveMsg(null), 2500);
     } catch (err) {
       setSaveMsg(err instanceof Error ? err.message : "추가 실패");
     } finally {
       setSaving(false);
     }
-  }, [addDraft, content, parsed.entries, parsed.issues, saveRaw]);
+  }, [addDraft, applyReloadedBibtex, dirty, editDirty, flash, onSaved, projectPath]);
 
   useEffect(() => {
     if (!onSaveReady) return;
@@ -693,10 +715,19 @@ export function BibtexEditor({
         <span>{file.name}</span>
         <span className="text-xs text-muted-foreground/60 ml-2">BibTeX</span>
         <div className="ml-auto flex items-center gap-2">
-          {saveMsg && <span className={`text-xs ${/(실패|이미|확인|입력|유효하지|invalid|error|line \d+)/i.test(saveMsg) ? "text-red-400" : "text-emerald-500"}`}>{saveMsg}</span>}
+          {saveMsg && <span className={`text-xs ${/(실패|이미|확인|입력|유효하지|invalid|error|changed outside|reload failed|line \d+)/i.test(saveMsg) ? "text-red-400" : "text-emerald-500"}`}>{saveMsg}</span>}
           {editDirty && <span className="text-xs text-amber-500">entry 수정됨</span>}
           {dirty && !editDirty && <span className="text-xs text-amber-500">수정됨</span>}
           {message && <span className="text-xs text-emerald-500">{message}</span>}
+          <button
+            onClick={handleReload}
+            disabled={saving}
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
+            title="references.bib를 디스크에서 다시 불러오기"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Reload
+          </button>
           <button onClick={handleSaveSelectedEntry} disabled={saving || !selectedEntry || !editDirty} className="flex items-center gap-1 px-2 py-1 rounded text-xs hover:bg-accent transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40" title="선택한 BibTeX entry 저장">
             <Save className="h-3.5 w-3.5" />
             {saving ? "저장 중" : "Entry 저장"}
@@ -904,7 +935,7 @@ export function BibtexEditor({
                     <Upload className="h-3.5 w-3.5" />
                     Merge .bib
                   </button>
-                  <button onClick={handleAppendEntry} disabled={saving || !addDraft.trim()} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40" title="새 BibTeX entry append">
+                  <button onClick={handleAppendEntry} disabled={saving || !addDraft.trim() || dirty || editDirty} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40" title="새 BibTeX entry append">
                     <FilePlus2 className="h-3.5 w-3.5" />
                     Append
                   </button>

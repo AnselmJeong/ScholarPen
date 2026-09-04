@@ -1,5 +1,7 @@
 # ScholarPen Improvement Plan
 
+> Historical plan. KB-related work items were retired on 2026-08-28; the current app uses PubMed-first live research search and no local KB index.
+
 작성일: 2026-04-18
 
 이 문서는 현재 코드 반영 상태를 기준으로 남은 개선을 중요도순으로 재구성한 것이다. 사용자가 의도한 `AISidebar` 구조, `ollama launch claude`, Claude direct option, `--dangerously-skip-permissions`는 수정 대상이 아니다. 목표는 권한 제거가 아니라 project scope, abort, URL 검증, 오류 표시 같은 guardrail 강화다.

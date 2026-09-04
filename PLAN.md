@@ -10,8 +10,8 @@
 
 PRD 기반 핵심 목표:
 - **Electrobun** 셸 + **BlockNote** 에디터 + **Ollama** 로컬 AI의 3-tier 통합
-- 완전 로컬 실행 (클라우드 전송 없음)
-- 학술 특화 블록 + citation 관리 + Knowledge Base RAG
+- provider별 AI 실행과 사용자가 켠 live research search
+- 학술 특화 블록 + citation 관리 + PubMed 중심 외부 근거 검색
 
 ---
 
@@ -21,7 +21,7 @@ PRD 기반 핵심 목표:
 |--------|------|------|
 | Electrobun 성숙도 — v1, 커뮤니티 작음 | HIGH | 초기에 Electrobun RPC 패턴을 PoC로 검증 |
 | BlockNote `AIExtension` — Ollama 직접 연결 필요 | MEDIUM | `transport` 옵션으로 Ollama REST 연결 커스터마이징 |
-| LanceDB TypeScript SDK — Bun 환경 호환성 미검증 | HIGH | Phase 0에서 Bun + LanceDB 단독 실행 검증 필수 |
+| 외부 연구 검색의 출처 품질과 가용성 | HIGH | PubMed 우선, 일반 웹 fallback, 출처 링크와 실패 상태 명시 |
 | PDF 파싱 (Bun 환경) — Node.js 라이브러리 호환 불확실 | MEDIUM | `pdftotext` CLI fallback 또는 `pdf-parse` 대체 고려 |
 | Pandoc 의존성 — DOCX/PDF export에 시스템 Pandoc 필요 | LOW | 앱 번들 포함 또는 사용자 설치 안내 |
 | @blocknote/xl-docx-exporter — PDF export는 react-pdf 기반 | LOW | PRD의 Pandoc 방식과 병행 검토 |
@@ -46,7 +46,7 @@ scholarpen/
 │   │   └── src/
 │   │       ├── rpc/             # RPC 핸들러
 │   │       ├── ollama/          # Ollama client
-│   │       ├── lancedb/         # Vector DB
+│   │       ├── agent/           # PubMed/web search + AI orchestration
 │   │       ├── citation/        # CrossRef / OpenAlex client
 │   │       └── fs/              # 파일 시스템 관리
 │   └── renderer/                # Webview React App
@@ -67,7 +67,6 @@ scholarpen/
 ### Phase 0: 스캐폴딩 & 환경 검증 ✓ 완료
 - [x] Electrobun 앱 초기화, Bun 워크스페이스 설정
 - [x] Vite + React 19 + Tailwind CSS Webview 설정
-- [x] PoC 검증: Bun + LanceDB 동작 여부 (✓)
 - [x] PoC 검증: Ollama 연결 확인 (Connected, 모델: gemma4, minimax-m2.7)
 - [x] PoC 검증: Ollama streaming 정상 동작 (✓)
 - [x] BlockNote 기본 에디터 Webview 렌더링 (Vite build ✓)
@@ -90,7 +89,7 @@ scholarpen/
 - [ ] `AIExtension` + Ollama transport 연결
 - [ ] AI Block (`/ai` slash command)
 - [ ] Generate 드롭다운 (Custom / Continue / Summarize / Expand / Translate)
-- [ ] Using 컨텍스트 선택 (Page / Selection / Manuscript / KB)
+- [ ] Using 컨텍스트 선택 (Page / Selection / Manuscript / @file)
 - [ ] Selection-based AI Toolbar (Paraphrase, Expand, Summarize, Translate, Improve, Simplify, Formal, Find refs)
 - [ ] Diff 미리보기 + accept/reject
 - [ ] AI Sidebar Chat (`sendMessageWithAIRequest`)
@@ -105,14 +104,12 @@ scholarpen/
 - [ ] BibTeX 관리 패널 (목록, 검색, 편집, 중복 감지)
 - [ ] OpenAlex / Semantic Scholar 연동 (Find citations)
 
-### Phase 4: Knowledge Base & RAG (P1)
-- [ ] PDF 업로드 → 텍스트 추출 → Chunk 분할
-- [ ] Ollama embedding → LanceDB 저장
-- [ ] `KnowledgeChunk` LanceDB 스키마
-- [ ] `searchKnowledgeBase(query)` hybrid search RPC
-- [ ] AI Block "Knowledge base" 컨텍스트 연결
-- [ ] AI Sidebar Chat RAG 자동 트리거
-- [ ] KB 관리 UI (파일 목록, 인덱싱 상태)
+### Phase 4: Live Research Search (P1) ✓ 완료
+- [x] 질문별 외부 검색 필요성 자동 판단
+- [x] PubMed ESearch/EFetch로 논문 메타데이터와 초록 검색
+- [x] PubMed 결과 부족 시 TinyFish Search/Fetch로 일반 웹 보완
+- [x] `/pubmed-research` 내장 skill
+- [x] 응답에 검증 가능한 source link 자동 첨부
 
 ### Phase 5: Export (P1)
 - [ ] Markdown export (`blocksToMarkdownLossy` + citation 후처리)
@@ -143,7 +140,7 @@ Phase 0 (필수 선행)
 | Phase 1: 에디터 | HIGH | 6-8 세션 |
 | Phase 2: AI | HIGH | 6-8 세션 |
 | Phase 3: Citation | MEDIUM | 4-5 세션 |
-| Phase 4: KB & RAG | HIGH | 5-6 세션 |
+| Phase 4: Live Research Search | HIGH | 완료 |
 | Phase 5: Export | LOW | 2-3 세션 |
 
 ---
@@ -158,6 +155,6 @@ Phase 0 (필수 선행)
 | Frontend | React 19 + Tailwind CSS + Vite |
 | AI Backend | Ollama Cloud (`https://ollama.com/v1`); local Ollama is reserved for embeddings |
 | Embedding | nomic-embed-text via Ollama |
-| Vector DB | LanceDB (@lancedb/lancedb) |
+| Research Search | PubMed E-utilities + TinyFish Search/Fetch API |
 | Citation | CrossRef API, OpenAlex API |
 | Export | @blocknote/xl-docx-exporter, Pandoc |

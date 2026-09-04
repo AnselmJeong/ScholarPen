@@ -1,5 +1,7 @@
 # Knowledge Base 설계 계획
 
+> 2026-08-28 폐기됨. ScholarPen은 Knowledge Base 검색·색인·RAG 기능을 제공하지 않으며, AI Sidebar는 PubMed 우선 live research search를 사용한다.
+
 ## 개요
 
 ScholarPen의 Knowledge Base는 **별도 앱(scholarwiki)에서 구축·관리**한다. ScholarPen은 KB를 직접 표시하거나 편집하지 않는다. 오직 **AI 채팅과 에디터에서 참고자료로 조회**할 때만 사용한다.

@@ -3,6 +3,9 @@ import { basename, join } from "path";
 import type { AgentSkill } from "../../shared/rpc-types";
 import { APP_COMMANDS_DIR, APP_SKILLS_DIR, seedAppInstructions } from "./app-skills";
 
+const DEPRECATED_SCHOLARPEN_SKILLS = new Set(["summarize-kb"]);
+const DEPRECATED_SCHOLARPEN_COMMANDS = new Set(["kb-query"]);
+
 async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -76,6 +79,13 @@ export async function listAgentSkills(projectPath?: string): Promise<AgentSkill[
   };
 
   for (const skill of groups.flat().sort((a, b) => priority[a.source] - priority[b.source])) {
+    if (
+      skill.source === "scholarpen" &&
+      ((skill.kind === "skill" && DEPRECATED_SCHOLARPEN_SKILLS.has(skill.name)) ||
+        (skill.kind === "command" && DEPRECATED_SCHOLARPEN_COMMANDS.has(skill.name)))
+    ) {
+      continue;
+    }
     const key = `${skill.kind}:${skill.name}`;
     if (!byName.has(key)) byName.set(key, skill);
   }

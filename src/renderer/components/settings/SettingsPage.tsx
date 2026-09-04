@@ -397,7 +397,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
             <SettingRow
               label="Ollama API Key"
-              description="Ollama Cloud 모델 조회·생성 및 web search/fetch에 사용됩니다"
+              description="Ollama Cloud 모델 조회와 생성에 사용됩니다"
             >
               <Input
                 type="password"
@@ -409,19 +409,54 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
             </SettingRow>
 
             <SettingRow
-              label="Web Search"
-              description="KB OFF일 때만 모델 판단 후 Ollama web search/fetch context를 추가합니다"
+              label="TinyFish API Key"
+              description="Search와 Fetch 요청에 사용되며 Bun main process에서만 전송됩니다"
+            >
+              <div className="space-y-1.5">
+                <Input
+                  type="password"
+                  value={settings.tinyfishApiKey}
+                  onChange={(e) => updateSetting("tinyfishApiKey", e.target.value)}
+                  placeholder="Enter TinyFish API key..."
+                  className="font-mono text-xs"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="text-[11px] text-primary underline underline-offset-2 hover:text-primary/80"
+                  onClick={() => rpc.openExternal("https://agent.tinyfish.ai/api-keys")}
+                >
+                  TinyFish API key 만들기
+                </button>
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              label="Automatic Web Search"
+              description="외부 근거가 필요하면 PubMed를 먼저 찾고 TinyFish Search/Fetch로 보완합니다"
             >
               <div className="flex items-center justify-end gap-2">
                 <span className="text-xs text-muted-foreground">
-                  {settings.ollamaWebSearchEnabled ? "Enabled" : "Disabled"}
+                  {settings.webSearchEnabled ? "Enabled" : "Disabled"}
                 </span>
                 <Switch
-                  checked={settings.ollamaWebSearchEnabled}
-                  onCheckedChange={(checked) => updateSetting("ollamaWebSearchEnabled", checked)}
+                  checked={settings.webSearchEnabled}
+                  onCheckedChange={(checked) => updateSetting("webSearchEnabled", checked)}
                 />
               </div>
             </SettingRow>
+
+            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              PubMed 검색은 NCBI E-utilities를 사용합니다. 초록과 메타데이터의 이용 조건은{" "}
+              <button
+                type="button"
+                className="text-primary underline underline-offset-2 hover:text-primary/80"
+                onClick={() => rpc.openExternal("https://www.ncbi.nlm.nih.gov/home/about/policies/")}
+              >
+                NCBI policies
+              </button>
+              를 따릅니다.
+            </div>
 
           </SettingSection>
 
@@ -494,49 +529,6 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
             </SettingRow>
           </SettingSection>
 
-          <Separator />
-
-          {/* Knowledge Base */}
-          <SettingSection icon={BookOpen} title="Knowledge Base">
-            <SettingRow
-              label="Local Embedding URL"
-              description="임베딩 전용 로컬 Ollama endpoint"
-            >
-              <Input
-                value={settings.ollamaEmbeddingBaseUrl}
-                onChange={(e) => updateSetting("ollamaEmbeddingBaseUrl", e.target.value)}
-                placeholder="http://localhost:11434"
-                className="font-mono text-xs"
-              />
-            </SettingRow>
-            <SettingRow
-              label="Embedding Model"
-              description="로컬 Ollama에 설치된 embedding model"
-            >
-              <Input
-                value={settings.ollamaEmbedModel}
-                onChange={(e) => updateSetting("ollamaEmbedModel", e.target.value)}
-                placeholder="nomic-embed-text"
-                className="font-mono text-xs"
-              />
-            </SettingRow>
-            <SettingRow
-              label="Search Results"
-              description="Number of KB pages injected into AI context"
-            >
-              <Input
-                type="number"
-                min={1}
-                max={20}
-                value={settings.kbTopK}
-                onChange={(e) => updateSetting("kbTopK", Math.max(1, Math.min(20, Number(e.target.value) || 5)))}
-                className="font-mono text-xs"
-              />
-            </SettingRow>
-            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              현재 KB 검색은 page-level FTS를 사용합니다. 로컬 embedding 설정은 Phase 4 hybrid RAG용으로 Cloud 생성 모델과 분리되어 있습니다.
-            </div>
-          </SettingSection>
         </div>
       </div>
 

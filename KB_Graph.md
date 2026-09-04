@@ -1,5 +1,7 @@
 # Knowledge Base Graph — Implementation Plan
 
+> Retired on 2026-08-28. ScholarPen no longer includes a Knowledge Base browser, graph, index, or RAG path. Live research uses PubMed-first search instead.
+
 ## Goal
 
 Add a Knowledge Graph visualization backed by the `Knowledge_Base/wiki/` directory.

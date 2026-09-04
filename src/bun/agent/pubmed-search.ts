@@ -1,0 +1,146 @@
+import type { WebSearchResult } from "./web-search";
+
+const EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
+const USER_AGENT = "ScholarPen/1.0 (PubMed research assistant)";
+
+export function broadenPubMedQuery(query: string): string {
+  return query
+    .replace(/\b(?:systematic\s+review|meta-analysis|randomi[sz]ed\s+(?:controlled\s+)?trial|peer-reviewed|research\s+article|review\s+article)\b/gi, " ")
+    .replace(/\b(?:literature|research|studies|study|review)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)))
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstTag(xml: string, tag: string): string {
+  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, "i"));
+  return match ? decodeXml(match[1]) : "";
+}
+
+function extractAbstract(xml: string): string {
+  const parts = Array.from(xml.matchAll(/<AbstractText([^>]*)>([\s\S]*?)<\/AbstractText>/gi));
+  return parts
+    .map((match) => {
+      const label = match[1].match(/\bLabel="([^"]+)"/i)?.[1];
+      const text = decodeXml(match[2]);
+      return text ? `${label ? `${decodeXml(label)}: ` : ""}${text}` : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function extractAuthors(xml: string): string[] {
+  return Array.from(xml.matchAll(/<Author(?:\s[^>]*)?>([\s\S]*?)<\/Author>/gi))
+    .map((match) => {
+      const block = match[1];
+      const collective = firstTag(block, "CollectiveName");
+      if (collective) return collective;
+      const lastName = firstTag(block, "LastName");
+      const foreName = firstTag(block, "ForeName") || firstTag(block, "Initials");
+      return [lastName, foreName].filter(Boolean).join(", ");
+    })
+    .filter(Boolean);
+}
+
+function extractDoi(xml: string): string {
+  const articleId = xml.match(/<ArticleId\s+[^>]*IdType="doi"[^>]*>([\s\S]*?)<\/ArticleId>/i);
+  const electronicId = xml.match(/<ELocationID\s+[^>]*EIdType="doi"[^>]*>([\s\S]*?)<\/ELocationID>/i);
+  return decodeXml(articleId?.[1] ?? electronicId?.[1] ?? "");
+}
+
+export function parsePubMedXml(xml: string): WebSearchResult[] {
+  return Array.from(xml.matchAll(/<PubmedArticle(?:\s[^>]*)?>([\s\S]*?)<\/PubmedArticle>/gi))
+    .map((match) => {
+      const article = match[1];
+      const pmid = firstTag(article, "PMID");
+      const title = firstTag(article, "ArticleTitle");
+      if (!pmid || !title) return null;
+
+      const authors = extractAuthors(article);
+      const journal = firstTag(article, "Title");
+      const year = firstTag(article, "Year") || firstTag(article, "MedlineDate");
+      const doi = extractDoi(article);
+      const abstract = extractAbstract(article);
+      const citation = [authors.slice(0, 4).join("; "), year, journal]
+        .filter(Boolean)
+        .join(". ");
+      const details = [
+        `Source: PubMed (PMID ${pmid})`,
+        citation,
+        doi ? `DOI: ${doi}` : "",
+        abstract ? `Abstract: ${abstract}` : "Abstract unavailable in PubMed.",
+      ].filter(Boolean).join("\n");
+
+      return {
+        title,
+        url: `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/`,
+        content: details,
+      } satisfies WebSearchResult;
+    })
+    .filter((result): result is WebSearchResult => result !== null);
+}
+
+async function searchPubMedIds(
+  query: string,
+  maxResults: number,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    db: "pubmed",
+    term: query,
+    retmode: "json",
+    retmax: String(Math.max(1, Math.min(10, maxResults))),
+    sort: "relevance",
+    tool: "ScholarPen",
+  });
+  const response = await fetch(`${EUTILS_BASE}/esearch.fcgi?${params}`, {
+    headers: { "User-Agent": USER_AGENT },
+    signal,
+  });
+  if (!response.ok) throw new Error(`PubMed search error: HTTP ${response.status}`);
+  const payload = await response.json() as { esearchresult?: { idlist?: string[] } };
+  return payload.esearchresult?.idlist?.filter(Boolean) ?? [];
+}
+
+export async function searchPubMed(
+  query: string,
+  maxResults = 5,
+  signal?: AbortSignal,
+): Promise<WebSearchResult[]> {
+  let ids = await searchPubMedIds(query, maxResults, signal);
+  if (ids.length === 0) {
+    const broaderQuery = broadenPubMedQuery(query);
+    if (broaderQuery && broaderQuery !== query.trim()) {
+      ids = await searchPubMedIds(broaderQuery, maxResults, signal);
+    }
+  }
+  if (ids.length === 0) return [];
+
+  const params = new URLSearchParams({
+    db: "pubmed",
+    id: ids.join(","),
+    rettype: "abstract",
+    retmode: "xml",
+    tool: "ScholarPen",
+  });
+  const response = await fetch(`${EUTILS_BASE}/efetch.fcgi?${params}`, {
+    headers: { "User-Agent": USER_AGENT },
+    signal,
+  });
+  if (!response.ok) throw new Error(`PubMed fetch error: HTTP ${response.status}`);
+  return parsePubMedXml(await response.text()).slice(0, maxResults);
+}

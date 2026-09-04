@@ -1,23 +1,22 @@
 import React from "react";
-import { Files, BookOpen, Settings, HelpCircle } from "lucide-react";
+import { Files, HelpCircle, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type RailTab = "files" | "knowledge";
-
 interface IconRailProps {
-  activeTab: RailTab;
-  onTabChange: (tab: RailTab) => void;
   onOpenSettings: () => void;
 }
 
-interface RailIconProps {
+function RailIcon({
+  icon,
+  active = false,
+  onClick,
+  title,
+}: {
   icon: React.ReactNode;
   active?: boolean;
   onClick: () => void;
   title: string;
-}
-
-function RailIcon({ icon, active, onClick, title }: RailIconProps) {
+}) {
   return (
     <button
       onClick={onClick}
@@ -36,43 +35,26 @@ function RailIcon({ icon, active, onClick, title }: RailIconProps) {
   );
 }
 
-export function IconRail({ activeTab, onTabChange, onOpenSettings }: IconRailProps) {
+export function IconRail({ onOpenSettings }: IconRailProps) {
   return (
     <div
       className="flex-shrink-0 flex flex-col items-center gap-2"
-      style={{
-        width: 56,
-        background: "hsl(var(--sidebar))",
-        paddingTop: "92px",  /* skip project header → aligns first icon with EXPLORER label */
-      }}
+      style={{ width: 56, background: "hsl(var(--sidebar))", paddingTop: "92px" }}
     >
-      {/* Top nav icons */}
       <RailIcon
-        icon={<Files className="h-4.5 w-4.5" style={{ width: 18, height: 18 }} />}
-        active={activeTab === "files"}
-        onClick={() => onTabChange("files")}
+        icon={<Files style={{ width: 18, height: 18 }} />}
+        active
+        onClick={() => {}}
         title="Files"
       />
-      <RailIcon
-        icon={<BookOpen className="h-4.5 w-4.5" style={{ width: 18, height: 18 }} />}
-        active={activeTab === "knowledge"}
-        onClick={() => onTabChange("knowledge")}
-        title="Knowledge Base"
-      />
-
-      {/* Spacer */}
       <div className="flex-1" />
-
-      {/* Bottom util icons */}
       <RailIcon
         icon={<Settings style={{ width: 18, height: 18 }} />}
-        active={false}
         onClick={onOpenSettings}
         title="Settings"
       />
       <RailIcon
         icon={<HelpCircle style={{ width: 18, height: 18 }} />}
-        active={false}
         onClick={() => {}}
         title="Help"
       />

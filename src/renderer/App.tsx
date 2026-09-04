@@ -3,7 +3,7 @@ import { BookMarked, BookOpen, PenLine, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
-import { LeftSidebar, type SidebarTab } from "./components/sidebar/LeftSidebar";
+import { LeftSidebar } from "./components/sidebar/LeftSidebar";
 import { IconRail } from "./components/sidebar/IconRail";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { StatusBar } from "./components/editor/StatusBar";
@@ -19,17 +19,17 @@ import {
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import { scholarSchema } from "./blocks/schema";
 import { collectDocumentNodes, findBibliographyNode } from "./utils/document-tree";
-import type { OllamaStatus, ProjectInfo, FileNode, KBGraph, KBGraphNode, AppSettings } from "../shared/rpc-types";
+import type { OllamaStatus, ProjectInfo, FileNode, AppSettings } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import { buildQuartoBookConfig, collectQuartoChapterFilenames } from "../shared/quarto-config";
 import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
+import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
 const AISidebar = lazy(() => import("./components/sidebar/AISidebar").then((m) => ({ default: m.AISidebar })));
-const KnowledgeGraphPanel = lazy(() => import("./components/graph/KnowledgeGraphPanel").then((m) => ({ default: m.KnowledgeGraphPanel })));
 
 export function App() {
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>({
@@ -55,24 +55,14 @@ export function App() {
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const [bibReloadTrigger, setBibReloadTrigger]       = useState(0);
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("files");
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl">>({
+  const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">>({
     sidebarAgentProvider: "ollama",
     sidebarAgentModel: "qwen3.5:397b",
     ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
+    webSearchEnabled: true,
   });
-
-  // ── KB Graph state ────────────────────────────────────────────────────────
-  const [graphMode, setGraphMode]                 = useState(false);
-  const [graphLoading, setGraphLoading]           = useState(false);
-  const [kbGraph, setKbGraph]                     = useState<KBGraph | null>(null);
-  const [graphSelectedNodeId, setGraphSelectedNodeId] = useState<string | null>(null);
-  // Initial graph panel width = 2/3 of available space (viewport − sidebar − handle)
-  const [graphPanelWidth, setGraphPanelWidth] = useState(() =>
-    Math.round((window.innerWidth - 228) * 2 / 3)
-  );
 
   const editorRef      = useRef<BlockNoteEditor<any, any, any> | null>(null);
   const exportEditorRef = useRef<BlockNoteEditor<any, any, any> | null>(null);
@@ -85,9 +75,6 @@ export function App() {
   // Resize refs — AI sidebar
   const isResizingAIRef    = useRef(false);
   const resizeAIStartRef   = useRef({ x: 0, width: 0 });
-  // Resize refs — graph panel
-  const isResizingGraphRef   = useRef(false);
-  const resizeGraphStartRef  = useRef({ x: 0, width: 0 });
 
   // Poll Ollama status every 10s
   useEffect(() => {
@@ -136,6 +123,7 @@ export function App() {
         sidebarAgentProvider: s.sidebarAgentProvider ?? "ollama",
         sidebarAgentModel: s.sidebarAgentModel ?? s.ollamaDefaultModel ?? "qwen3.5:397b",
         ollamaBaseUrl: s.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
+        webSearchEnabled: s.webSearchEnabled,
       }))
       .catch(console.error);
   }, []);
@@ -156,10 +144,6 @@ export function App() {
     setExportTargets([]);
     setExportDialogOpen(false);
     setQuartoBookDialogOpen(false);
-    // Reset graph when switching projects
-    setGraphMode(false);
-    setKbGraph(null);
-    setGraphSelectedNodeId(null);
     try {
       const tree = await rpc.listProjectFiles(project.path);
       setFileTree(tree);
@@ -188,6 +172,22 @@ export function App() {
     editorGroupRef.current?.openFile(file);
     setCurrentView("editor");
   }, []);
+
+  const handleOpenProjectSource = useCallback((reference: ProjectFileReference) => {
+    if (!activeProject) return;
+    const relativePath = normalizeProjectRelativePath(reference.relativePath);
+    if (!relativePath) return;
+    const name = relativePath.split("/").at(-1) ?? relativePath;
+    const extension = name.split(".").at(-1)?.toLowerCase();
+    handleFileSelect({
+      name,
+      path: `${activeProject.path.replace(/\/$/, "")}/${relativePath}`,
+      kind: extension === "pdf" ? "pdf" : extension === "md" ? "note" : "unknown",
+      isDirectory: false,
+      lastModified: Date.now(),
+      initialPage: reference.page,
+    });
+  }, [activeProject, handleFileSelect]);
 
   const handleShowReferences = useCallback(async () => {
     if (!activeProject) return;
@@ -231,73 +231,6 @@ export function App() {
     editorGroupRef.current?.openFile(target);
     setCurrentView("editor");
   }, [activeFile, fileTree]);
-
-  // ── KB graph handlers ─────────────────────────────────────────────────────
-
-  const handleToggleGraph = useCallback(async () => {
-    if (graphMode) {
-      setGraphMode(false);
-      setGraphSelectedNodeId(null);
-      return;
-    }
-    if (!activeProject) return;
-    // Reuse cached graph if available; otherwise fetch
-    if (kbGraph) {
-      setGraphMode(true);
-      setGraphSelectedNodeId(null);
-      return;
-    }
-    setGraphLoading(true);
-    try {
-      const graph = await rpc.getKBGraph(activeProject.path);
-      setKbGraph(graph);
-      setGraphMode(true);
-      setGraphSelectedNodeId(null);
-    } catch (err) {
-      console.error("Failed to load KB graph:", err);
-    } finally {
-      setGraphLoading(false);
-    }
-  }, [graphMode, activeProject, kbGraph]);
-
-  const handleKnowledgeFileSelect = useCallback((filePath: string, _title?: string) => {
-    // Derive the display name and kind from the actual file path
-    const fileName = filePath.split("/").at(-1) ?? filePath;
-    const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
-    const kind: FileNode["kind"] = ext === ".pdf" ? "pdf" : "note";
-    const fileNode: FileNode = {
-      name: fileName,
-      path: filePath,
-      kind,
-      isDirectory: false,
-      lastModified: Date.now(),
-    };
-    editorGroupRef.current?.openFile(fileNode);
-    setCurrentView("editor");
-  }, []);
-
-  const handleGraphNodeClick = useCallback((node: KBGraphNode) => {
-    setGraphSelectedNodeId(node.id);
-    handleKnowledgeFileSelect(node.filePath);
-  }, [handleKnowledgeFileSelect]);
-
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      // Cmd+Shift+G — toggle graph
-      if (e.metaKey && e.shiftKey && e.key === "g") {
-        e.preventDefault();
-        handleToggleGraph();
-      }
-      // Escape — clear graph selection
-      if (e.key === "Escape" && graphSelectedNodeId) {
-        setGraphSelectedNodeId(null);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [handleToggleGraph, graphSelectedNodeId]);
 
   // ── Menu actions ──────────────────────────────────────────────────────────
 
@@ -521,26 +454,6 @@ export function App() {
     window.addEventListener("mouseup", onUp);
   }, [aiSidebarWidth]);
 
-  // ── Graph panel resize ────────────────────────────────────────────────────
-
-  const handleGraphResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isResizingGraphRef.current = true;
-    resizeGraphStartRef.current = { x: e.clientX, width: graphPanelWidth };
-    const onMove = (ev: MouseEvent) => {
-      if (!isResizingGraphRef.current) return;
-      const delta = ev.clientX - resizeGraphStartRef.current.x;
-      setGraphPanelWidth(Math.max(280, Math.min(window.innerWidth * 0.75, resizeGraphStartRef.current.width + delta)));
-    };
-    const onUp = () => {
-      isResizingGraphRef.current = false;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }, [graphPanelWidth]);
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -657,15 +570,12 @@ export function App() {
 
         {/* Icon Rail — leftmost narrow column */}
         <IconRail
-          activeTab={sidebarTab}
-          onTabChange={setSidebarTab}
           onOpenSettings={() => setCurrentView("settings")}
         />
 
-        {/* Left: File/Knowledge panel */}
+        {/* Left: Files panel */}
         <div style={{ width: leftSidebarWidth }} className="flex-shrink-0 h-full">
           <LeftSidebar
-            activeTab={sidebarTab}
             projects={projects}
             activeProject={activeProject}
             onProjectChange={handleProjectChange}
@@ -680,11 +590,6 @@ export function App() {
             onImportFile={handleImportFromFile}
             onFileRenamed={handleFileRenamed}
             onFileDeleted={handleFileDeleted}
-            onKnowledgeFileSelect={handleKnowledgeFileSelect}
-            activeFilePath={activeFile?.path}
-            graphMode={graphMode}
-            graphLoading={graphLoading}
-            onToggleGraph={handleToggleGraph}
           />
         </div>
         {/* Resize handle */}
@@ -693,32 +598,8 @@ export function App() {
           onMouseDown={handleLeftResizeMouseDown}
         />
 
-        {/* Center: Graph+Editor, with Settings overlay kept in the same workspace */}
+        {/* Center: Editor, with Settings overlay kept in the same workspace */}
         <div className="relative flex flex-1 overflow-hidden">
-          {/* KB Graph panel (when active) */}
-          {graphMode && kbGraph && (
-            <>
-              <div
-                style={{ width: graphPanelWidth }}
-                className="flex-shrink-0 h-full"
-              >
-                <Suspense fallback={<div className="h-full flex items-center justify-center text-sm text-muted-foreground">Loading graph...</div>}>
-                  <KnowledgeGraphPanel
-                    graph={kbGraph}
-                    selectedNodeId={graphSelectedNodeId}
-                    onNodeClick={handleGraphNodeClick}
-                    onClearSelection={() => setGraphSelectedNodeId(null)}
-                  />
-                </Suspense>
-              </div>
-              {/* Resize handle */}
-              <div
-                className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
-                onMouseDown={handleGraphResizeMouseDown}
-              />
-            </>
-          )}
-
           {/* Editor */}
           <EditorPaneGroup
             ref={editorGroupRef}
@@ -757,6 +638,7 @@ export function App() {
                     sidebarAgentProvider: saved.sidebarAgentProvider ?? "ollama",
                     sidebarAgentModel: saved.sidebarAgentModel ?? saved.ollamaDefaultModel ?? "qwen3.5:397b",
                     ollamaBaseUrl: saved.ollamaBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
+                    webSearchEnabled: saved.webSearchEnabled,
                   });
                 }}
               />
@@ -779,7 +661,6 @@ export function App() {
                 editor={editorRef.current}
                 onClose={() => setAiSidebarOpen(false)}
                 width={aiSidebarWidth}
-                onOpenKBFile={(filePath) => handleKnowledgeFileSelect(filePath)}
                 deepenRequest={pendingDeepenRequest}
                 onDeepenRequestConsumed={(requestId) => {
                   setPendingDeepenRequest((current) =>
@@ -792,6 +673,7 @@ export function App() {
                     current?.id === requestId ? null : current,
                   );
                 }}
+                onOpenProjectSource={handleOpenProjectSource}
               />
             </Suspense>
           </>

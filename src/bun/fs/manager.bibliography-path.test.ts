@@ -127,6 +127,24 @@ describe("bibliography storage", () => {
     expect(await fileSystem.loadBibtex(projectPath)).toBe(external);
   });
 
+  test("appends a new entry to the latest bibliography even when an open editor is stale", async () => {
+    const projectPath = await createTemporaryProject("scholarpen-bib-stale-append-");
+    await fileSystem.openProjectByPath(projectPath);
+    const staleEditor = "@article{original, title={Original}}";
+    const external = "@article{external, title={Added outside ScholarPen}}";
+    const addition = "@article{newEntry, title={New entry}}";
+    await fileSystem.saveBibtexRaw(projectPath, staleEditor);
+    await fileSystem.saveBibtexRaw(projectPath, external);
+
+    const result = await fileSystem.mergeBibtex(projectPath, addition);
+
+    expect(result.addedEntries).toBe(1);
+    expect(result.bibtex).toContain("@article{external");
+    expect(result.bibtex).toContain("@article{newEntry");
+    expect(result.bibtex).not.toContain("@article{original");
+    expect(await fileSystem.loadBibtex(projectPath)).toBe(result.bibtex);
+  });
+
   test("merges a BibTeX file while skipping only duplicate entries", async () => {
     const projectPath = await createTemporaryProject("scholarpen-bib-import-");
     await fileSystem.openProjectByPath(projectPath);

@@ -52,7 +52,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
     setLoading(true);
     setError(null);
     setBlobUrl(null);
-    setPageNumber(1);
+    setPageNumber(file.initialPage ?? 1);
     setNumPages(0);
     setZoom(1.0);
 
@@ -85,6 +85,11 @@ export function PdfViewer({ file }: PdfViewerProps) {
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   }, [file.path, file.size, allowLargeLoad]);
+
+  useEffect(() => {
+    if (!file.initialPage) return;
+    setPageNumber(numPages > 0 ? Math.min(file.initialPage, numPages) : file.initialPage);
+  }, [file.initialPage, numPages]);
 
   // Track container width for "fit to window" base size
   useEffect(() => {
@@ -151,6 +156,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
+    setPageNumber((current) => Math.max(1, Math.min(current, numPages)));
   }, []);
 
   const zoomIn = useCallback(() => setZoom((z) => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2))), []);

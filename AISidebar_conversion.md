@@ -1,5 +1,7 @@
 # AISidebar Conversion Plan: assistant-ui Multi-Provider Scholar Agent
 
+> Historical plan. References to KB injection and KB controls were superseded on 2026-08-28 by PubMed-first live research search.
+
 ## Goal
 
 Remove the current Claude Code wrapper path from `AISidebar` and replace it with a first-party ScholarPen chat agent built on [`assistant-ui`](https://github.com/assistant-ui/assistant-ui).

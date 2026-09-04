@@ -7,12 +7,9 @@ import type {
   OllamaStatus,
   ProjectInfo,
   CitationMetadata,
-  SearchResult,
   FileNode,
   AppSettings,
   AppSettingsUpdate,
-  KBStatus,
-  KBGraph,
   AgentSkill,
   AgentMentionableFile,
   AgentStreamParams,
@@ -25,11 +22,9 @@ import type {
   BibliographyMaintenanceResult,
   BibliographyValidationProgress,
   BibliographyRepairProposal,
+  ProjectSourcesStatus,
 } from "../shared/rpc-types";
-import {
-  DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
-} from "../shared/ollama-connection";
+import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
@@ -58,7 +53,6 @@ const strictRpcMethods = new Set([
   "renameFile",
   "deleteFile",
   "saveSettings",
-  "rebuildKBIndex",
   "createAgentThread",
   "deleteAgentThread",
   "saveAgentThreadMessage",
@@ -67,6 +61,7 @@ const strictRpcMethods = new Set([
   "startOllamaOpenAIProxy",
   "abortOllamaOpenAIProxy",
   "listProviderModels",
+  "rebuildProjectSourcesIndex",
 ]);
 
 // Create Electrobun RPC client for webview using defineRPC
@@ -185,6 +180,8 @@ function mockRpc(method: string, _args: unknown[]): unknown {
   }
   const mocks: Record<string, unknown> = {
     getOllamaStatus: { connected: false, models: [], activeModel: null },
+    getProjectSourcesStatus: { digestCount: 0, chunkCount: 0, linkedPdfCount: 0, indexedAt: null, indexing: false },
+    rebuildProjectSourcesIndex: { digestCount: 0, chunkCount: 0, linkedPdfCount: 0, indexedAt: null, indexing: false },
     listProjects: [],
     createProject: { name: "demo", path: "/demo", files: [], lastModified: Date.now() },
     loadManuscript: [],
@@ -223,7 +220,6 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     },
     resolveDOI: null,
     searchCitations: [],
-    searchKnowledgeBase: [],
     listProjectFiles: [],
     openFolderDialog: null,
     createDocument: "new-doc.scholarpen.json",
@@ -236,10 +232,9 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       projectsRootDir: "",
       ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
       ollamaApiKey: "",
-      ollamaWebSearchEnabled: false,
-        ollamaDefaultModel: "qwen3.5:397b",
-      ollamaEmbeddingBaseUrl: DEFAULT_OLLAMA_EMBEDDING_BASE_URL,
-      ollamaEmbedModel: "nomic-embed-text",
+      ollamaDefaultModel: "qwen3.5:397b",
+      tinyfishApiKey: "",
+      webSearchEnabled: true,
       sidebarAgentProvider: "ollama",
       sidebarAgentModel: "qwen3.5:397b",
       modelProviders: {
@@ -256,9 +251,6 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       openaiApiKey: "",
       openaiBaseUrl: "https://api.openai.com/v1",
       openaiDefaultModel: "gpt-5.2",
-      kbChunkSize: 512,
-      kbChunkOverlap: 64,
-      kbTopK: 5,
       theme: "system",
     },
     getOllamaModels: [],
@@ -266,7 +258,6 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     listAgentSkills: [],
     listAgentMentionableFiles: [],
     listAgentThreads: [],
-    getKBGraph: { nodes: [], edges: [] },
   };
   return mocks[method] ?? null;
 }
@@ -357,8 +348,6 @@ export const rpc = {
   resolveDOI: (doi: string) => call<CitationMetadata>("resolveDOI", { doi }),
   searchCitations: (query: string) =>
     call<CitationMetadata[]>("searchCitations", { query }),
-  searchKnowledgeBase: (projectPath: string, query: string) =>
-    call<SearchResult[]>("searchKnowledgeBase", { projectPath, query }),
   // ── File Tree ─────────────────────────────────────────
   openProjectByPath: (projectPath: string) =>
     call<ProjectInfo>("openProjectByPath", { projectPath }),
@@ -381,13 +370,6 @@ export const rpc = {
   getSettings: () => call<AppSettings>("getSettings"),
   saveSettings: (settings: AppSettingsUpdate) =>
     call<void>("saveSettings", { settings }),
-  // ── Knowledge Base ────────────────────────────────────
-  getKBStatus: (projectPath: string) =>
-    call<KBStatus>("getKBStatus", { projectPath }),
-  rebuildKBIndex: (projectPath: string) =>
-    call<void>("rebuildKBIndex", { projectPath }),
-  getKBGraph: (projectPath: string) =>
-    call<KBGraph>("getKBGraph", { projectPath }),
   // ── Ollama model list ─────────────────────────────────
   getOllamaModels: () => call<string[]>("getOllamaModels"),
   listProviderModels: (provider: AppSettings["sidebarAgentProvider"], settings?: AppSettingsUpdate) =>
@@ -398,6 +380,10 @@ export const rpc = {
     call<AgentSkill[]>("listAgentSkills", { projectPath }),
   listAgentMentionableFiles: (projectPath: string) =>
     call<AgentMentionableFile[]>("listAgentMentionableFiles", { projectPath }),
+  getProjectSourcesStatus: (projectPath: string) =>
+    call<ProjectSourcesStatus>("getProjectSourcesStatus", { projectPath }),
+  rebuildProjectSourcesIndex: (projectPath: string) =>
+    call<ProjectSourcesStatus>("rebuildProjectSourcesIndex", { projectPath }),
   listAgentThreads: (projectPath: string) =>
     call<AgentThread[]>("listAgentThreads", { projectPath }),
   createAgentThread: (

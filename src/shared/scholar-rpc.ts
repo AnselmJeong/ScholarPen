@@ -3,12 +3,9 @@ import type {
   OllamaStatus,
   ProjectInfo,
   CitationMetadata,
-  SearchResult,
   FileNode,
   AppSettings,
   AppSettingsUpdate,
-  KBStatus,
-  KBGraph,
   AgentSkill,
   AgentMentionableFile,
   AgentStreamParams,
@@ -21,6 +18,7 @@ import type {
   BibliographyMaintenanceResult,
   BibliographyValidationProgress,
   BibliographyRepairProposal,
+  ProjectSourcesStatus,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -82,13 +80,6 @@ type BunRequests = RPCSchema<{
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
     searchCitations: { params: { query: string }; response: CitationMetadata[] };
-    searchKnowledgeBase: {
-      params: { projectPath: string; query: string };
-      response: SearchResult[];
-    };
-    getKBStatus: { params: { projectPath: string }; response: KBStatus };
-    rebuildKBIndex: { params: { projectPath: string }; response: void };
-    getKBGraph: { params: { projectPath: string }; response: KBGraph };
     generateTextStream: {
       params: {
         model: string;
@@ -118,6 +109,8 @@ type BunRequests = RPCSchema<{
     saveSettings: { params: { settings: AppSettingsUpdate }; response: void };
     listAgentSkills: { params: { projectPath?: string }; response: AgentSkill[] };
     listAgentMentionableFiles: { params: { projectPath: string }; response: AgentMentionableFile[] };
+    getProjectSourcesStatus: { params: { projectPath: string }; response: ProjectSourcesStatus };
+    rebuildProjectSourcesIndex: { params: { projectPath: string }; response: ProjectSourcesStatus };
     listAgentThreads: { params: { projectPath: string }; response: AgentThread[] };
     createAgentThread: {
       params: { projectPath: string; provider: AppSettings["sidebarAgentProvider"]; model: string; title?: string; metadata?: Record<string, unknown> };

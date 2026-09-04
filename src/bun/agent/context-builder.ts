@@ -1,12 +1,18 @@
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
-import { findKBRoot, getKBEngine, type KBSearchResult } from "../kb/search";
 import { citationClient, type SupportingCitation } from "../citation/client";
-import { buildCitationReferenceList, buildReferenceList, buildWebReferenceList } from "./references";
+import { buildCitationReferenceList, buildWebReferenceList } from "./references";
 import { loadAgentSkill } from "./skill-registry";
 import { resolveMentionedFiles } from "./mention-resolver";
+import { searchPubMed } from "./pubmed-search";
 import { createEnglishAcademicSearchQuery } from "./research-query";
-import { searchAndFetchWebWithOllama, type WebSearchResult } from "./web-search";
+import { searchAndFetchWebWithTinyFish, type WebSearchResult } from "./web-search";
 import { shouldUseWebSearch } from "./web-search-decision";
+import {
+  buildProjectSourcePrompt,
+  buildProjectSourceReferences,
+  getProjectSourceIndex,
+  type ProjectSourceRetrieval,
+} from "../project-sources";
 
 const HISTORY_MESSAGE_LIMIT = 4_000;
 const HISTORY_TOTAL_LIMIT = 16_000;
@@ -41,15 +47,6 @@ function historyToMessages(history: AgentMessage[]): OllamaMessage[] {
   }
 
   return compacted;
-}
-
-function kbContext(results: KBSearchResult[]): string {
-  if (results.length === 0) return "";
-  const items = results.map((r, index) => {
-    const excerpt = r.excerpt.replace(/\n+/g, " ").trim().slice(0, 700);
-    return `[${index + 1}] ${r.title || r.docId} (${r.docType})\n${excerpt}`;
-  });
-  return `<kb_context>\n${items.join("\n\n")}\n</kb_context>`;
 }
 
 function webContext(results: WebSearchResult[]): string {
@@ -94,7 +91,7 @@ This is an advisory academic critique, not an editing or replacement operation. 
 Analyze the selected passage in the context of the complete document. Address, one issue at a time: factual inaccuracies or unverifiable claims; unsupported certainty; critical objections and counterarguments; logical gaps, contradictions, conceptual conflations, causal errors, and scope problems; stronger argumentative alternatives; and more precise academic wording examples.
 For each material issue, identify a short exact fragment, explain why it matters, distinguish evidence-backed findings from interpretive judgment, and recommend a concrete improvement. Follow the issue-by-issue analysis with a prioritized checklist.
 After the checklist, always end with a "## 통합 개선문" heading and a complete revised version of the entire selected passage that consistently incorporates all well-supported recommendations. The integrated revision must remain in the selected passage's original language and preserve its core meaning, existing citations, technical terminology, and calibrated degree of certainty. Do not add unverified facts or new citations. Present it as a ready-to-use proposal in the chat, never as an automatically applied manuscript edit.
-Use KB or web evidence only when it is present below. Cite KB evidence as [1], [2], etc. and web evidence as [W1], [W2], etc. If the available evidence does not verify a claim, say so explicitly instead of inventing facts or citations.
+Use web evidence only when it is present below. Cite it as [W1], [W2], etc. If the available evidence does not verify a claim, say so explicitly instead of inventing facts or citations.
 </deepen_review_mode>`;
 }
 
@@ -158,6 +155,7 @@ export async function buildAgentMessages(
   const selectedSkills = await Promise.all(
     params.selectedSkillIds.map((id) => loadAgentSkill(id, params.projectPath ?? undefined))
   );
+  const pubMedSkillSelected = selectedSkills.some((skill) => skill.name === "pubmed-research");
 
   const mentionedFiles = params.projectPath
     ? await resolveMentionedFiles({
@@ -171,15 +169,12 @@ export async function buildAgentMessages(
     params.analysisMode === "find-citation" &&
     Boolean(params.citationContext?.selectedText.trim());
 
-  let kbResults: KBSearchResult[] = [];
-  if (!isFindCitation && params.kbEnabled && params.projectPath) {
-    const kbRoot = await findKBRoot(params.projectPath);
-    if (kbRoot) {
-      const engine = getKBEngine(kbRoot);
-      await engine.ensureIndexed();
-      kbResults = engine.search(query, settings.kbTopK || 5);
-    }
-  }
+  let projectSources: ProjectSourceRetrieval = {
+    hits: [],
+    pdfPages: [],
+    pdfAttempted: false,
+    pdfErrors: [],
+  };
 
   let citationCandidates: SupportingCitation[] = [];
   let englishAcademicSearchQuery = "";
@@ -201,26 +196,14 @@ export async function buildAgentMessages(
     }
   }
 
-  const deepenNeedsWebFallback =
-    params.analysisMode === "deepen" &&
-    Boolean(params.deepenContext) &&
-    kbResults.length === 0;
-  const webSearchAvailable =
-    !isFindCitation &&
-    (!params.kbEnabled || deepenNeedsWebFallback) &&
-    settings.ollamaWebSearchEnabled &&
-    Boolean(settings.ollamaApiKey.trim());
-  let webResults: WebSearchResult[] = [];
-  if (webSearchAvailable) {
+  if (!isFindCitation && params.projectPath && params.projectSourcesEnabled !== false) {
     try {
-      const useWebSearch = deepenNeedsWebFallback || await shouldUseWebSearch(
-        params,
-        settings,
-        params.provider,
-        params.model,
-        signal,
-      );
-      if (useWebSearch) {
+      const sourceIndex = getProjectSourceIndex(params.projectPath);
+      const sourceStatus = await sourceIndex.status();
+      if (sourceStatus.digestCount > 0) {
+        projectSources = await sourceIndex.retrieve(query, params.selectedSkillIds, signal);
+      }
+      if (sourceStatus.digestCount > 0 && projectSources.hits.length === 0 && query) {
         englishAcademicSearchQuery = await createEnglishAcademicSearchQuery(
           query,
           settings,
@@ -228,36 +211,77 @@ export async function buildAgentMessages(
           params.model,
           signal,
         );
+        if (englishAcademicSearchQuery && englishAcademicSearchQuery !== query) {
+          projectSources = await sourceIndex.retrieve(englishAcademicSearchQuery, params.selectedSkillIds, signal);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name === "AbortError") throw err;
+      console.warn("[Agent] Project source retrieval failed:", err);
+    }
+  }
+
+  const webSearchAvailable = !isFindCitation && settings.webSearchEnabled;
+  const generalWebSearchAvailable = webSearchAvailable && Boolean(settings.tinyfishApiKey.trim());
+  let webSearchNeeded = false;
+  let webSearchFailed = false;
+  let webResults: WebSearchResult[] = [];
+  if (!isFindCitation) {
+    try {
+      webSearchNeeded = pubMedSkillSelected || await shouldUseWebSearch(
+        params,
+        settings,
+        params.provider,
+        params.model,
+        signal,
+      );
+      if (webSearchNeeded && webSearchAvailable) {
+        englishAcademicSearchQuery ||= await createEnglishAcademicSearchQuery(
+          query, settings, params.provider, params.model, signal,
+        );
         if (englishAcademicSearchQuery) {
-          webResults = await searchAndFetchWebWithOllama(
-            englishAcademicSearchQuery,
-            settings,
-            5,
-            signal,
-          );
+          try {
+            webResults = await searchPubMed(englishAcademicSearchQuery, 5, signal);
+          } catch (err) {
+            if ((err as Error).name === "AbortError") throw err;
+            console.warn("[Agent] PubMed search failed:", err);
+            webSearchFailed = true;
+          }
+
+          if (webResults.length < 5 && generalWebSearchAvailable) {
+            const generalResults = await searchAndFetchWebWithTinyFish(
+              englishAcademicSearchQuery,
+              settings,
+              5 - webResults.length,
+              signal,
+            );
+            const seenUrls = new Set(webResults.map((result) => result.url));
+            webResults.push(...generalResults.filter((result) => !seenUrls.has(result.url)));
+          }
         }
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") throw err;
       console.warn("[Agent] Web search failed:", err);
+      webSearchFailed = true;
     }
   }
+  if (webResults.length > 0) webSearchFailed = false;
 
   const systemParts = [
     "<scholarpen_system>",
     "You are ScholarPen's research writing assistant.",
-    "Use only the project files, selected instructions, KB references, and web search results that are explicitly provided in this request.",
+    "Use only the project files, project source excerpts, selected instructions, verified citation candidates, and web search results that are explicitly provided in this request.",
     "Do not claim to have read files that were not provided.",
-    "Whenever external search is used, ScholarPen searches with an English academic query and prioritizes English-language scholarly literature. The final answer must still follow the user's selected response language.",
-    params.kbEnabled
-      ? "KB search is ON. Use KB references only when <kb_context> is present."
-      : "KB search is OFF. No Knowledge_Base content is provided in this request.",
+    "Whenever external search is used, ScholarPen searches PubMed first with an English academic query, then uses general web results only to fill evidence gaps. The final answer must still follow the user's selected response language.",
     webResults.length > 0
       ? "Web search was used for this request. Cite specific web sources inline as [W1], [W2], etc.; do not cite broad ranges like [W1]-[W5] unless every listed source supports the same sentence. A Web Sources list will be appended automatically."
-      : params.kbEnabled && kbResults.length > 0
-        ? "Relevant KB results were found, so web search was not used for this request."
-      : deepenNeedsWebFallback && !webSearchAvailable
-        ? "No relevant KB result was found, and web search is unavailable because it is disabled or has no configured Ollama API key."
+      : webSearchNeeded && !webSearchAvailable
+        ? "Live search is needed for this request but automatic web search is disabled. Do not present current or externally verifiable claims as confirmed; clearly state the limitation."
+      : webSearchNeeded && webSearchFailed
+        ? "Live web search was attempted but failed. Do not present current or externally verifiable claims as confirmed; clearly state that verification failed."
+      : webSearchNeeded
+        ? "Live web search was attempted but returned no usable sources. Do not invent sources or claim that current facts were verified."
         : "Web search was not used for this request. No live internet search content is provided in this request.",
     isFindCitation
       ? citationCandidates.length > 0
@@ -267,11 +291,18 @@ export async function buildAgentMessages(
           : "An English academic query could not be generated safely, so no external citation search was issued. Do not provide an unverified citation from model knowledge."
       : "",
     mentionedFiles.length > 0
-      ? "The user designated project files for this request; you may discuss those provided files."
-      : "No project file content is provided in this request. Do not say that you reviewed current project files.",
+      ? "The user designated project files for this request; prioritize those explicitly attached files."
+      : projectSources.hits.length > 0
+        ? "Relevant project digest excerpts were retrieved automatically. They are secondary reference material, not user-designated attachments."
+        : "No project file content is provided in this request. Do not say that you reviewed current project files.",
+    projectSources.pdfAttempted && projectSources.pdfPages.length === 0
+      ? "Original PDF inspection was requested but no extractable PDF page was provided. Do not claim to have reviewed the original PDF."
+      : projectSources.pdfPages.length > 0
+        ? "Original project PDF pages are provided below. Prefer those pages over digest wording when they conflict."
+        : "No original PDF page was inspected for this request.",
     "When a user designates @files, prioritize those files.",
     "When an instruction is selected with /, follow that instruction within ScholarPen's safety limits.",
-    "For academic writing, preserve nuance and cite provided KB references when used.",
+    "For academic writing, preserve nuance and cite provided web sources when used.",
     "You are read-only unless the user explicitly accepts a proposed write action.",
     languageRule(params.lang),
     params.projectPath ? `Current project path: ${params.projectPath}` : "No project is currently open.",
@@ -288,13 +319,13 @@ export async function buildAgentMessages(
       (file) =>
         `<mentioned_file path="${file.displayPath}" truncated="${file.truncated ? "true" : "false"}">\n${file.content}\n</mentioned_file>`
     ),
-    kbContext(kbResults),
+    buildProjectSourcePrompt(projectSources),
     webContext(webResults),
   ].filter(Boolean);
 
   const references = [
     isFindCitation ? buildCitationReferenceList(citationCandidates) : "",
-    kbResults.length > 0 ? buildReferenceList(kbResults) : "",
+    !isFindCitation ? buildProjectSourceReferences(projectSources) : "",
     webResults.length > 0 ? buildWebReferenceList(webResults) : "",
   ].filter(Boolean).join("");
   const systemContent = trimMiddle(

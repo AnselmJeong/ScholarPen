@@ -19,7 +19,7 @@ You are reviewing academic writing inside ScholarPen.
 - Identify the central claim before suggesting edits.
 - Point out missing evidence, weak transitions, overclaims, and unclear scope.
 - Preserve the author's intended argument and disciplinary nuance.
-- If KB or @file context is present, ground feedback in that material.
+- If web or @file context is present, ground feedback in that material.
 - Do not claim to have inspected files that were not provided.
 - Return concise, actionable feedback with prioritized revisions.
 `,
@@ -40,25 +40,26 @@ Rewrite for academic clarity.
 `,
   },
   {
-    name: "summarize-kb",
-    content: `# Summarize KB
+    name: "pubmed-research",
+    content: `# PubMed Research
 
-description: Synthesize provided Knowledge Base context into a compact research summary.
+description: Search PubMed first and synthesize biomedical evidence for the current research question.
 
-Use only supplied KB context and @files.
+Use ScholarPen's live PubMed search context as the primary evidence source.
 
-- Start with the key takeaway.
-- Group related findings instead of listing every snippet.
-- Mark uncertainty and contradictions clearly.
-- Include source references when KB references are provided.
-- End with concrete follow-up questions or next reading targets when useful.
+- Translate the research question into precise biomedical concepts, populations, exposures, interventions, outcomes, and study designs.
+- Prefer systematic reviews, meta-analyses, randomized trials, cohort studies, and authoritative recent reviews when appropriate.
+- Distinguish evidence type, population, methods, and limitations instead of treating all papers as equally strong.
+- Cite only provided sources as [W1], [W2], etc.; never invent a PMID, DOI, title, author, or result.
+- When PubMed coverage is sparse, clearly label any general-web evidence used to fill the gap.
+- End with unanswered questions or useful next PubMed queries when the evidence is incomplete.
 `,
   },
   {
     name: "citation-check",
     content: `# Citation Check
 
-description: Check whether claims are supported by the provided citations or KB context.
+description: Check whether claims are supported by the provided citations or live research context.
 
 Evaluate citation support conservatively.
 
@@ -72,7 +73,7 @@ Evaluate citation support conservatively.
     name: "research-gap",
     content: `# Research Gap
 
-description: Identify research gaps from supplied notes, KB context, or manuscript text.
+description: Identify research gaps from supplied notes, live sources, or manuscript text.
 
 Find gaps that can support an academic contribution.
 
@@ -99,62 +100,6 @@ Create a focused academic article structure.
   },
 ];
 
-const DEFAULT_APP_COMMANDS: Array<{ filename: string; content: string }> = [
-  {
-    filename: "kb-query.md",
-    content: `<!-- ScholarPen command: kb-query -->
-Answer "$ARGUMENTS" using the local Knowledge Base wiki.
-
-Do NOT use subagents. Do NOT call external APIs. This command works from local KB files supplied by ScholarPen.
-
----
-
-## Argument Format
-
-\`$ARGUMENTS\` may be either:
-
-- **Question only:** \`what is X?\` -> use the current project's Knowledge Base.
-- **Path + question:** \`/path/to/knowledge-base what is X?\` -> use the given path as KB root.
-
-ScholarPen normally provides KB search context automatically. If <kb_context> is present, use that first.
-
----
-
-## Response Structure
-
-### Direct Answer
-Answer the question in manuscript-ready academic prose.
-
-### Key Evidence
-List the specific KB sources, concepts, or notes that support the answer. Every substantive claim should trace to a supplied KB reference or @file.
-
-### Tensions and Gaps
-Name contradictions, weak evidence, or missing sources. If the KB does not contain enough evidence, say so explicitly.
-
-### Writing Suggestions
-Suggest how this material can be used in the paper:
-
-- citation candidates
-- framing angle
-- quote candidates when useful
-- follow-up KB or literature work
-
-### Coverage
-Report whether coverage is high, partial, or low based only on the provided KB context.
-
----
-
-## Rules
-
-- Never fabricate. If something is not in the provided KB context or @files, say it is not available.
-- Do not claim to have read files that ScholarPen did not provide.
-- Prefer KB references over general model knowledge.
-- If web search is enabled, clearly separate web results from KB evidence and cite web results as [W1], [W2], etc.
-- Keep the answer useful for academic writing.
-`,
-  },
-];
-
 export async function seedAppSkills(): Promise<void> {
   await mkdir(APP_SKILLS_DIR, { recursive: true });
   await Promise.all(DEFAULT_APP_SKILLS.map(async (skill) => {
@@ -171,14 +116,6 @@ export async function seedAppSkills(): Promise<void> {
 
 export async function seedAppCommands(): Promise<void> {
   await mkdir(APP_COMMANDS_DIR, { recursive: true });
-  await Promise.all(DEFAULT_APP_COMMANDS.map(async (command) => {
-    const file = join(APP_COMMANDS_DIR, command.filename);
-    try {
-      await stat(file);
-    } catch {
-      await writeFile(file, command.content, "utf-8");
-    }
-  }));
 
   let entries: Array<{ isFile: () => boolean; name: string }>;
   try {

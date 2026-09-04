@@ -2,7 +2,6 @@ import type {
   OllamaChatRequest,
   CitationMetadata,
   ProjectInfo,
-  SearchResult,
   OllamaStatus,
 } from "../../shared/rpc-types";
 import { ollamaClient } from "../ollama/client";
@@ -73,13 +72,6 @@ export const rpcHandlers = {
 
   async searchCitations(query: string): Promise<CitationMetadata[]> {
     return citationClient.searchOpenAlex(query);
-  },
-
-  // ── Knowledge Base (placeholder for Phase 4) ────────────
-  async searchKnowledgeBase(
-    _params: { projectPath: string; query: string }
-  ): Promise<SearchResult[]> {
-    return [];
   },
 
   // ── File Tree ───────────────────────────────────────────

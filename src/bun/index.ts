@@ -4,13 +4,12 @@ import { join } from "path";
 import { ollamaClient } from "./ollama/client";
 import { citationClient } from "./citation/client";
 import { BIBLIOGRAPHY_RELATIVE_PATH, fileSystem } from "./fs/manager";
-import { findKBRoot, getKBEngine } from "./kb/search";
-import { buildKBGraph } from "./kb/graph";
 import { listAgentSkills } from "./agent/skill-registry";
 import { listAgentMentionableFiles } from "./agent/mention-resolver";
 import { streamScholarAgent } from "./agent/service";
 import { listProviderModels } from "./agent/providers";
 import { getAgentThreadStore } from "./agent/thread-store";
+import { getProjectSourceIndex, isProjectSourceDigestPath } from "./project-sources";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
 import { cleanValidateAndApplyBibliography } from "./citation/bibliography-maintenance";
 import {
@@ -92,6 +91,12 @@ function watchProjectDir(projectPath: string) {
       if (norm.endsWith(".scholarpen.json") || norm.endsWith(".bib")) {
         sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
       }
+      const lower = norm.toLowerCase();
+      if (isProjectSourceDigestPath(projectPath, norm) ||
+          (lower.startsWith("resources/articles/") && lower.endsWith(".pdf"))) {
+        getProjectSourceIndex(projectPath).markDirty();
+        sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
+      }
     });
   } catch (err) {
     console.warn("[Watcher] Could not watch project dir:", err);
@@ -160,18 +165,27 @@ async function main() {
         openProject: async ({ name }) => {
           const proj = await fileSystem.openProject(name);
           watchProjectDir(proj.path);
+          void getProjectSourceIndex(proj.path).ensureFresh().catch((error) => {
+            console.warn("[ProjectSources] Initial indexing failed:", error);
+          });
           return proj;
         },
 
         openProjectByPath: async ({ projectPath }) => {
           const proj = await fileSystem.openProjectByPath(projectPath);
           watchProjectDir(proj.path);
+          void getProjectSourceIndex(proj.path).ensureFresh().catch((error) => {
+            console.warn("[ProjectSources] Initial indexing failed:", error);
+          });
           return proj;
         },
 
         createProject: async ({ name }) => {
           const proj = await fileSystem.createProject(name);
           watchProjectDir(proj.path);
+          void getProjectSourceIndex(proj.path).ensureFresh().catch((error) => {
+            console.warn("[ProjectSources] Initial indexing failed:", error);
+          });
           return proj;
         },
 
@@ -348,51 +362,6 @@ async function main() {
           return citationClient.searchOpenAlex(query, 10, settings.openAlexApiKey || undefined);
         },
 
-        searchKnowledgeBase: async ({ projectPath, query }) => {
-          const kbRoot = await findKBRoot(projectPath);
-          if (!kbRoot) return [];
-          const engine = getKBEngine(kbRoot);
-          await engine.ensureIndexed();
-          const settings = await fileSystem.getSettings();
-          const results = engine.search(query, settings.kbTopK || 5);
-          return results.map((r) => ({
-            id: r.docId,
-            text: r.excerpt,
-            score: r.score,
-            metadata: {
-              title: r.title,
-              authors: r.authors,
-              year: r.year,
-              sourceFile: r.filePath,
-              chunkIndex: 0,
-              section: r.docType,
-            },
-          }));
-        },
-
-        getKBStatus: async ({ projectPath }) => {
-          const kbRoot = await findKBRoot(projectPath);
-          if (!kbRoot) {
-            return { exists: false, kbRoot: null, pageCount: 0, lastIndexed: null };
-          }
-          const engine = getKBEngine(kbRoot);
-          // Kick off indexing in background so it's ready for the first query
-          engine.ensureIndexed().catch((err) =>
-            console.warn("[KB] Background indexing error:", err)
-          );
-          const { pageCount, lastIndexed } = engine.getStatus();
-          return { exists: true, kbRoot, pageCount, lastIndexed };
-        },
-
-        rebuildKBIndex: async ({ projectPath }) => {
-          const kbRoot = await findKBRoot(projectPath);
-          if (!kbRoot) return;
-          const engine = getKBEngine(kbRoot);
-          await engine.rebuild();
-        },
-
-        getKBGraph: ({ projectPath }) => buildKBGraph(projectPath),
-
         listProjectFiles: ({ projectPath }) =>
           fileSystem.listProjectFiles(projectPath),
 
@@ -437,6 +406,14 @@ async function main() {
         listAgentSkills: ({ projectPath }) => listAgentSkills(projectPath),
 
         listAgentMentionableFiles: ({ projectPath }) => listAgentMentionableFiles(projectPath),
+
+        getProjectSourcesStatus: ({ projectPath }) => getProjectSourceIndex(projectPath).status(),
+
+        rebuildProjectSourcesIndex: ({ projectPath }) => {
+          const index = getProjectSourceIndex(projectPath);
+          index.markDirty();
+          return index.status(true);
+        },
 
         listAgentThreads: async ({ projectPath }) => {
           const store = await getAgentThreadStore(projectPath);

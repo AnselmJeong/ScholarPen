@@ -1,5 +1,4 @@
 export const DEFAULT_OLLAMA_BASE_URL = "https://ollama.com/v1";
-export const DEFAULT_OLLAMA_EMBEDDING_BASE_URL = "http://localhost:11434";
 
 export interface OllamaConnection {
   /** OpenAI-compatible API base, e.g. https://ollama.com/v1. */
@@ -27,15 +26,4 @@ export function resolveOllamaConnection(
       ? { Authorization: `Bearer ${normalizedApiKey}` }
       : {},
   };
-}
-
-/** Local Ollama remains a separate dependency for embedding-only workloads. */
-export function resolveOllamaEmbeddingApiBaseUrl(
-  configuredBaseUrl: string | undefined,
-): string {
-  const trimmed = (
-    configuredBaseUrl?.trim() || DEFAULT_OLLAMA_EMBEDDING_BASE_URL
-  ).replace(/\/+$/, "");
-  const hostUrl = trimmed.replace(/\/api$/i, "") || DEFAULT_OLLAMA_EMBEDDING_BASE_URL;
-  return `${hostUrl}/api`;
 }

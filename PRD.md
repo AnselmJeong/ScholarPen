@@ -1,5 +1,7 @@
 # ScholarPen — AI-Assisted Academic Article Writer
 
+> Historical draft. Knowledge Base, LanceDB, and fully-local-only requirements in this document were superseded on 2026-08-28 by the current PubMed-first live research-search design.
+
 ## Product Requirements Document (PRD)
 
 **Version**: 0.1.0-draft

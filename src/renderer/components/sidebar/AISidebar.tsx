@@ -9,7 +9,7 @@ import {
   type MessageState,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { BookOpen, Bot, ChevronDown, ChevronRight, Clipboard, Copy, MessageSquare, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
+import { BookOpen, Bot, ChevronDown, ChevronRight, Clipboard, Copy, Globe2, MessageSquare, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,10 +27,11 @@ import type {
   AgentThread,
   AgentThreadMessage,
   AppSettings,
-  KBStatus,
   OllamaStatus,
   ProjectInfo,
+  ProjectSourcesStatus,
 } from "@shared/rpc-types";
+import { parseProjectFileReference, type ProjectFileReference } from "@shared/project-file-reference";
 import {
   findActiveFileMention,
   replaceActiveFileMention,
@@ -44,7 +45,7 @@ import {
   buildFindCitationMessage,
   type FindCitationRequest,
 } from "../../ai/find-citation";
-import { rpc } from "../../rpc";
+import { onProjectUpdated, rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -54,15 +55,15 @@ import "katex/dist/katex.min.css";
 interface AISidebarProps {
   project: ProjectInfo | null;
   ollamaStatus: OllamaStatus;
-  appSettings?: Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl">;
+  appSettings?: Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">;
   editor: BlockNoteEditor<any, any, any> | null;
   onClose: () => void;
   width?: number;
-  onOpenKBFile?: (filePath: string) => void;
   deepenRequest?: DeepenAnalysisRequest | null;
   onDeepenRequestConsumed?: (requestId: string) => void;
   findCitationRequest?: FindCitationRequest | null;
   onFindCitationRequestConsumed?: (requestId: string) => void;
+  onOpenProjectSource?: (reference: ProjectFileReference) => void;
 }
 
 type DropdownMode = "slash" | "file" | null;
@@ -115,10 +116,10 @@ function assistantLabel(provider: AppSettings["sidebarAgentProvider"]): string {
 
 function AssistantMessage({
   message,
-  onOpenKBFile,
+  onOpenProjectSource,
 }: {
   message: MessageState;
-  onOpenKBFile?: (filePath: string) => void;
+  onOpenProjectSource?: (reference: ProjectFileReference) => void;
 }) {
   const text = messageText(message);
   const isUser = message.role === "user";
@@ -159,28 +160,18 @@ function AssistantMessage({
               urlTransform={(url) => url}
               components={{
                 a: ({ href, children }) => {
-                  const SP_FILE_REF = "https://x-sp-ref";
-                  if (href?.startsWith(SP_FILE_REF)) {
-                    const filePath = decodeURIComponent(href.slice(SP_FILE_REF.length));
-                    return (
-                      <a
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onOpenKBFile?.(filePath);
-                        }}
-                        className="cursor-pointer text-primary underline hover:text-primary/80"
-                      >
-                        {children}
-                      </a>
-                    );
-                  }
                   return (
                     <a
                       href="#"
                       onClick={(e) => {
                         e.preventDefault();
-                        if (href) rpc.openExternal(href);
+                        if (!href) return;
+                        const projectReference = parseProjectFileReference(href);
+                        if (projectReference) {
+                          onOpenProjectSource?.(projectReference);
+                          return;
+                        }
+                        rpc.openExternal(href).catch(console.error);
                       }}
                       className="cursor-pointer text-blue-400 underline hover:text-blue-300"
                     >
@@ -218,7 +209,7 @@ function TypingDots() {
         <span
           key={j}
           className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60"
-          style={{ animation: "kb-bounce 1.2s ease-in-out infinite", animationDelay: `${j * 0.2}s` }}
+          style={{ animation: "assistant-bounce 1.2s ease-in-out infinite", animationDelay: `${j * 0.2}s` }}
         />
       ))}
     </span>
@@ -298,10 +289,10 @@ function AssistantHeader({
 
 function AssistantThread({
   slashCommands,
-  onOpenKBFile,
+  onOpenProjectSource,
 }: {
   slashCommands: AgentSkill[];
-  onOpenKBFile?: (filePath: string) => void;
+  onOpenProjectSource?: (reference: ProjectFileReference) => void;
 }) {
   return (
     <ThreadPrimitive.Root className="flex-1 min-h-0 overflow-hidden">
@@ -332,7 +323,7 @@ function AssistantThread({
         </ThreadPrimitive.Empty>
         <div className="space-y-4 w-full overflow-hidden">
           <ThreadPrimitive.Messages>
-            {({ message }) => <AssistantMessage message={message} onOpenKBFile={onOpenKBFile} />}
+            {({ message }) => <AssistantMessage message={message} onOpenProjectSource={onOpenProjectSource} />}
           </ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
@@ -342,25 +333,45 @@ function AssistantThread({
 
 function ProjectContextBar({
   project,
-  kbStatus,
+  webSearchReady,
+  sourceStatus,
+  onRebuildSources,
 }: {
   project: ProjectInfo;
-  kbStatus: KBStatus | null;
+  webSearchReady: boolean;
+  sourceStatus: ProjectSourcesStatus | null;
+  onRebuildSources: () => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
       <p className="text-xs text-muted-foreground truncate">
         <span className="font-medium text-foreground/80">{project.name}</span>
       </p>
-      {kbStatus?.exists && (
-        <span
-          title={`KB available (${kbStatus.pageCount} pages)`}
-          className="flex items-center gap-1 flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-        >
-          <BookOpen className="h-2.5 w-2.5" />
-          {kbStatus.pageCount} KB pages
-        </span>
-      )}
+      <div className="flex items-center gap-1.5">
+        {sourceStatus && (sourceStatus.digestCount > 0 || sourceStatus.lastError) && (
+          <button
+            type="button"
+            onClick={onRebuildSources}
+            disabled={sourceStatus.indexing}
+            title={sourceStatus.lastError
+              ? `색인 오류: ${sourceStatus.lastError} · 클릭하여 다시 색인`
+              : `${sourceStatus.chunkCount}개 section 색인 · 원문 PDF ${sourceStatus.linkedPdfCount}개 연결 · 클릭하여 다시 색인`}
+            className="flex items-center gap-1 flex-shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+          >
+            <BookOpen className="h-2.5 w-2.5" />
+            {sourceStatus.lastError ? "Sources error" : `Sources ${sourceStatus.digestCount}`}
+          </button>
+        )}
+        {webSearchReady && (
+          <span
+            title="필요할 때 PubMed를 먼저 검색하고 TinyFish Search/Fetch로 보완합니다"
+            className="flex items-center gap-1 flex-shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
+          >
+            <Globe2 className="h-2.5 w-2.5" />
+            Web auto
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -512,29 +523,29 @@ function ThreadHistoryPanel({
 function AssistantComposer({
   editor,
   project,
-  kbStatus,
-  kbEnabled,
   slashCommands,
   files,
   selectedSkillIds,
   selectedFilePaths,
-  setKbEnabled,
   setSelectedSkillIds,
   setSelectedFilePaths,
   onRefreshFiles,
+  projectSourcesEnabled,
+  setProjectSourcesEnabled,
+  sourceStatus,
 }: {
   editor: BlockNoteEditor<any, any, any> | null;
   project: ProjectInfo | null;
-  kbStatus: KBStatus | null;
-  kbEnabled: boolean;
   slashCommands: AgentSkill[];
   files: AgentMentionableFile[];
   selectedSkillIds: string[];
   selectedFilePaths: string[];
-  setKbEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   setSelectedSkillIds: React.Dispatch<React.SetStateAction<string[]>>;
   setSelectedFilePaths: React.Dispatch<React.SetStateAction<string[]>>;
   onRefreshFiles: () => Promise<void>;
+  projectSourcesEnabled: boolean;
+  setProjectSourcesEnabled: (enabled: boolean) => void;
+  sourceStatus: ProjectSourcesStatus | null;
 }) {
   const aui = useAui();
   const input = useAuiState((s) => s.composer.text);
@@ -723,29 +734,6 @@ function AssistantComposer({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
             <Button
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "h-6 gap-1 rounded-full px-2 text-[11px] font-medium",
-                kbStatus?.exists && kbEnabled
-                  ? "bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 hover:text-emerald-700"
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-              onClick={() => setKbEnabled((v) => !v)}
-              title={
-                kbStatus?.exists
-                  ? kbEnabled
-                    ? `이번 질문에 KB 사용 (${kbStatus.pageCount} pages)`
-                    : "이번 질문에 KB 사용 안 함"
-                  : "이 프로젝트에 KB가 없습니다"
-              }
-              disabled={loading || !kbStatus?.exists}
-              type="button"
-            >
-              <BookOpen className="h-3 w-3" />
-              KB {kbStatus?.exists && kbEnabled ? "ON" : "OFF"}
-            </Button>
-            <Button
               size="icon"
               variant="ghost"
               className="h-6 w-6"
@@ -757,6 +745,23 @@ function AssistantComposer({
               <Clipboard className="h-3 w-3 text-muted-foreground" />
             </Button>
             {project && <span className="text-xs text-muted-foreground">{project.name}</span>}
+            {project && (sourceStatus?.digestCount ?? 0) > 0 && (
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => setProjectSourcesEnabled(!projectSourcesEnabled)}
+                title="summary digest 자동 검색을 켜거나 끕니다. 원문 PDF는 필요한 질문에서만 확인합니다."
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-50",
+                  projectSourcesEnabled
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border text-muted-foreground",
+                )}
+              >
+                <BookOpen className="h-2.5 w-2.5" />
+                Sources {projectSourcesEnabled ? "on" : "off"}
+              </button>
+            )}
           </div>
           {loading ? (
             <ComposerPrimitive.Cancel asChild>
@@ -790,11 +795,11 @@ export function AISidebar({
   editor,
   onClose,
   width,
-  onOpenKBFile,
   deepenRequest = null,
   onDeepenRequestConsumed,
   findCitationRequest = null,
   onFindCitationRequestConsumed,
+  onOpenProjectSource,
 }: AISidebarProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [slashCommands, setSlashCommands] = useState<AgentSkill[]>([]);
@@ -805,9 +810,9 @@ export function AISidebar({
   const [threadResetKey, setThreadResetKey] = useState("empty");
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
-  const [kbStatus, setKbStatus] = useState<KBStatus | null>(null);
-  const [kbEnabled, setKbEnabled] = useState(true);
   const [lang, setLang] = useState<"ko" | "en">("ko");
+  const [projectSourcesEnabled, setProjectSourcesEnabled] = useState(true);
+  const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
   const modelKeyRef = useRef<string | null>(null);
@@ -840,12 +845,22 @@ export function AISidebar({
     setMentionableFiles(await rpc.listAgentMentionableFiles(project.path));
   }, [project?.path]);
 
+  const rebuildProjectSources = useCallback(() => {
+    if (!project?.path) return;
+    setSourceStatus((current) => current ? { ...current, indexing: true } : current);
+    rpc.rebuildProjectSourcesIndex(project.path).then(setSourceStatus).catch((error) => {
+      console.error(error);
+      setSourceStatus((current) => current ? { ...current, indexing: false, lastError: String(error) } : current);
+    });
+  }, [project?.path]);
+
   const startNewThread = useCallback(() => {
     setActiveThread(null);
     setLoadedMessages([]);
     setThreadResetKey(`new-${Date.now()}`);
     setSelectedSkillIds([]);
     setSelectedFilePaths([]);
+    setProjectSourcesEnabled(true);
   }, []);
 
   const loadThread = useCallback(
@@ -857,6 +872,16 @@ export function AISidebar({
       setThreadResetKey(`thread-${threadId}-${data.thread.updatedAt}`);
       setSelectedSkillIds([]);
       setSelectedFilePaths([]);
+      const latestSourceSetting = [...data.messages].reverse().find(
+        (message) => typeof message.metadata?.projectSourcesEnabled === "boolean",
+      )?.metadata?.projectSourcesEnabled;
+      setProjectSourcesEnabled(
+        typeof latestSourceSetting === "boolean"
+          ? latestSourceSetting
+          : typeof data.thread.metadata?.projectSourcesEnabled === "boolean"
+            ? data.thread.metadata.projectSourcesEnabled
+          : true,
+      );
     },
     [project?.path],
   );
@@ -936,11 +961,6 @@ export function AISidebar({
             : fallbackSkillIds;
         const filePaths = isPreparedRequest ? [] : selectedFilePaths;
         const projectPath = project?.path ?? null;
-        const kbEnabledForRun = isDeepen
-          ? Boolean(kbStatus?.exists)
-          : isFindCitation
-            ? false
-            : Boolean(kbStatus?.exists && kbEnabled);
         const canReuseThread =
           !isPreparedRequest &&
           Boolean(activeThread) &&
@@ -963,16 +983,18 @@ export function AISidebar({
               : isFindCitation && findCitation
                 ? `Find Citation: ${findCitation.selectedText.replace(/\s+/g, " ").trim().slice(0, 64)}`
                 : message;
-            runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, threadTitle);
+            runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, threadTitle, {
+              projectSourcesEnabled,
+            });
             setActiveThread(runThread);
           }
           await rpc.saveAgentThreadMessage(projectPath, runThread.id, "user", message, "complete", {
             provider: activeProvider,
             model: activeModel,
-            kbEnabled: kbEnabledForRun,
             analysisMode,
             selectedSkillIds: skillIds,
             selectedFilePaths: filePaths,
+            projectSourcesEnabled,
             lang,
           });
           refreshThreads().catch(console.error);
@@ -984,7 +1006,7 @@ export function AISidebar({
           model: activeModel,
           selectedSkillIds: skillIds,
           selectedFilePaths: filePaths,
-          kbEnabled: kbEnabledForRun,
+          projectSourcesEnabled,
           lang,
           analysisMode,
           deepenContext: isDeepen && deepen
@@ -1003,10 +1025,10 @@ export function AISidebar({
             await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", assistantMessage, status, {
               provider: activeProvider,
               model: activeModel,
-              kbEnabled: kbEnabledForRun,
               analysisMode,
               selectedSkillIds: skillIds,
               selectedFilePaths: filePaths,
+              projectSourcesEnabled,
               lang,
             });
             await refreshThreads();
@@ -1020,9 +1042,8 @@ export function AISidebar({
       project?.path,
       selectedSkillIds,
       selectedFilePaths,
-      kbStatus?.exists,
-      kbEnabled,
       lang,
+      projectSourcesEnabled,
       slashCommands,
       refreshThreads,
     ],
@@ -1035,29 +1056,23 @@ export function AISidebar({
     startNewThread();
 
     if (project?.path) {
-      setKbStatus(null);
       refreshThreads().catch(console.error);
       refreshMentionableFiles().catch(console.error);
-      rpc.getKBStatus(project.path)
-        .then((status) => {
-          setKbStatus(status);
-          if (status.exists) setKbEnabled(true);
-        })
-        .catch((error) => {
-          console.error(error);
-          setKbStatus({
-            exists: false,
-            kbRoot: null,
-            pageCount: 0,
-            lastIndexed: null,
-          });
-        });
+      rpc.getProjectSourcesStatus(project.path).then(setSourceStatus).catch(console.error);
     } else {
-      setKbStatus(null);
       setMentionableFiles([]);
       setThreads([]);
+      setSourceStatus(null);
     }
   }, [project?.path, refreshMentionableFiles, refreshThreads, startNewThread]);
+
+  useEffect(() => {
+    if (!project?.path) return;
+    return onProjectUpdated((projectPath, filePath) => {
+      if (projectPath !== project.path || !filePath?.replace(/\\/g, "/").includes("/resources/articles/")) return;
+      rpc.getProjectSourcesStatus(project.path).then(setSourceStatus).catch(console.error);
+    });
+  }, [project?.path]);
 
   useEffect(() => {
     if (modelKeyRef.current === null) {
@@ -1079,7 +1094,7 @@ export function AISidebar({
       <PreparedRequestDispatcher
         request={deepenRequest}
         preparedRequestId={preparedDeepenRequestId}
-        ready={!project || Boolean(kbStatus)}
+        ready
         buildMessage={buildDeepenAnalysisMessage}
         onPrepare={prepareDeepenRequest}
         onConsumed={consumeDeepenRequest}
@@ -1087,7 +1102,7 @@ export function AISidebar({
       <PreparedRequestDispatcher
         request={findCitationRequest}
         preparedRequestId={preparedFindCitationRequestId}
-        ready={!project || Boolean(kbStatus)}
+        ready
         buildMessage={buildFindCitationMessage}
         onPrepare={prepareFindCitationRequest}
         onConsumed={consumeFindCitationRequest}
@@ -1120,7 +1135,9 @@ export function AISidebar({
         {project && (
           <ProjectContextBar
             project={project}
-            kbStatus={kbStatus}
+            webSearchReady={appSettings?.webSearchEnabled ?? Boolean(settings?.webSearchEnabled)}
+            sourceStatus={sourceStatus}
+            onRebuildSources={rebuildProjectSources}
           />
         )}
 
@@ -1130,21 +1147,21 @@ export function AISidebar({
           </div>
         )}
 
-        <AssistantThread slashCommands={slashCommands} onOpenKBFile={onOpenKBFile} />
+        <AssistantThread slashCommands={slashCommands} onOpenProjectSource={onOpenProjectSource} />
 
         <AssistantComposer
           editor={editor}
           project={project}
-          kbStatus={kbStatus}
-          kbEnabled={kbEnabled}
           slashCommands={slashCommands}
           files={mentionableFiles}
           selectedSkillIds={selectedSkillIds}
           selectedFilePaths={selectedFilePaths}
-          setKbEnabled={setKbEnabled}
           setSelectedSkillIds={setSelectedSkillIds}
           setSelectedFilePaths={setSelectedFilePaths}
           onRefreshFiles={refreshMentionableFiles}
+          projectSourcesEnabled={projectSourcesEnabled}
+          setProjectSourcesEnabled={setProjectSourcesEnabled}
+          sourceStatus={sourceStatus}
         />
       </div>
     </AssistantRuntimeProvider>

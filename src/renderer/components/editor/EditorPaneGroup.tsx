@@ -173,7 +173,13 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         if (paneId === "left" || !rightPaneRef.current) {
           setLeftPane((prev) => {
             const existing = prev.tabs.find((t) => t.file.path === file.path);
-            if (existing) return { ...prev, activeTabId: existing.id };
+            if (existing) {
+              return {
+                ...prev,
+                tabs: prev.tabs.map((tab) => tab.id === existing.id ? { ...tab, file } : tab),
+                activeTabId: existing.id,
+              };
+            }
             const tab: EditorTab = { id: crypto.randomUUID(), file };
             return { tabs: [...prev.tabs, tab], activeTabId: tab.id };
           });
@@ -182,7 +188,13 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
           setRightPane((prev) => {
             if (!prev) return prev;
             const existing = prev.tabs.find((t) => t.file.path === file.path);
-            if (existing) return { ...prev, activeTabId: existing.id };
+            if (existing) {
+              return {
+                ...prev,
+                tabs: prev.tabs.map((tab) => tab.id === existing.id ? { ...tab, file } : tab),
+                activeTabId: existing.id,
+              };
+            }
             const tab: EditorTab = { id: crypto.randomUUID(), file };
             return { tabs: [...prev.tabs, tab], activeTabId: tab.id };
           });

@@ -6,18 +6,13 @@ export interface WebSearchResult {
   content: string;
 }
 
-interface OllamaWebSearchResult {
-  title?: string;
-  url?: string;
-  content?: string;
-  snippet?: string;
-}
+export type FetchLike = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
 
-interface OllamaWebFetchResult {
-  title?: string;
-  content?: string;
-  links?: string[];
-}
+const TINYFISH_SEARCH_URL = "https://api.search.tinyfish.ai";
+const TINYFISH_FETCH_URL = "https://api.fetch.tinyfish.ai";
 
 const ACADEMIC_HOST_MARKERS = [
   "doi.org",
@@ -74,97 +69,187 @@ export function prioritizeAcademicResults(results: WebSearchResult[]): WebSearch
     .map(({ result }) => result);
 }
 
-function authHeaders(apiKey: string): HeadersInit {
+function authHeaders(apiKey: string, includeContentType = false): HeadersInit {
   return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
+    Accept: "application/json",
+    ...(includeContentType ? { "Content-Type": "application/json" } : {}),
+    "X-API-Key": apiKey,
   };
 }
 
-export async function searchWebWithOllama(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function tinyFishErrorDetail(raw: string): string {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || !isRecord(parsed.error)) return raw.trim().slice(0, 500);
+    const code = nonEmptyString(parsed.error.code);
+    const message = nonEmptyString(parsed.error.message);
+    return [code, message].filter(Boolean).join(": ").slice(0, 500);
+  } catch {
+    return raw.trim().slice(0, 500);
+  }
+}
+
+async function assertTinyFishResponse(response: Response, operation: "search" | "fetch"): Promise<void> {
+  if (response.ok) return;
+  const detail = tinyFishErrorDetail(await response.text());
+  throw new Error(
+    `TinyFish ${operation} error: HTTP ${response.status}${detail ? ` ${detail}` : ""}`,
+  );
+}
+
+export async function searchWebWithTinyFish(
   query: string,
   settings: AppSettings,
   maxResults = 5,
   signal?: AbortSignal,
+  fetchFn: FetchLike = fetch,
 ): Promise<WebSearchResult[]> {
-  const apiKey = settings.ollamaApiKey.trim();
-  if (!settings.ollamaWebSearchEnabled || !apiKey) return [];
+  const apiKey = settings.tinyfishApiKey.trim();
+  const normalizedQuery = query.trim();
+  if (!settings.webSearchEnabled || !apiKey || !normalizedQuery) return [];
 
-  const res = await fetch("https://ollama.com/api/web_search", {
-    method: "POST",
+  const params = new URLSearchParams({ query: normalizedQuery });
+  const res = await fetchFn(`${TINYFISH_SEARCH_URL}?${params}`, {
+    method: "GET",
     headers: authHeaders(apiKey),
+    signal,
+  });
+
+  await assertTinyFishResponse(res, "search");
+  const json: unknown = await res.json();
+  if (!isRecord(json) || !Array.isArray(json.results)) {
+    throw new Error("TinyFish search error: invalid response payload.");
+  }
+
+  const limit = Math.max(1, Math.min(10, Math.trunc(maxResults)));
+  const results: WebSearchResult[] = [];
+  for (const candidate of json.results) {
+    if (!isRecord(candidate)) continue;
+    const title = nonEmptyString(candidate.title);
+    const url = nonEmptyString(candidate.url);
+    if (!title || !url || !isHttpUrl(url)) continue;
+    results.push({
+      title,
+      url,
+      content: nonEmptyString(candidate.snippet) ?? "",
+    });
+    if (results.length >= limit) break;
+  }
+  return results;
+}
+
+export async function fetchWebPagesWithTinyFish(
+  urls: string[],
+  settings: AppSettings,
+  signal?: AbortSignal,
+  fetchFn: FetchLike = fetch,
+): Promise<WebSearchResult[]> {
+  const apiKey = settings.tinyfishApiKey.trim();
+  const safeUrls = [...new Set(urls.filter(isHttpUrl))].slice(0, 10);
+  if (!settings.webSearchEnabled || !apiKey || safeUrls.length === 0) return [];
+
+  const res = await fetchFn(TINYFISH_FETCH_URL, {
+    method: "POST",
+    headers: authHeaders(apiKey, true),
     body: JSON.stringify({
-      query,
-      max_results: Math.max(1, Math.min(10, maxResults)),
+      urls: safeUrls,
+      format: "markdown",
+      per_url_timeout_ms: 45_000,
     }),
     signal,
   });
 
-  if (!res.ok) throw new Error(`Ollama web search error: HTTP ${res.status} ${await res.text()}`);
-  const json = await res.json() as { results?: OllamaWebSearchResult[] };
-  return (json.results ?? [])
-    .filter((result): result is OllamaWebSearchResult & { title: string; url: string } =>
-      Boolean(result.title && result.url)
-    )
-    .map((result) => ({
-      title: result.title,
-      url: result.url,
-      content: result.content ?? result.snippet ?? "",
-    }));
+  await assertTinyFishResponse(res, "fetch");
+  const json: unknown = await res.json();
+  if (!isRecord(json) || !Array.isArray(json.results)) {
+    throw new Error("TinyFish fetch error: invalid response payload.");
+  }
+
+  if (Array.isArray(json.errors)) {
+    for (const candidate of json.errors) {
+      if (!isRecord(candidate)) continue;
+      const failedUrl = nonEmptyString(candidate.url) ?? "unknown URL";
+      const error = nonEmptyString(candidate.error) ?? "unknown error";
+      console.warn(`[Agent] TinyFish fetch failed for ${failedUrl}: ${error}`);
+    }
+  }
+
+  return json.results.flatMap((candidate): WebSearchResult[] => {
+    if (!isRecord(candidate)) return [];
+    const url = nonEmptyString(candidate.url);
+    const content = nonEmptyString(candidate.text);
+    if (!url || !content || !isHttpUrl(url)) return [];
+    return [{
+      title: nonEmptyString(candidate.title) ?? url,
+      url,
+      content,
+    }];
+  });
 }
 
-export async function fetchWebPageWithOllama(
+export async function fetchWebPageWithTinyFish(
   url: string,
   settings: AppSettings,
   signal?: AbortSignal,
+  fetchFn: FetchLike = fetch,
 ): Promise<WebSearchResult | null> {
-  const apiKey = settings.ollamaApiKey.trim();
-  if (!settings.ollamaWebSearchEnabled || !apiKey) return null;
-
-  const res = await fetch("https://ollama.com/api/web_fetch", {
-    method: "POST",
-    headers: authHeaders(apiKey),
-    body: JSON.stringify({ url }),
-    signal,
-  });
-
-  if (!res.ok) throw new Error(`Ollama web fetch error: HTTP ${res.status} ${await res.text()}`);
-  const json = await res.json() as OllamaWebFetchResult;
-  if (!json.content) return null;
-  return {
-    title: json.title || url,
-    url,
-    content: json.content,
-  };
+  return (await fetchWebPagesWithTinyFish([url], settings, signal, fetchFn))[0] ?? null;
 }
 
-export async function searchAndFetchWebWithOllama(
+export async function searchAndFetchWebWithTinyFish(
   query: string,
   settings: AppSettings,
   maxResults = 5,
   signal?: AbortSignal,
+  fetchFn: FetchLike = fetch,
 ): Promise<WebSearchResult[]> {
   const searchResults = prioritizeAcademicResults(
-    await searchWebWithOllama(
+    await searchWebWithTinyFish(
       query,
       settings,
       Math.min(10, Math.max(maxResults, maxResults * 2)),
       signal,
+      fetchFn,
     ),
   ).slice(0, maxResults);
   if (searchResults.length === 0) return [];
 
-  const fetched = await Promise.all(
-    searchResults.map(async (result) => {
-      try {
-        return await fetchWebPageWithOllama(result.url, settings, signal);
-      } catch (err) {
-        if ((err as Error).name === "AbortError") throw err;
-        console.warn(`[Agent] Web fetch failed for ${result.url}:`, err);
-        return null;
-      }
-    }),
-  );
+  let fetched: WebSearchResult[];
+  try {
+    fetched = await fetchWebPagesWithTinyFish(
+      searchResults.map((result) => result.url),
+      settings,
+      signal,
+      fetchFn,
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    console.warn("[Agent] TinyFish fetch request failed; using search snippets:", error);
+    return searchResults;
+  }
+  const fetchedByUrl = new Map(fetched.map((result) => [result.url, result]));
 
-  return searchResults.map((result, index) => fetched[index] ?? result);
+  return searchResults.map((result) => {
+    const page = fetchedByUrl.get(result.url);
+    return page
+      ? { ...result, title: page.title || result.title, content: page.content }
+      : result;
+  });
 }

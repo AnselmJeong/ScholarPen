@@ -30,9 +30,9 @@ Bun Main Process (src/bun/)          React Webview (src/renderer/)
 index.ts           ◄──RPC──►         App.tsx (3-pane layout)
 rpc/handlers.ts                       EditorArea.tsx (BlockNote)
 ollama/client.ts                      AISidebar.tsx (chat)
-citation/client.ts                    ProjectSidebar.tsx
+citation/client.ts                    LeftSidebar.tsx
 fs/manager.ts                         blocks/ (custom block types)
-lancedb/poc.ts                        ai/ollama-transport.ts
+agent/pubmed-search.ts                ai/ollama-transport.ts
 ```
 
 **Shared types** live in `src/shared/` and are imported by both sides:
@@ -74,11 +74,15 @@ Transport hot-swapping on Ollama reconnect is handled via TanStack Store closure
 Projects live under the configured projects root. The default root is `~/ScholarPen`, where `settings.json` is stored beside project folders:
 ```
 my-paper/
-├── manuscript.scholarpen.json   # BlockNote JSON (auto-saved every ~2s)
-├── references.bib               # BibTeX (built programmatically)
-├── knowledge-base/papers/       # PDFs (Phase 4)
+├── documents/
+│   └── my-paper.scholarpen.json # BlockNote JSON (auto-saved every ~2s)
+├── drafts/
+├── resources/
+│   ├── articles/
+│   └── books/
 ├── figures/
-└── .lance/                      # LanceDB vector store (Phase 4)
+└── exports/
+    └── references.bib           # Canonical BibTeX file
 ```
 
 ## Citation Management
@@ -87,11 +91,11 @@ my-paper/
 
 ## Phase Status (from PLAN.md)
 
-- ✅ Phase 0 — Scaffolding (Electrobun, LanceDB, Ollama PoC)
+- ✅ Phase 0 — Scaffolding (Electrobun, Ollama PoC)
 - ✅ Phase 1 — Editor (BlockNote + custom blocks, auto-save, 3-pane layout)
 - 🚧 Phase 2 — AI Features (AIExtension + Ollama transport working; sidebar chat done; `/ai` slash items pending)
 - 📋 Phase 3 — Citation UX (infrastructure ready; hover UI + citekey suggestion menu pending)
-- 📋 Phase 4 — Knowledge Base RAG (LanceDB PoC done; PDF parsing + hybrid search pending)
+- ✅ Phase 4 — PubMed-first live research search with general-web fallback
 - 📋 Phase 5 — Export (Markdown, Quarto `.qmd`, DOCX, PDF)
 
 ## Vite Aliases

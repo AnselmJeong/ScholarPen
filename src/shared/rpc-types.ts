@@ -42,7 +42,7 @@ export interface CitationMetadata {
 export interface ProjectFile {
   name: string;
   path: string;
-  type: "manuscript" | "reference" | "figure" | "export" | "kb";
+  type: "manuscript" | "reference" | "figure" | "export";
 }
 
 export interface ProjectInfo {
@@ -135,32 +135,6 @@ export interface BibliographyRepairProposal {
   model?: string;
 }
 
-export interface KBDocument {
-  id: string;
-  title: string;
-  authors: string[];
-  year?: number;
-  doi?: string;
-  sourceFile: string;
-  indexedAt: number;
-  chunkCount: number;
-}
-
-export interface SearchResult {
-  id: string;
-  text: string;
-  score: number;
-  metadata: {
-    title: string;
-    authors: string[];
-    year?: number;
-    doi?: string;
-    sourceFile: string;
-    chunkIndex: number;
-    section?: string;
-  };
-}
-
 export interface OllamaStatus {
   connected: boolean;
   models: string[];
@@ -233,8 +207,8 @@ export interface AgentStreamParams {
   model: string;
   selectedSkillIds: string[];
   selectedFilePaths: string[];
-  kbEnabled: boolean;
   lang: "ko" | "en";
+  projectSourcesEnabled?: boolean;
   analysisMode?: "deepen" | "find-citation";
   deepenContext?: {
     selectedText: string;
@@ -264,6 +238,17 @@ export interface FileNode {
   children?: FileNode[];
   lastModified: number;
   size?: number;
+  /** Optional one-based page to reveal when opening a PDF reference. */
+  initialPage?: number;
+}
+
+export interface ProjectSourcesStatus {
+  digestCount: number;
+  chunkCount: number;
+  linkedPdfCount: number;
+  indexedAt: number | null;
+  indexing: boolean;
+  lastError?: string;
 }
 
 export interface AppSettings {
@@ -273,10 +258,9 @@ export interface AppSettings {
   modelProviders: Record<LLMProvider, ModelProviderSettings>;
   ollamaBaseUrl: string;
   ollamaApiKey: string;
-  ollamaWebSearchEnabled: boolean;
   ollamaDefaultModel: string;
-  ollamaEmbeddingBaseUrl: string;
-  ollamaEmbedModel: string;
+  tinyfishApiKey: string;
+  webSearchEnabled: boolean;
   anthropicApiKey: string;
   anthropicDefaultModel: string;
   deepseekApiKey: string;
@@ -285,9 +269,6 @@ export interface AppSettings {
   openaiApiKey: string;
   openaiBaseUrl: string;
   openaiDefaultModel: string;
-  kbChunkSize: number;
-  kbChunkOverlap: number;
-  kbTopK: number;
   openAlexApiKey: string;
   /** @deprecated Migrated to sidebarAgentProvider. */
   aiBackend?: "ollama" | "claude";
@@ -298,28 +279,3 @@ export interface AppSettings {
 }
 
 export type AppSettingsUpdate = Partial<AppSettings>;
-
-export interface KBStatus {
-  exists: boolean;
-  kbRoot: string | null;
-  pageCount: number;
-  lastIndexed: number | null;
-}
-
-export interface KBGraphNode {
-  id: string;       // filename stem (e.g. "precision-weighting")
-  title: string;    // frontmatter title
-  type: "concept" | "entity" | "source" | "overview" | "other";
-  filePath: string; // absolute path to .md file
-  degree: number;   // number of edges
-}
-
-export interface KBGraphEdge {
-  source: string; // node id
-  target: string; // node id
-}
-
-export interface KBGraph {
-  nodes: KBGraphNode[];
-  edges: KBGraphEdge[];
-}

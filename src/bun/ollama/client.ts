@@ -1,5 +1,4 @@
 import type { OllamaChatRequest, OllamaStatus } from "../../shared/rpc-types";
-import { resolveOllamaEmbeddingApiBaseUrl } from "../../shared/ollama-connection";
 import { fileSystem } from "../fs/manager";
 import { listProviderModels, streamAgentModel } from "../agent/providers";
 
@@ -54,20 +53,6 @@ class OllamaClient {
     }
   }
 
-  async embed(text: string, model = "nomic-embed-text"): Promise<number[]> {
-    const { settings } = await this.getRuntimeSettings();
-    const embeddingApiBaseUrl = resolveOllamaEmbeddingApiBaseUrl(settings.ollamaEmbeddingBaseUrl);
-    const res = await fetch(`${embeddingApiBaseUrl}/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: settings.ollamaEmbedModel || model, prompt: text }),
-    });
-    if (!res.ok) throw new Error(`Embedding error: HTTP ${res.status} ${await res.text()}`);
-    const data = await res.json() as { embedding?: number[] };
-    const embedding = data.embedding;
-    if (!embedding) throw new Error("Ollama embedding response did not include an embedding.");
-    return embedding;
-  }
 }
 
 export const ollamaClient = new OllamaClient();
