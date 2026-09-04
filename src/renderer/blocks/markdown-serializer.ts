@@ -6,6 +6,9 @@ import type { BlockNoteEditor } from "@blocknote/core";
 
 export type ExportFormat = "md" | "qmd";
 
+const SCHOLARPEN_DOCUMENT_EXTENSION = /\.scholarpen\.json$/i;
+const LEADING_DOCUMENT_NUMBER = /^\s*\d+\s*(?:[.)_:-]\s*)?/;
+
 interface Block {
   id: string;
   type: string;
@@ -14,13 +17,19 @@ interface Block {
   children: Block[];
 }
 
+export function documentTitleFromFilename(filename: string): string {
+  const basename = filename.replace(SCHOLARPEN_DOCUMENT_EXTENSION, "").trim();
+  const title = basename.replace(LEADING_DOCUMENT_NUMBER, "").trim();
+  return title || basename || "Document";
+}
+
 export function buildQuartoFrontmatter(
   title = "Document",
   date = new Date(),
 ): string {
   return [
     "---",
-    `title: "${title}"`,
+    `title: ${JSON.stringify(title)}`,
     `date: "${date.toISOString().split("T")[0]}"`,
     "bibliography: references.bib",
     "---",
@@ -161,13 +170,14 @@ function inlineContentToMarkdown(content: unknown, format: ExportFormat): string
 export async function blocksToScholarMarkdown(
   editor: BlockNoteEditor<any, any, any>,
   blocks: Block[],
-  format: ExportFormat = "md"
+  format: ExportFormat = "md",
+  title = "Document",
 ): Promise<string> {
   const lines: string[] = [];
 
   // Quarto: add YAML frontmatter
   if (format === "qmd") {
-    lines.push(buildQuartoFrontmatter());
+    lines.push(buildQuartoFrontmatter(title));
   }
 
   for (const block of blocks) {

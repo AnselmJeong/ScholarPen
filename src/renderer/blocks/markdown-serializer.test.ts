@@ -3,9 +3,25 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import {
   blocksToScholarMarkdown,
   buildQuartoFrontmatter,
+  documentTitleFromFilename,
 } from "./markdown-serializer";
 
 describe("Quarto export frontmatter", () => {
+  test("derives the title from a numbered ScholarPen filename", () => {
+    expect(
+      documentTitleFromFilename("02 History of Placebo.scholarpen.json"),
+    ).toBe("History of Placebo");
+    expect(
+      documentTitleFromFilename("07. Context Engineering in Neuromodulation.scholarpen.json"),
+    ).toBe("Context Engineering in Neuromodulation");
+  });
+
+  test("keeps unnumbered filenames and numbers within the title", () => {
+    expect(
+      documentTitleFromFilename("Placebo 2.0 Results.scholarpen.json"),
+    ).toBe("Placebo 2.0 Results");
+  });
+
   test("does not insert blank lines between YAML fields", () => {
     expect(
       buildQuartoFrontmatter("Document", new Date("2026-07-24T00:00:00.000Z")),
@@ -39,6 +55,29 @@ describe("Quarto export frontmatter", () => {
     );
     expect(qmd).not.toContain('---\n\ntitle:');
     expect(qmd).not.toContain('title: "Document"\n\ndate:');
+  });
+
+  test("uses the filename-derived title in exported QMD", async () => {
+    const editor = {
+      blocksToMarkdownLossy: async () => "Body text",
+    } as unknown as BlockNoteEditor;
+    const blocks = [{
+      id: "paragraph-1",
+      type: "paragraph",
+      props: {},
+      content: [{ type: "text", text: "Body text", styles: {} }],
+      children: [],
+    }];
+
+    const qmd = await blocksToScholarMarkdown(
+      editor,
+      blocks,
+      "qmd",
+      documentTitleFromFilename("02 History of Placebo.scholarpen.json"),
+    );
+
+    expect(qmd).toContain('title: "History of Placebo"');
+    expect(qmd).not.toContain('title: "Document"');
   });
 });
 
