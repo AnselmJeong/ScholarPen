@@ -3,8 +3,8 @@ import { citationClient, type SupportingCitation } from "../citation/client";
 import { buildCitationReferenceList, buildWebReferenceList } from "./references";
 import { loadAgentSkill } from "./skill-registry";
 import { resolveMentionedFiles } from "./mention-resolver";
-import { searchPubMed } from "./pubmed-search";
 import { createEnglishAcademicSearchQuery } from "./research-query";
+import { searchScholarlyEvidence } from "./scholarly-search";
 import { searchAndFetchWebWithTinyFish, type WebSearchResult } from "./web-search";
 import { shouldUseWebSearch } from "./web-search-decision";
 import {
@@ -250,10 +250,18 @@ export async function buildAgentMessages(
         );
         if (englishAcademicSearchQuery) {
           try {
-            webResults = await searchPubMed(englishAcademicSearchQuery, 5, signal);
+            webResults = await searchScholarlyEvidence(
+              englishAcademicSearchQuery,
+              5,
+              {
+                openAlexApiKey: settings.openAlexApiKey || undefined,
+                ncbiApiKey: settings.ncbiApiKey || undefined,
+                signal,
+              },
+            );
           } catch (err) {
             if ((err as Error).name === "AbortError") throw err;
-            console.warn("[Agent] PubMed search failed:", err);
+            console.warn("[Agent] Scholarly search failed:", err);
             webSearchFailed = true;
           }
 
@@ -282,7 +290,7 @@ export async function buildAgentMessages(
     "You are ScholarPen's research writing assistant.",
     "Use only the project files, project source excerpts, selected instructions, verified citation candidates, and web search results that are explicitly provided in this request.",
     "Do not claim to have read files that were not provided.",
-    "Whenever external search is used, ScholarPen searches PubMed first with an English academic query, then uses general web results only to fill evidence gaps. The final answer must still follow the user's selected response language.",
+    "Whenever external search is used, ScholarPen combines OpenAlex semantic retrieval with PubMed Best Match, verifies and enriches PMID-linked semantic candidates through PubMed, then uses general web results only to fill evidence gaps. The final answer must still follow the user's selected response language.",
     webResults.length > 0
       ? "Web search was used for this request. Cite specific web sources inline as [W1], [W2], etc.; do not cite broad ranges like [W1]-[W5] unless every listed source supports the same sentence. A Web Sources list will be appended automatically."
       : webSearchNeeded && !webSearchAvailable

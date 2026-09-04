@@ -7,7 +7,11 @@ function escapeMarkdownText(value: string): string {
 
 export function buildWebReferenceList(results: WebSearchResult[]): string {
   const lines = results.map((r, i) => {
-    const source = r.url.includes("pubmed.ncbi.nlm.nih.gov") ? " · PubMed" : " · Web";
+    const source = r.source === "openalex-semantic"
+      ? " · OpenAlex Semantic"
+      : r.source === "pubmed" || r.url.includes("pubmed.ncbi.nlm.nih.gov")
+        ? " · PubMed"
+        : " · Web";
     return `${i + 1}. **[W${i + 1}] [${r.title}](${r.url})**${source}`;
   });
   return `\n\n**Research Sources (${results.length})**\n${lines.join("\n")}`;

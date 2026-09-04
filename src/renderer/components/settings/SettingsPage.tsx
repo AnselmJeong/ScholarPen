@@ -433,7 +433,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
             <SettingRow
               label="Automatic Web Search"
-              description="외부 근거가 필요하면 PubMed를 먼저 찾고 TinyFish Search/Fetch로 보완합니다"
+              description="OpenAlex semantic search와 PubMed를 결합하고 TinyFish로 일반 웹을 보완합니다"
             >
               <div className="flex items-center justify-end gap-2">
                 <span className="text-xs text-muted-foreground">
@@ -517,15 +517,48 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
           <SettingSection icon={BookOpen} title="Citations">
             <SettingRow
               label="OpenAlex API Key"
-              description="Optional — increases rate limits. Get yours at openalex.org/account"
+              description="Semantic literature search와 citation discovery에 사용됩니다"
             >
-              <Input
-                type="password"
-                value={settings.openAlexApiKey}
-                onChange={(e) => updateSetting("openAlexApiKey", e.target.value)}
-                placeholder="Enter API key…"
-                className="font-mono text-xs"
-              />
+              <div className="space-y-1.5">
+                <Input
+                  type="password"
+                  value={settings.openAlexApiKey}
+                  onChange={(e) => updateSetting("openAlexApiKey", e.target.value)}
+                  placeholder="Enter OpenAlex API key…"
+                  className="font-mono text-xs"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="text-[11px] text-primary underline underline-offset-2 hover:text-primary/80"
+                  onClick={() => rpc.openExternal("https://openalex.org/settings/api")}
+                >
+                  OpenAlex API key 만들기
+                </button>
+              </div>
+            </SettingRow>
+
+            <SettingRow
+              label="NCBI API Key"
+              description="PubMed ESearch와 EFetch의 요청 한도와 안정성을 높입니다"
+            >
+              <div className="space-y-1.5">
+                <Input
+                  type="password"
+                  value={settings.ncbiApiKey}
+                  onChange={(e) => updateSetting("ncbiApiKey", e.target.value)}
+                  placeholder="Enter NCBI API key…"
+                  className="font-mono text-xs"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="text-[11px] text-primary underline underline-offset-2 hover:text-primary/80"
+                  onClick={() => rpc.openExternal("https://account.ncbi.nlm.nih.gov/settings/")}
+                >
+                  NCBI API key 만들기
+                </button>
+              </div>
             </SettingRow>
           </SettingSection>
 

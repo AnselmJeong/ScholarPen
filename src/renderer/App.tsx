@@ -10,6 +10,7 @@ import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog } from "./components/editor/ExportDialog";
 import { QuartoBookDialog, type QuartoBookSetup } from "./components/editor/QuartoBookDialog";
 import { QuartoRenderDialog } from "./components/editor/QuartoRenderDialog";
+import { AboutDialog } from "./components/AboutDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
 import {
@@ -39,6 +40,7 @@ import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
+import packageJson from "../../package.json";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -76,6 +78,7 @@ export function App() {
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const [bibReloadTrigger, setBibReloadTrigger]       = useState(0);
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">>({
     sidebarAgentProvider: "ollama",
@@ -337,6 +340,9 @@ export function App() {
   useEffect(() => {
     const unsub = onMenuAction((action) => {
       switch (action) {
+        case "aboutScholarPen":
+          setAboutDialogOpen(true);
+          break;
         case "newDocument":
           if (activeProject) {
             const ts = new Date().toISOString().slice(0, 10);
@@ -868,6 +874,12 @@ export function App() {
         loading={quartoRenderLoading}
         loadError={quartoRenderLoadError}
         onRender={handleRenderQuartoBook}
+      />
+
+      <AboutDialog
+        open={aboutDialogOpen}
+        onOpenChange={setAboutDialogOpen}
+        version={packageJson.version}
       />
     </div>
   );

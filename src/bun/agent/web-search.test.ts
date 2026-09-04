@@ -52,6 +52,7 @@ const settings = {
   openaiBaseUrl: "https://api.openai.com/v1",
   openaiDefaultModel: "gpt-5.2",
   openAlexApiKey: "",
+  ncbiApiKey: "",
   theme: "system",
 } satisfies AppSettings;
 

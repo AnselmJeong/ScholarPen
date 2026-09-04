@@ -7,6 +7,8 @@ describe("settings migration", () => {
 
     expect(normalized.webSearchEnabled).toBeFalse();
     expect(normalized.tinyfishApiKey).toBe("");
+    expect(normalized.openAlexApiKey).toBe("");
+    expect(normalized.ncbiApiKey).toBe("");
     expect("ollamaWebSearchEnabled" in normalized).toBeFalse();
   });
 
@@ -19,5 +21,15 @@ describe("settings migration", () => {
 
     expect(normalized.webSearchEnabled).toBeTrue();
     expect(normalized.tinyfishApiKey).toBe(" tinyfish-key ");
+  });
+
+  test("preserves scholarly search API keys", () => {
+    const normalized = normalizeSettings({
+      openAlexApiKey: " openalex-key ",
+      ncbiApiKey: " ncbi-key ",
+    });
+
+    expect(normalized.openAlexApiKey).toBe(" openalex-key ");
+    expect(normalized.ncbiApiKey).toBe(" ncbi-key ");
   });
 });

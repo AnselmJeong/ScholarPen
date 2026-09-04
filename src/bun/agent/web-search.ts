@@ -4,6 +4,10 @@ export interface WebSearchResult {
   title: string;
   url: string;
   content: string;
+  source?: "pubmed" | "openalex-semantic" | "web";
+  pmid?: string;
+  doi?: string;
+  relevanceScore?: number;
 }
 
 export type FetchLike = (

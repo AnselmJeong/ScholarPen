@@ -607,17 +607,7 @@ async function main() {
   Electrobun.events.on("application-menu-clicked", (e) => {
     const action = e.data.action;
     if (action === "aboutScholarPen") {
-      void Utils.showMessageBox({
-        type: "info",
-        title: "About ScholarPen",
-        message: `ScholarPen ${packageJson.version}`,
-        detail: "Academic writing workspace\n\nAuthor: Anselm Jeong",
-        buttons: ["OK"],
-        defaultId: 0,
-        cancelId: 0,
-      }).catch((error) => {
-        console.error("[ScholarPen] Could not show the About window:", error);
-      });
+      win.webview.rpc?.send.menuAction({ action });
     } else if (action === "save" || action === "newDocument" || action === "exportMarkdown" || action === "importMarkdown") {
       win.webview.rpc?.send.menuAction({ action });
     } else if (action === "quit") {

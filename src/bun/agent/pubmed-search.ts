@@ -1,7 +1,18 @@
-import type { WebSearchResult } from "./web-search";
+import type { FetchLike, WebSearchResult } from "./web-search";
 
 const EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const USER_AGENT = "ScholarPen/1.0 (PubMed research assistant)";
+
+export interface PubMedRequestOptions {
+  apiKey?: string;
+  signal?: AbortSignal;
+  fetchFn?: FetchLike;
+}
+
+function addApiKey(params: URLSearchParams, apiKey?: string): void {
+  const normalizedApiKey = apiKey?.trim();
+  if (normalizedApiKey) params.set("api_key", normalizedApiKey);
+}
 
 export function broadenPubMedQuery(query: string): string {
   return query
@@ -64,7 +75,7 @@ function extractDoi(xml: string): string {
 
 export function parsePubMedXml(xml: string): WebSearchResult[] {
   return Array.from(xml.matchAll(/<PubmedArticle(?:\s[^>]*)?>([\s\S]*?)<\/PubmedArticle>/gi))
-    .map((match) => {
+    .map((match): WebSearchResult | null => {
       const article = match[1];
       const pmid = firstTag(article, "PMID");
       const title = firstTag(article, "ArticleTitle");
@@ -89,15 +100,18 @@ export function parsePubMedXml(xml: string): WebSearchResult[] {
         title,
         url: `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(pmid)}/`,
         content: details,
+        source: "pubmed",
+        pmid,
+        doi: doi || undefined,
       } satisfies WebSearchResult;
     })
     .filter((result): result is WebSearchResult => result !== null);
 }
 
-async function searchPubMedIds(
+async function requestPubMedIds(
   query: string,
   maxResults: number,
-  signal?: AbortSignal,
+  options: PubMedRequestOptions = {},
 ): Promise<string[]> {
   const params = new URLSearchParams({
     db: "pubmed",
@@ -107,39 +121,63 @@ async function searchPubMedIds(
     sort: "relevance",
     tool: "ScholarPen",
   });
-  const response = await fetch(`${EUTILS_BASE}/esearch.fcgi?${params}`, {
+  addApiKey(params, options.apiKey);
+  const response = await (options.fetchFn ?? fetch)(`${EUTILS_BASE}/esearch.fcgi?${params}`, {
     headers: { "User-Agent": USER_AGENT },
-    signal,
+    signal: options.signal,
   });
   if (!response.ok) throw new Error(`PubMed search error: HTTP ${response.status}`);
   const payload = await response.json() as { esearchresult?: { idlist?: string[] } };
   return payload.esearchresult?.idlist?.filter(Boolean) ?? [];
 }
 
-export async function searchPubMed(
+export async function searchPubMedIds(
   query: string,
   maxResults = 5,
-  signal?: AbortSignal,
-): Promise<WebSearchResult[]> {
-  let ids = await searchPubMedIds(query, maxResults, signal);
+  options: PubMedRequestOptions = {},
+): Promise<string[]> {
+  let ids = await requestPubMedIds(query, maxResults, options);
   if (ids.length === 0) {
     const broaderQuery = broadenPubMedQuery(query);
     if (broaderQuery && broaderQuery !== query.trim()) {
-      ids = await searchPubMedIds(broaderQuery, maxResults, signal);
+      ids = await requestPubMedIds(broaderQuery, maxResults, options);
     }
   }
+  return ids;
+}
+
+export async function searchPubMed(
+  query: string,
+  maxResults = 5,
+  options: PubMedRequestOptions = {},
+): Promise<WebSearchResult[]> {
+  const ids = await searchPubMedIds(query, maxResults, options);
   if (ids.length === 0) return [];
+
+  return fetchPubMedByIds(ids, maxResults, options);
+}
+
+export async function fetchPubMedByIds(
+  ids: string[],
+  maxResults = ids.length,
+  options: PubMedRequestOptions = {},
+): Promise<WebSearchResult[]> {
+  const normalizedIds = Array.from(new Set(
+    ids.map((id) => id.trim()).filter((id) => /^\d+$/.test(id)),
+  )).slice(0, 50);
+  if (normalizedIds.length === 0) return [];
 
   const params = new URLSearchParams({
     db: "pubmed",
-    id: ids.join(","),
+    id: normalizedIds.join(","),
     rettype: "abstract",
     retmode: "xml",
     tool: "ScholarPen",
   });
-  const response = await fetch(`${EUTILS_BASE}/efetch.fcgi?${params}`, {
+  addApiKey(params, options.apiKey);
+  const response = await (options.fetchFn ?? fetch)(`${EUTILS_BASE}/efetch.fcgi?${params}`, {
     headers: { "User-Agent": USER_AGENT },
-    signal,
+    signal: options.signal,
   });
   if (!response.ok) throw new Error(`PubMed fetch error: HTTP ${response.status}`);
   return parsePubMedXml(await response.text()).slice(0, maxResults);

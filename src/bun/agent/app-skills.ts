@@ -41,17 +41,18 @@ Rewrite for academic clarity.
   },
   {
     name: "pubmed-research",
-    content: `# PubMed Research
+    content: `# Scholarly Literature Research
 
-description: Search PubMed first and synthesize biomedical evidence for the current research question.
+description: Combine semantic scholarly discovery with PubMed evidence for the current research question.
 
-Use ScholarPen's live PubMed search context as the primary evidence source.
+Use ScholarPen's OpenAlex semantic and PubMed search context as the primary evidence source.
 
 - Translate the research question into precise biomedical concepts, populations, exposures, interventions, outcomes, and study designs.
 - Prefer systematic reviews, meta-analyses, randomized trials, cohort studies, and authoritative recent reviews when appropriate.
 - Distinguish evidence type, population, methods, and limitations instead of treating all papers as equally strong.
 - Cite only provided sources as [W1], [W2], etc.; never invent a PMID, DOI, title, author, or result.
-- When PubMed coverage is sparse, clearly label any general-web evidence used to fill the gap.
+- Treat PubMed metadata as authoritative for PMID-linked results and distinguish OpenAlex-only records.
+- When scholarly coverage is sparse, clearly label any general-web evidence used to fill the gap.
 - End with unanswered questions or useful next PubMed queries when the evidence is incomplete.
 `,
   },

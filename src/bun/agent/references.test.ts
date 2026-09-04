@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SupportingCitation } from "../citation/client";
-import { buildCitationReferenceList } from "./references";
+import { buildCitationReferenceList, buildWebReferenceList } from "./references";
 
 describe("verified citation references", () => {
   test("renders the API DOI as a clickable resolver link", () => {
@@ -28,5 +28,19 @@ describe("verified citation references", () => {
     const references = buildCitationReferenceList([]);
     expect(references).toContain("Verified DOI Candidates (0)");
     expect(references).toContain("Do not use an unverified citation");
+  });
+});
+
+describe("scholarly web references", () => {
+  test("labels OpenAlex semantic candidates distinctly before PubMed enrichment", () => {
+    const references = buildWebReferenceList([{
+      title: "Semantic candidate",
+      url: "https://pubmed.ncbi.nlm.nih.gov/12345678/",
+      content: "OpenAlex result",
+      source: "openalex-semantic",
+      pmid: "12345678",
+    }]);
+
+    expect(references).toContain("OpenAlex Semantic");
   });
 });

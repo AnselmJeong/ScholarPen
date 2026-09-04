@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
@@ -73,6 +73,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiBaseUrl: "https://api.openai.com/v1",
   openaiDefaultModel: "gpt-5.2",
   openAlexApiKey: "",
+  ncbiApiKey: "",
   theme: "system",
 };
 
@@ -142,6 +143,14 @@ export function normalizeSettings(parsed: PersistedAppSettings): AppSettings {
       typeof parsed.tinyfishApiKey === "string"
         ? parsed.tinyfishApiKey
         : DEFAULT_SETTINGS.tinyfishApiKey,
+    openAlexApiKey:
+      typeof parsed.openAlexApiKey === "string"
+        ? parsed.openAlexApiKey
+        : DEFAULT_SETTINGS.openAlexApiKey,
+    ncbiApiKey:
+      typeof parsed.ncbiApiKey === "string"
+        ? parsed.ncbiApiKey
+        : DEFAULT_SETTINGS.ncbiApiKey,
     anthropicDefaultModel: parsed.anthropicDefaultModel ?? legacyClaudeModel,
     deepseekBaseUrl: parsed.deepseekBaseUrl ?? DEFAULT_SETTINGS.deepseekBaseUrl,
     deepseekDefaultModel: parsed.deepseekDefaultModel ?? DEFAULT_SETTINGS.deepseekDefaultModel,
@@ -907,7 +916,8 @@ class FileSystemManager {
   async saveSettings(update: AppSettingsUpdate): Promise<void> {
     const current = await this.getSettings();
     const merged = { ...current, ...update };
-    await writeFile(SETTINGS_FILE, JSON.stringify(merged, null, 2));
+    await writeFile(SETTINGS_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });
+    await chmod(SETTINGS_FILE, 0o600);
     if (update.projectsRootDir) {
       await mkdir(update.projectsRootDir, { recursive: true });
     }

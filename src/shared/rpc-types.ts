@@ -292,6 +292,7 @@ export interface AppSettings {
   openaiBaseUrl: string;
   openaiDefaultModel: string;
   openAlexApiKey: string;
+  ncbiApiKey: string;
   /** @deprecated Migrated to sidebarAgentProvider. */
   aiBackend?: "ollama" | "claude";
   /** @deprecated Migrated to anthropicDefaultModel/sidebarAgentModel. */

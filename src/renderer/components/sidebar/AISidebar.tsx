@@ -367,7 +367,7 @@ function ProjectContextBar({
         )}
         {webSearchReady && (
           <span
-            title="필요할 때 PubMed를 먼저 검색하고 TinyFish Search/Fetch로 보완합니다"
+            title="OpenAlex semantic search와 PubMed를 결합하고, 부족할 때 TinyFish로 보완합니다"
             className="flex items-center gap-1 flex-shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
           >
             <Globe2 className="h-2.5 w-2.5" />
