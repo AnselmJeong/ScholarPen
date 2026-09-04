@@ -68,6 +68,22 @@ export function App() {
   const exportEditorRef = useRef<BlockNoteEditor<any, any, any> | null>(null);
   const editorGroupRef = useRef<EditorPaneGroupHandle | null>(null);
   const pendingProjectFindReplaceRef = useRef(false);
+  const deepenRevisionAppliersRef = useRef(
+    new Map<string, (protectedRevision: string) => string | null>(),
+  );
+
+  const handleDeepenResult = useCallback(
+    (requestId: string, protectedRevision: string | null) => {
+      const applyRevision = deepenRevisionAppliersRef.current.get(requestId);
+      deepenRevisionAppliersRef.current.delete(requestId);
+      if (!protectedRevision) return null;
+      if (!applyRevision) {
+        return "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
+      }
+      return applyRevision(protectedRevision);
+    },
+    [],
+  );
 
   // Resize refs — Left sidebar
   const isResizingLeftRef    = useRef(false);
@@ -615,13 +631,20 @@ export function App() {
             onWordCountChange={setWordCount}
             onSaveStatusChange={setSaveStatus}
             onBibtexSaved={() => setBibReloadTrigger(n => n + 1)}
-            onDeepenAnalysis={(request) => {
+            onDeepenAnalysis={(request, applyRevision) => {
+              setPendingDeepenRequest((current) => {
+                if (current) deepenRevisionAppliersRef.current.delete(current.id);
+                return request;
+              });
+              deepenRevisionAppliersRef.current.set(request.id, applyRevision);
               setPendingFindCitationRequest(null);
-              setPendingDeepenRequest(request);
               setAiSidebarOpen(true);
             }}
             onFindCitation={(request) => {
-              setPendingDeepenRequest(null);
+              setPendingDeepenRequest((current) => {
+                if (current) deepenRevisionAppliersRef.current.delete(current.id);
+                return null;
+              });
               setPendingFindCitationRequest(request);
               setAiSidebarOpen(true);
             }}
@@ -667,6 +690,7 @@ export function App() {
                     current?.id === requestId ? null : current,
                   );
                 }}
+                onDeepenResult={handleDeepenResult}
                 findCitationRequest={pendingFindCitationRequest}
                 onFindCitationRequestConsumed={(requestId) => {
                   setPendingFindCitationRequest((current) =>

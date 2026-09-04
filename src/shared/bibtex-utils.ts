@@ -89,6 +89,14 @@ export function normalizeDoi(value: string | undefined): string {
     .toLowerCase();
 }
 
+/** Build a safe DOI resolver URL, or null when the bibliography value is not a DOI. */
+export function buildDoiResolverUrl(value: string | undefined): string | null {
+  const doi = normalizeDoi(value);
+  if (!/^10\.\d{4,9}\/\S+$/i.test(doi)) return null;
+  const encodedPath = doi.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  return `https://doi.org/${encodedPath}`;
+}
+
 export function parseBibtexEntries(bibtex: string): BibtexParseResult {
   const entries: BibtexEntry[] = [];
   const issues: BibtexParseIssue[] = [];

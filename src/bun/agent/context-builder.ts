@@ -25,6 +25,11 @@ function languageRule(lang: "ko" | "en"): string {
     : "Respond in English only.";
 }
 
+function deepenLanguageRule(lang: "ko" | "en"): string {
+  const critiqueLanguage = lang === "ko" ? "Korean" : "English";
+  return `Write the critique and checklist in ${critiqueLanguage}. As the one exception, keep the final integrated revision in the selected passage's original language.`;
+}
+
 function trimMiddle(content: string, limit: number, marker = "[...truncated...]"): string {
   const normalized = content.trim();
   if (normalized.length <= limit) return normalized;
@@ -78,6 +83,10 @@ ${escapePromptXml(params.deepenContext.beforeSelection)}
 ${escapePromptXml(params.deepenContext.selectedText)}
 </selected_passage>
 
+<protected_selected_passage>
+${escapePromptXml(params.deepenContext.protectedText)}
+</protected_selected_passage>
+
 <after_selection>
 ${escapePromptXml(params.deepenContext.afterSelection)}
 </after_selection>
@@ -87,11 +96,11 @@ ${escapePromptXml(params.deepenContext.afterSelection)}
 function deepenReviewInstructions(params: AgentStreamParams): string {
   if (params.analysisMode !== "deepen" || !params.deepenContext) return "";
   return `<deepen_review_mode>
-This is an advisory academic critique, not an editing or replacement operation. Never claim to modify the manuscript and never return a replacement passage as the sole answer.
+This is an academic critique followed by an automatically applied, selection-scoped revision. Never return a replacement passage as the sole answer.
 Analyze the selected passage in the context of the complete document. Address, one issue at a time: factual inaccuracies or unverifiable claims; unsupported certainty; critical objections and counterarguments; logical gaps, contradictions, conceptual conflations, causal errors, and scope problems; stronger argumentative alternatives; and more precise academic wording examples.
 For each material issue, identify a short exact fragment, explain why it matters, distinguish evidence-backed findings from interpretive judgment, and recommend a concrete improvement. Follow the issue-by-issue analysis with a prioritized checklist.
-After the checklist, always end with a "## 통합 개선문" heading and a complete revised version of the entire selected passage that consistently incorporates all well-supported recommendations. The integrated revision must remain in the selected passage's original language and preserve its core meaning, existing citations, technical terminology, and calibrated degree of certainty. Do not add unverified facts or new citations. Present it as a ready-to-use proposal in the chat, never as an automatically applied manuscript edit.
-Use web evidence only when it is present below. Cite it as [W1], [W2], etc. If the available evidence does not verify a claim, say so explicitly instead of inventing facts or citations.
+After the checklist, always end with a "## 통합 개선문" heading and a complete revised version of the entire selected passage that consistently incorporates all well-supported recommendations. Build this section from protected_selected_passage, not the plain selected_passage. Copy every ScholarPen control marker beginning with ⟦SP: exactly once and in exactly the same order. Never add, delete, edit, translate, reorder, or move a control marker. Rewrite only natural-language text inside each T:OPEN and matching T:CLOSE marker. Do not put the protected revision in a code fence and do not add any text after its final marker. The integrated revision must remain in the selected passage's original language and preserve its core meaning, existing citations, technical terminology, formatting structure, and calibrated degree of certainty. Do not add unverified facts or new citations. ScholarPen will validate the markers and apply only this final section to the original selection; if validation fails, the manuscript must remain unchanged.
+Use web evidence only when it is present below. Cite it as [W1], [W2], etc. in the analysis, never inside the protected integrated revision unless that exact citation already existed in the selected passage. If the available evidence does not verify a claim, say so explicitly instead of inventing facts or citations.
 </deepen_review_mode>`;
 }
 
@@ -303,8 +312,10 @@ export async function buildAgentMessages(
     "When a user designates @files, prioritize those files.",
     "When an instruction is selected with /, follow that instruction within ScholarPen's safety limits.",
     "For academic writing, preserve nuance and cite provided web sources when used.",
-    "You are read-only unless the user explicitly accepts a proposed write action.",
-    languageRule(params.lang),
+    params.analysisMode === "deepen"
+      ? "The user's Deepen action authorizes only the validated, selection-scoped replacement described below. No other document content may be changed."
+      : "You are read-only unless the user explicitly accepts a proposed write action.",
+    params.analysisMode === "deepen" ? deepenLanguageRule(params.lang) : languageRule(params.lang),
     params.projectPath ? `Current project path: ${params.projectPath}` : "No project is currently open.",
     "</scholarpen_system>",
     deepenReviewInstructions(params),

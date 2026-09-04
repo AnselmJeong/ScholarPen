@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  buildDoiResolverUrl,
   buildDoiCitationInsertionPlan,
   normalizeDoi,
   parseBibtexCitekeys,
@@ -88,11 +89,13 @@ function buildCitationHoverMetadata(bibtex: string): Map<string, CitationHoverMe
     const firstAuthor = firstAuthorName(entry.fields.author);
     const year = cleanBibtexText(entry.fields.year);
     const title = cleanBibtexText(entry.fields.title);
-    if (firstAuthor || year || title) {
+    const doiUrl = buildDoiResolverUrl(entry.fields.doi);
+    if (firstAuthor || year || title || doiUrl) {
       metadata.set(entry.citekey, {
         firstAuthor: firstAuthor || entry.citekey,
         year: year || "n.d.",
         title: title || "Untitled",
+        doiUrl,
       });
     }
   }
@@ -108,7 +111,10 @@ interface EditorAreaProps {
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
-  onDeepenAnalysis: (request: DeepenAnalysisRequest) => void;
+  onDeepenAnalysis: (
+    request: DeepenAnalysisRequest,
+    applyRevision: (protectedRevision: string) => string | null,
+  ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
   getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
   saveAllOpenDocuments?: () => Promise<void>;
@@ -818,7 +824,12 @@ export function EditorArea({
           onAccept={handleAIEditAccept}
           onDeepen={(snapshot) => {
             onDeepenAnalysis(
-              createDeepenAnalysisRequest(snapshot.selectedText, snapshot.documentContext),
+              createDeepenAnalysisRequest(
+                snapshot.selectedText,
+                snapshot.documentContext,
+                snapshot.protection,
+              ),
+              (protectedRevision) => handleAIEditAccept(snapshot, protectedRevision),
             );
             setAiEditSnapshot(null);
           }}

@@ -212,6 +212,7 @@ export interface AgentStreamParams {
   analysisMode?: "deepen" | "find-citation";
   deepenContext?: {
     selectedText: string;
+    protectedText: string;
     beforeSelection: string;
     afterSelection: string;
   };

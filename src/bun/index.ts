@@ -1,6 +1,7 @@
 import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils } from "electrobun/bun";
 import { watch, type FSWatcher } from "fs";
 import { join } from "path";
+import packageJson from "../../package.json";
 import { ollamaClient } from "./ollama/client";
 import { citationClient } from "./citation/client";
 import { BIBLIOGRAPHY_RELATIVE_PATH, fileSystem } from "./fs/manager";
@@ -108,7 +109,14 @@ async function main() {
 
   // ── Application Menu ───────────────────────────────────────────
   ApplicationMenu.setApplicationMenu([
-    { label: "ScholarPen", submenu: [{ label: "Quit ScholarPen", action: "quit", accelerator: "q" }] },
+    {
+      label: "ScholarPen",
+      submenu: [
+        { label: "About ScholarPen", action: "aboutScholarPen" },
+        { type: "separator" },
+        { label: "Quit ScholarPen", action: "quit", accelerator: "q" },
+      ],
+    },
     {
       label: "File",
       submenu: [
@@ -587,7 +595,19 @@ async function main() {
   // ── Menu action events ──────────────────────────────────────
   Electrobun.events.on("application-menu-clicked", (e) => {
     const action = e.data.action;
-    if (action === "save" || action === "newDocument" || action === "exportMarkdown" || action === "importMarkdown") {
+    if (action === "aboutScholarPen") {
+      void Utils.showMessageBox({
+        type: "info",
+        title: "About ScholarPen",
+        message: `ScholarPen ${packageJson.version}`,
+        detail: "Academic writing workspace\n\nAuthor: Anselm Jeong",
+        buttons: ["OK"],
+        defaultId: 0,
+        cancelId: 0,
+      }).catch((error) => {
+        console.error("[ScholarPen] Could not show the About window:", error);
+      });
+    } else if (action === "save" || action === "newDocument" || action === "exportMarkdown" || action === "importMarkdown") {
       win.webview.rpc?.send.menuAction({ action });
     } else if (action === "quit") {
       // Save first, then quit after a brief flush window

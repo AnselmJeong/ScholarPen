@@ -39,6 +39,8 @@ import {
 import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
 import {
   buildDeepenAnalysisMessage,
+  extractDeepenProtectedRevision,
+  formatDeepenAnalysisForDisplay,
   type DeepenAnalysisRequest,
 } from "../../ai/deepen-analysis";
 import {
@@ -61,6 +63,7 @@ interface AISidebarProps {
   width?: number;
   deepenRequest?: DeepenAnalysisRequest | null;
   onDeepenRequestConsumed?: (requestId: string) => void;
+  onDeepenResult?: (requestId: string, protectedRevision: string | null) => string | null;
   findCitationRequest?: FindCitationRequest | null;
   onFindCitationRequestConsumed?: (requestId: string) => void;
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
@@ -797,6 +800,7 @@ export function AISidebar({
   width,
   deepenRequest = null,
   onDeepenRequestConsumed,
+  onDeepenResult,
   findCitationRequest = null,
   onFindCitationRequestConsumed,
   onOpenProjectSource,
@@ -815,6 +819,10 @@ export function AISidebar({
   const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
+  const [deepenApplyNotice, setDeepenApplyNotice] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const modelKeyRef = useRef<string | null>(null);
   const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
   const findCitationRequestRef = useRef<FindCitationRequest | null>(null);
@@ -900,6 +908,7 @@ export function AISidebar({
     (request: DeepenAnalysisRequest) => {
       findCitationRequestRef.current = null;
       deepenRequestRef.current = request;
+      setDeepenApplyNotice(null);
       startNewThread();
       setPreparedDeepenRequestId(request.id);
     },
@@ -1012,6 +1021,7 @@ export function AISidebar({
           deepenContext: isDeepen && deepen
             ? {
                 selectedText: deepen.selectedText,
+                protectedText: deepen.protection.protectedText,
                 beforeSelection: deepen.documentContext.beforeSelection,
                 afterSelection: deepen.documentContext.afterSelection,
               }
@@ -1020,9 +1030,49 @@ export function AISidebar({
             ? { selectedText: findCitation.selectedText }
             : undefined,
           ignoreHistory: isPreparedRequest || !canReuseThread,
+          transformVisibleContent: isDeepen && deepen
+            ? (content: string) => formatDeepenAnalysisForDisplay(content, deepen.protection)
+            : undefined,
           onComplete: async (assistantMessage, status) => {
-            if (!projectPath || !runThread || !assistantMessage.trim()) return;
-            await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", assistantMessage, status, {
+            const visibleAssistantMessage = isDeepen && deepen
+              ? formatDeepenAnalysisForDisplay(assistantMessage, deepen.protection)
+              : assistantMessage;
+
+            if (isDeepen && deepen) {
+              if (status === "complete") {
+                try {
+                  const revision = extractDeepenProtectedRevision(
+                    assistantMessage,
+                    deepen.protection,
+                  );
+                  const applyError = onDeepenResult
+                    ? onDeepenResult(deepen.id, revision)
+                    : "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
+                  setDeepenApplyNotice(
+                    applyError
+                      ? { kind: "error", message: applyError }
+                      : { kind: "success", message: "통합 개선문을 선택 영역에 반영했습니다." },
+                  );
+                } catch (error) {
+                  onDeepenResult?.(deepen.id, null);
+                  setDeepenApplyNotice({
+                    kind: "error",
+                    message: error instanceof Error
+                      ? error.message
+                      : "Deepen 결과를 안전하게 적용하지 못해 문서를 변경하지 않았습니다.",
+                  });
+                }
+              } else {
+                onDeepenResult?.(deepen.id, null);
+                setDeepenApplyNotice({
+                  kind: "error",
+                  message: "Deepen 생성이 완료되지 않아 문서를 변경하지 않았습니다.",
+                });
+              }
+            }
+
+            if (!projectPath || !runThread || !visibleAssistantMessage.trim()) return;
+            await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", visibleAssistantMessage, status, {
               provider: activeProvider,
               model: activeModel,
               analysisMode,
@@ -1046,6 +1096,7 @@ export function AISidebar({
       projectSourcesEnabled,
       slashCommands,
       refreshThreads,
+      onDeepenResult,
     ],
   );
   const assistantRuntime = useLocalRuntime(assistantAdapter);
@@ -1144,6 +1195,20 @@ export function AISidebar({
         {!activeThreadUsesCurrentModel && (
           <div className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
             현재 선택된 model이 이 thread와 달라 다음 질문은 새 thread로 저장됩니다.
+          </div>
+        )}
+
+        {deepenApplyNotice && (
+          <div
+            role={deepenApplyNotice.kind === "error" ? "alert" : "status"}
+            className={cn(
+              "border-b px-3 py-2 text-xs",
+              deepenApplyNotice.kind === "error"
+                ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+            )}
+          >
+            {deepenApplyNotice.message}
           </div>
         )}
 

@@ -15,6 +15,7 @@ const STREAM_CHARS_PER_FLUSH = 18;
 type ScholarAgentRunConfig = Omit<AgentStreamParams, "message" | "history"> & {
   onComplete?: (assistantMessage: string, status: "complete" | "error" | "aborted") => Promise<void> | void;
   ignoreHistory?: boolean;
+  transformVisibleContent?: (assistantMessage: string) => string;
 };
 
 function textFromMessage(message: ThreadMessage): string {
@@ -60,7 +61,12 @@ export function createScholarAgentAdapter(
     async *run({ messages, abortSignal }) {
       const last = messages.at(-1);
       const message = last ? textFromMessage(last) : "";
-      const { onComplete, ignoreHistory, ...base } = await buildParams(messages, message);
+      const {
+        onComplete,
+        ignoreHistory,
+        transformVisibleContent = (content: string) => content,
+        ...base
+      } = await buildParams(messages, message);
       let received = "";
       let visible = "";
       let done = false;
@@ -117,7 +123,7 @@ export function createScholarAgentAdapter(
               remaining > 800 ? STREAM_CHARS_PER_FLUSH * 4 : STREAM_CHARS_PER_FLUSH,
             );
             visible = received.slice(0, visible.length + step);
-            yield { content: [{ type: "text", text: visible }] };
+            yield { content: [{ type: "text", text: transformVisibleContent(visible) }] };
             await new Promise((resolve) => setTimeout(resolve, STREAM_FLUSH_INTERVAL_MS));
             continue;
           }
@@ -145,7 +151,7 @@ export function createScholarAgentAdapter(
           }
         }
 
-        yield { content: [{ type: "text", text: received }] };
+        yield { content: [{ type: "text", text: transformVisibleContent(received) }] };
       } finally {
         off();
         const status = wasAborted ? "aborted" : streamFailed ? "error" : "complete";

@@ -47,7 +47,10 @@ interface EditorPaneGroupProps {
   onWordCountChange: (count: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   onBibtexSaved: () => void;
-  onDeepenAnalysis: (request: DeepenAnalysisRequest) => void;
+  onDeepenAnalysis: (
+    request: DeepenAnalysisRequest,
+    applyRevision: (protectedRevision: string) => string | null,
+  ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
 }
 

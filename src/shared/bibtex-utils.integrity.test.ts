@@ -1,11 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildBibtexAppendPlan,
+  buildDoiResolverUrl,
   parseBibtexEntries,
   partitionBibtexAdditions,
 } from "./bibtex-utils";
 
 describe("bibliography integrity", () => {
+  test("builds only HTTPS DOI resolver links from valid bibliography values", () => {
+    expect(buildDoiResolverUrl("https://doi.org/10.1038/NRN2787")).toBe(
+      "https://doi.org/10.1038/nrn2787",
+    );
+    expect(buildDoiResolverUrl("doi:10.1000/article?part=1")).toBe(
+      "https://doi.org/10.1000/article%3Fpart%3D1",
+    );
+    expect(buildDoiResolverUrl("javascript:alert(1)")).toBeNull();
+    expect(buildDoiResolverUrl(undefined)).toBeNull();
+  });
+
   test("refuses to append into an already malformed bibliography", () => {
     const malformed = `@article{broken, title={Missing closing brace}`;
     const addition = `@article{newEntry, title={New entry}, year={2025}}`;

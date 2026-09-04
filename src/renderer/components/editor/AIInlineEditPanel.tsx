@@ -318,7 +318,7 @@ export function AIInlineEditPanel({
                   <button
                     onClick={() => onDeepen(snapshot)}
                     className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-                    title="Open a new AI chat with a deep critique of the selection"
+                    title="Deeply review the selection and apply the integrated revision safely"
                   >
                     Deepen
                   </button>

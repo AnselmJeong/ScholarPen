@@ -1,10 +1,11 @@
 import type { ElectrobunConfig } from "electrobun";
+import packageJson from "./package.json";
 
 export default {
   app: {
     name: "ScholarPen",
     identifier: "dev.scholarpen.app",
-    version: "1.0.6",
+    version: packageJson.version,
   },
   build: {
     // Vite builds to dist/, Electrobun copies to views/
