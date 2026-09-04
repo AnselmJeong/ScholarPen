@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useState, useEffect, useCallback, useRef } from "react";
+import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { BookMarked, BookOpen, PenLine, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
@@ -21,7 +21,11 @@ import { scholarSchema } from "./blocks/schema";
 import { collectDocumentNodes, findBibliographyNode } from "./utils/document-tree";
 import type { OllamaStatus, ProjectInfo, FileNode, AppSettings } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
-import { buildQuartoBookConfig, collectQuartoChapterFilenames } from "../shared/quarto-config";
+import {
+  buildQuartoBookConfig,
+  collectQuartoChapterFilenames,
+  findQuartoConfigNode,
+} from "../shared/quarto-config";
 import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
@@ -51,6 +55,9 @@ export function App() {
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
   const [exportTargets, setExportTargets]             = useState<FileNode[]>([]);
   const [quartoBookDialogOpen, setQuartoBookDialogOpen] = useState(false);
+  const [quartoBookYaml, setQuartoBookYaml]           = useState<string | null>(null);
+  const [quartoBookLoading, setQuartoBookLoading]     = useState(false);
+  const [quartoBookLoadError, setQuartoBookLoadError] = useState<string | null>(null);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
@@ -70,6 +77,10 @@ export function App() {
   const pendingProjectFindReplaceRef = useRef(false);
   const deepenRevisionAppliersRef = useRef(
     new Map<string, (protectedRevision: string) => string | null>(),
+  );
+  const quartoChapterFilenames = useMemo(
+    () => collectQuartoChapterFilenames(fileTree),
+    [fileTree],
   );
 
   const handleDeepenResult = useCallback(
@@ -160,6 +171,8 @@ export function App() {
     setExportTargets([]);
     setExportDialogOpen(false);
     setQuartoBookDialogOpen(false);
+    setQuartoBookYaml(null);
+    setQuartoBookLoadError(null);
     try {
       const tree = await rpc.listProjectFiles(project.path);
       setFileTree(tree);
@@ -221,11 +234,27 @@ export function App() {
     }
   }, [activeProject, handleFileSelect]);
 
-  const handleOpenQuartoBookDialog = useCallback(() => {
+  const handleOpenQuartoBookDialog = useCallback(async () => {
     if (!activeProject) return;
     setQuartoBookDialogOpen(true);
-    void refreshFileTree();
-  }, [activeProject, refreshFileTree]);
+    setQuartoBookLoading(true);
+    setQuartoBookLoadError(null);
+    setQuartoBookYaml(null);
+    try {
+      const latestTree = await rpc.listProjectFiles(activeProject.path);
+      setFileTree(latestTree);
+      const configNode = findQuartoConfigNode(latestTree);
+      setQuartoBookYaml(configNode ? await rpc.readTextFile(configNode.path) : null);
+    } catch (loadError) {
+      setQuartoBookLoadError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not read the current _quarto.yml.",
+      );
+    } finally {
+      setQuartoBookLoading(false);
+    }
+  }, [activeProject]);
 
   const handleEditorReady = useCallback((editor: BlockNoteEditor<any, any, any> | null) => {
     editorRef.current = editor;
@@ -365,26 +394,47 @@ export function App() {
   const handleGenerateQuartoBook = useCallback(async ({
     title,
     authors,
+    cslFilename,
     cslFile,
+    qmdFilenames,
+    language,
+    outputDir,
+    bibliographyFiles,
+    existingYaml,
   }: QuartoBookSetup) => {
     if (!activeProject) throw new Error("Open a project first.");
 
     const latestTree = await rpc.listProjectFiles(activeProject.path);
-    const qmdFilenames = collectQuartoChapterFilenames(latestTree);
+    const currentConfigNode = findQuartoConfigNode(latestTree);
+    const currentYaml = currentConfigNode
+      ? await rpc.readTextFile(currentConfigNode.path)
+      : null;
+    if (currentYaml !== existingYaml) {
+      throw new Error(
+        "_quarto.yml changed outside this editor. Close and reopen the dialog to load the latest version.",
+      );
+    }
+
     const config = buildQuartoBookConfig({
       title,
       authors,
-      cslFilename: cslFile.name,
+      cslFilename,
       qmdFilenames,
+      language,
+      outputDir,
+      bibliographyFiles,
+      existingYaml,
     });
-    const cslContent = await cslFile.text();
 
-    await rpc.exportFile(activeProject.path, cslFile.name, cslContent);
+    if (cslFile) {
+      await rpc.exportFile(activeProject.path, cslFile.name, await cslFile.text());
+    }
     const configPath = await rpc.exportFile(
       activeProject.path,
       "_quarto.yml",
       config,
     );
+    setQuartoBookYaml(config);
     setFileTree(await rpc.listProjectFiles(activeProject.path));
     handleFileSelect({
       name: "_quarto.yml",
@@ -729,7 +779,10 @@ export function App() {
         key={activeProject?.path ?? "no-project"}
         open={quartoBookDialogOpen}
         onOpenChange={setQuartoBookDialogOpen}
-        qmdFilenames={collectQuartoChapterFilenames(fileTree)}
+        qmdFilenames={quartoChapterFilenames}
+        initialYaml={quartoBookYaml}
+        loading={quartoBookLoading}
+        loadError={quartoBookLoadError}
         onGenerate={handleGenerateQuartoBook}
       />
     </div>

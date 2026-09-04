@@ -4,6 +4,8 @@ import type { FileNode } from "./rpc-types";
 import {
   buildQuartoBookConfig,
   collectQuartoChapterFilenames,
+  findQuartoConfigNode,
+  parseQuartoBookConfig,
   sortQuartoChapterFilenames,
 } from "./quarto-config";
 
@@ -52,6 +54,13 @@ describe("Quarto book configuration", () => {
           isDirectory: false,
           lastModified: 0,
         },
+        {
+          name: "_quarto.yml",
+          path: "/project/exports/_quarto.yml",
+          kind: "unknown",
+          isDirectory: false,
+          lastModified: 0,
+        },
       ],
     }];
 
@@ -59,6 +68,43 @@ describe("Quarto book configuration", () => {
       "index.qmd",
       "03 results.qmd",
     ]);
+    expect(findQuartoConfigNode(nodes)?.path).toBe("/project/exports/_quarto.yml");
+  });
+
+  test("reads the current title, authors, CSL, bibliography, and chapter order", () => {
+    const yaml = `project:
+  type: book
+  output-dir: _book
+book:
+  title: Placebo Effects in Neuromodulation Therapies
+  author:
+    - Anselm Jeong
+  language: ko
+  chapters:
+    - index.qmd
+    - 03 History.qmd
+    - 02 Background.qmd
+bibliography: references.bib
+csl: schizophrenia_korean.csl
+format:
+  docx:
+    toc: false
+`;
+
+    expect(parseQuartoBookConfig(yaml, [
+      "index.qmd",
+      "02 Background.qmd",
+      "03 History.qmd",
+      "unused.qmd",
+    ])).toEqual({
+      title: "Placebo Effects in Neuromodulation Therapies",
+      authors: ["Anselm Jeong"],
+      cslFilename: "schizophrenia_korean.csl",
+      qmdFilenames: ["index.qmd", "03 History.qmd", "02 Background.qmd"],
+      language: "ko",
+      outputDir: "_book",
+      bibliographyFiles: ["references.bib"],
+    });
   });
 
   test("produces valid YAML with portable book resources", () => {
@@ -67,6 +113,9 @@ describe("Quarto book configuration", () => {
       authors: ["Ada Lovelace", "Alan Turing"],
       cslFilename: "journal-style.csl",
       qmdFilenames: ["10 conclusion.qmd", "index.qmd", "02 methods.qmd"],
+      language: "ko",
+      outputDir: "_book",
+      bibliographyFiles: ["references.bib"],
     });
     const parsed = parse(yaml);
 
@@ -75,7 +124,7 @@ describe("Quarto book configuration", () => {
       title: "A Title: With Punctuation",
       author: ["Ada Lovelace", "Alan Turing"],
       language: "ko",
-      chapters: ["index.qmd", "02 methods.qmd", "10 conclusion.qmd"],
+      chapters: ["10 conclusion.qmd", "index.qmd", "02 methods.qmd"],
     });
     expect(parsed.bibliography).toBe("references.bib");
     expect(parsed.csl).toBe("journal-style.csl");
@@ -83,6 +132,51 @@ describe("Quarto book configuration", () => {
       theme: "yeti",
       toc: false,
       "number-sections": false,
+    });
+  });
+
+  test("updates editable fields without discarding other Quarto options or comments", () => {
+    const existingYaml = `# Keep this project note
+project:
+  type: book
+  output-dir: old-book
+  preview:
+    port: 4321
+book:
+  title: Old title
+  author: Old author
+  chapters:
+    - index.qmd
+  cover-image: cover.png
+bibliography: references.bib
+csl: old.csl
+format:
+  docx:
+    toc: false
+  html:
+    theme: cosmo
+`;
+
+    const yaml = buildQuartoBookConfig({
+      title: "New title",
+      authors: ["First Author", "Second Author"],
+      cslFilename: "new.csl",
+      qmdFilenames: ["02 methods.qmd", "index.qmd"],
+      language: "en",
+      outputDir: "rendered-book",
+      bibliographyFiles: ["references.bib", "additional.bib"],
+      existingYaml,
+    });
+    const parsed = parse(yaml);
+
+    expect(yaml).toContain("# Keep this project note");
+    expect(parsed.project.preview).toEqual({ port: 4321 });
+    expect(parsed.book["cover-image"]).toBe("cover.png");
+    expect(parsed.book.chapters).toEqual(["02 methods.qmd", "index.qmd"]);
+    expect(parsed.bibliography).toEqual(["references.bib", "additional.bib"]);
+    expect(parsed.format).toEqual({
+      docx: { toc: false },
+      html: { theme: "cosmo" },
     });
   });
 });
