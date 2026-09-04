@@ -11,7 +11,11 @@ import { ExportDialog } from "./components/editor/ExportDialog";
 import { QuartoBookDialog, type QuartoBookSetup } from "./components/editor/QuartoBookDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
-import { blocksToScholarMarkdown, type ExportFormat } from "./blocks/markdown-serializer";
+import {
+  blocksToScholarMarkdown,
+  documentTitleFromFilename,
+  type ExportFormat,
+} from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import { scholarSchema } from "./blocks/schema";
 import { collectDocumentNodes, findBibliographyNode } from "./utils/document-tree";
@@ -396,7 +400,13 @@ export function App() {
         throw new Error(`Document "${target.name}" does not contain a valid block array.`);
       }
       const docName = target.name.replace(/\.scholarpen\.json$/, "");
-      const markdown = await blocksToScholarMarkdown(serializerEditor, blocks as any, format);
+      const title = documentTitleFromFilename(target.name);
+      const markdown = await blocksToScholarMarkdown(
+        serializerEditor,
+        blocks as any,
+        format,
+        title,
+      );
       await rpc.exportFile(activeProject.path, docName + ext, markdown);
     }
 
