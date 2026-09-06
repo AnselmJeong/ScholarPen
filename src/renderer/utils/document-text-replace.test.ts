@@ -30,14 +30,12 @@ const document = [
 ];
 
 describe("document text replacement", () => {
-  test("finds prose and human-readable figure metadata only", () => {
+  test("finds body prose only, excluding all figure metadata", () => {
     const matches = findDocumentTextMatches(document, "predictive processing");
 
-    expect(matches).toHaveLength(3);
+    expect(matches).toHaveLength(1);
     expect(matches.map((match) => match.path)).toEqual([
       [0, "content", 0, "text"],
-      [1, "props", "caption"],
-      [1, "props", "altText"],
     ]);
   });
 
@@ -45,7 +43,7 @@ describe("document text replacement", () => {
     const result = replaceDocumentText(document, "predictive processing", "active inference");
     const next = result.content as typeof document;
 
-    expect(result.replacementCount).toBe(3);
+    expect(result.replacementCount).toBe(1);
     expect(next[0].content[0]).toEqual({
       type: "text",
       text: "active inference and predictive coding.",
@@ -99,4 +97,42 @@ describe("document text replacement", () => {
       },
     ]);
   });
+});
+
+
+test("ignores embedded image data and metadata named text/content", () => {
+  const blocks = [{ type: "figure", props: { altText: "data:image/png;base64,CCKCCK", caption: "CCK", metadata: { text: "CCK", content: "CCK" } } },
+    { type: "paragraph", content: [{ type: "link", href: "https://CCK.test", content: [{ type: "text", text: "CCK" }] }], history: { content: "CCK" } }];
+  expect(findDocumentTextMatches(blocks, "cck")).toHaveLength(1);
+  expect(replaceDocumentText(blocks, "cck", "term").replacementCount).toBe(1);
+});
+
+test("finds and replaces across formatting and links without losing marks", () => {
+  const blocks = [{ type: "paragraph", content: [
+    { type: "text", text: "C", styles: { bold: true } },
+    { type: "link", href: "https://example.org", content: [{ type: "text", text: "CK C", styles: {} }] },
+    { type: "text", text: "CK", styles: { italic: true } },
+  ] }];
+  expect(findDocumentTextMatches(blocks, "cck")).toHaveLength(2);
+  expect(replaceDocumentText(blocks, "cck", "term").content).toEqual([{ type: "paragraph", content: [
+    { type: "text", text: "term", styles: { bold: true } },
+    { type: "link", href: "https://example.org", content: [{ type: "text", text: " term", styles: {} }] },
+    { type: "text", text: "", styles: { italic: true } },
+  ] }]);
+});
+
+test("keeps table cells and inline atoms separate and includes nested children", () => {
+  const blocks = [{ type: "table", content: { type: "tableContent", rows: [{ cells: [
+    [{ type: "text", text: "C" }], [{ type: "text", text: "CK" }],
+    { type: "tableCell", content: [{ type: "text", text: "CCK" }] },
+  ] }] } }, { type: "paragraph", content: [
+    { type: "text", text: "C" }, { type: "citation", props: { citekey: "x" } }, { type: "text", text: "CK" },
+  ], children: [{ type: "paragraph", content: "CCK" }] }];
+  expect(findDocumentTextMatches(blocks, "cck")).toHaveLength(2);
+});
+
+test("preserves UTF-16 offsets and treats regex punctuation literally", () => {
+  const blocks = [{ type: "paragraph", content: "İ CCK [CCK]" }];
+  expect(findDocumentTextMatches(blocks, "CCK")[0].offset).toBe(2);
+  expect(replaceDocumentText(blocks, "[CCK]", "term").content).toEqual([{ type: "paragraph", content: "İ CCK term" }]);
 });

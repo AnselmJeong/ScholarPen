@@ -1,4 +1,4 @@
-import { chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
+import { realpath, chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
@@ -264,6 +264,25 @@ class FileSystemManager {
     return filename;
   }
 
+  private async documentFilePath(projectPath: string, filename: string): Promise<string> {
+    const parts = filename.split("/");
+    for (const part of parts) this.safeFilename(part);
+    this.safeFilename(parts.at(-1)!, ".scholarpen.json");
+    const docsDir = join(projectPath, "documents");
+    const canonicalDocs = join(await realpath(projectPath), "documents");
+    if (await realpath(docsDir) !== canonicalDocs) throw new Error("Invalid documents directory.");
+    const filePath = join(docsDir, filename);
+    const parent = await realpath(dirname(filePath));
+    const inside = (path: string) => path === canonicalDocs || path.startsWith(canonicalDocs + "/");
+    if (!inside(parent)) throw new Error("Document path is outside the documents folder.");
+    try {
+      if (!inside(await realpath(filePath))) throw new Error("Document path is outside the documents folder.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return filePath;
+  }
+
   private assertValidBibtex(bibtex: string): void {
     const issue = parseBibtexEntries(bibtex).issues[0];
     if (issue) {
@@ -398,10 +417,9 @@ class FileSystemManager {
 
   async saveDocument(projectPath: string, filename: string, content: unknown): Promise<void> {
     projectPath = await this.assertKnownProjectPath(projectPath);
-    filename = this.safeFilename(filename, ".scholarpen.json");
     const docsDir = join(projectPath, "documents");
     await mkdir(docsDir, { recursive: true });
-    const filePath = join(docsDir, filename);
+    const filePath = await this.documentFilePath(projectPath, filename);
     await writeFile(filePath, JSON.stringify(content, null, 2));
   }
 
@@ -414,14 +432,13 @@ class FileSystemManager {
 
     const docsDir = join(projectPath, "documents");
     await mkdir(docsDir, { recursive: true });
-    const prepared = documents.map(({ filename, content }) => {
-      const safeFilename = this.safeFilename(filename, ".scholarpen.json");
+    const prepared = await Promise.all(documents.map(async ({ filename, content }) => {
       return {
-        filename: safeFilename,
-        filePath: join(docsDir, safeFilename),
+        filename,
+        filePath: await this.documentFilePath(projectPath, filename),
         serialized: JSON.stringify(content, null, 2),
       };
-    });
+    }));
     if (new Set(prepared.map((item) => item.filename)).size !== prepared.length) {
       throw new Error("Batch document save contains duplicate filenames.");
     }
@@ -435,6 +452,7 @@ class FileSystemManager {
     const backupDir = join(projectPath, ".scholarpen", "backups", `documents-${backupStamp}`);
     await mkdir(backupDir, { recursive: true });
     for (const item of prepared) {
+      await mkdir(dirname(join(backupDir, item.filename)), { recursive: true });
       await writeFile(
         join(backupDir, item.filename),
         originals.get(item.filePath)!,
@@ -458,8 +476,7 @@ class FileSystemManager {
 
   async loadDocument(projectPath: string, filename: string): Promise<unknown> {
     projectPath = await this.assertKnownProjectPath(projectPath);
-    filename = this.safeFilename(filename, ".scholarpen.json");
-    const filePath = join(projectPath, "documents", filename);
+    const filePath = await this.documentFilePath(projectPath, filename);
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw);
   }

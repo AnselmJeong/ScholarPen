@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
-import type { Node as PMNode } from "prosemirror-model";
+import { findEditorTextMatches as findAllMatches, type EditorTextMatch as Match, type DocumentFindRequest } from "../../utils/editor-text-find";
 import type { BlockNoteEditor } from "@blocknote/core";
 import {
   X,
@@ -15,7 +15,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { rpc } from "../../rpc";
-import { collectDocumentNodes } from "../../utils/document-tree";
+import { collectSearchDocumentNodes, documentRelativeFilename } from "../../utils/document-tree";
 import {
   findDocumentTextMatches,
   replaceDocumentText,
@@ -23,11 +23,6 @@ import {
 } from "../../utils/document-text-replace";
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-interface Match {
-  from: number;
-  to: number;
-}
 
 type FindScope = "document" | "project";
 
@@ -54,24 +49,9 @@ interface FindReplacePanelProps {
   documentFilename: string;
   getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
   saveAllOpenDocuments?: () => Promise<void>;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function findAllMatches(doc: PMNode, term: string): Match[] {
-  if (!term) return [];
-  const results: Match[] = [];
-  const lower = term.toLowerCase();
-  doc.descendants((node, pos) => {
-    if (!node.isText || !node.text) return;
-    const text = node.text.toLowerCase();
-    let i = 0;
-    while ((i = text.indexOf(lower, i)) !== -1) {
-      results.push({ from: pos + i, to: pos + i + term.length });
-      i += term.length;
-    }
-  });
-  return results;
+  navigationRequest?: DocumentFindRequest;
+  onNavigateToDocument: (request: DocumentFindRequest) => void;
+  documentReady: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -87,6 +67,9 @@ export function FindReplacePanel({
   documentFilename,
   getOpenDocumentSnapshots,
   saveAllOpenDocuments,
+  navigationRequest,
+  onNavigateToDocument,
+  documentReady,
 }: FindReplacePanelProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [replaceTerm, setReplaceTerm] = useState("");
@@ -108,6 +91,8 @@ export function FindReplacePanel({
   matchesRef.current = matches;
   currentIdxRef.current = currentIdx;
 
+  const pendingNavigationRef = useRef<DocumentFindRequest | undefined>(undefined);
+  const [documentRevision, setDocumentRevision] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
   const projectSearchSeqRef = useRef(0);
   const selectedProjectMatchRef = useRef<HTMLButtonElement>(null);
@@ -163,23 +148,23 @@ export function FindReplacePanel({
     preferOpenSnapshots: boolean,
   ): Promise<ProjectDocument[]> => {
     const tree = await rpc.listProjectFiles(projectPath);
-    const documentsFolder = tree.find(
-      (node) => node.isDirectory && node.name === "documents",
-    );
-    const documentNodes = documentsFolder
-      ? collectDocumentNodes([documentsFolder])
-      : [];
+    const documentNodes = collectSearchDocumentNodes(tree, projectPath);
     const openSnapshots = preferOpenSnapshots
       ? getOpenDocumentSnapshots?.() ?? new Map<string, unknown[]>()
       : new Map<string, unknown[]>();
 
+    // The initiating editor is always authoritative, even if parent registration
+    // has not caught up yet. Never replace a populated file with a loading editor.
+    if (preferOpenSnapshots && documentReady) {
+      openSnapshots.set(`${projectPath}/documents/${documentFilename}`, editor.document);
+    }
     return Promise.all(documentNodes.map(async (node) => ({
       filePath: node.path,
-      filename: node.name,
+      filename: documentRelativeFilename(projectPath, node.path),
       content: openSnapshots.get(node.path)
-        ?? await rpc.loadDocument(projectPath, node.name),
+        ?? await rpc.loadDocument(projectPath, documentRelativeFilename(projectPath, node.path)),
     })));
-  }, [getOpenDocumentSnapshots, projectPath]);
+  }, [getOpenDocumentSnapshots, projectPath, documentFilename, documentReady, editor]);
 
   const scanProject = useCallback(async (
     preferOpenSnapshots = true,
@@ -208,7 +193,11 @@ export function FindReplacePanel({
       );
       if (requestSeq !== projectSearchSeqRef.current) return;
       setProjectMatches(found);
-      setProjectIdx((current) => Math.max(0, Math.min(current, found.length - 1)));
+      const target = pendingNavigationRef.current;
+      const targetIndex = target ? found.findIndex((match) =>
+        match.filePath === target.filePath && match.documentMatchIndex === target.matchIndex) : -1;
+      setProjectIdx((current) => targetIndex >= 0 ? targetIndex : Math.max(0, Math.min(current, found.length - 1)));
+      pendingNavigationRef.current = undefined;
     } catch (error) {
       if (requestSeq !== projectSearchSeqRef.current) return;
       setProjectMatches([]);
@@ -220,6 +209,18 @@ export function FindReplacePanel({
       if (requestSeq === projectSearchSeqRef.current) setProjectLoading(false);
     }
   }, [loadProjectDocuments, searchTerm]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    return editor.onChange(() => setDocumentRevision((value) => value + 1));
+  }, [editor, isOpen]);
+
+  useEffect(() => {
+    if (!navigationRequest || !documentReady || !isOpen) return;
+    pendingNavigationRef.current = navigationRequest;
+    setSearchTerm(navigationRequest.searchTerm);
+    setScope(navigationRequest.scope);
+  }, [navigationRequest, documentReady, isOpen]);
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -258,7 +259,7 @@ export function FindReplacePanel({
   }, [initialScope, isOpen, showReplaceInitially]);
 
   // Cleanup decorations if the component ever unmounts
-  useEffect(() => () => clearDecorations(), []);
+  useEffect(() => () => clearDecorations(), [clearDecorations]);
 
   // ── Navigate to a match ────────────────────────────────────────────────────
   // Move the cursor (NOT a text selection) to the match start and scroll to it.
@@ -300,25 +301,31 @@ export function FindReplacePanel({
     }
     const view = getView();
     if (!view) return;
+    if (!documentReady) return;
+    const pending = pendingNavigationRef.current;
+    if (pending && (pending.scope !== scope || pending.searchTerm !== searchTerm)) return;
     const found = findAllMatches(view.state.doc, searchTerm);
+    const target = pendingNavigationRef.current;
+    const idx = Math.max(0, Math.min(target?.matchIndex ?? currentIdxRef.current, found.length - 1));
     setMatches(found);
-    setCurrentIdx(0);
-    if (found.length > 0) {
-      goToMatch(0, found);
-    } else {
-      clearDecorations();
-    }
-  }, [searchTerm, isOpen, scope]);
+    setCurrentIdx(idx);
+    if (found.length > 0) goToMatch(idx, found);
+    else clearDecorations();
+    pendingNavigationRef.current = undefined;
+  }, [searchTerm, isOpen, scope, documentReady, documentRevision, navigationRequest, getView, goToMatch, clearDecorations]);
 
   useEffect(() => {
-    if (!isOpen || scope !== "project") return;
+    if (!isOpen || scope !== "project" || !documentReady) return;
     clearDecorations();
     setConfirmReplaceAll(false);
     const timer = setTimeout(() => {
       void scanProject(true);
     }, 220);
-    return () => clearTimeout(timer);
-  }, [isOpen, scope, searchTerm, scanProject, clearDecorations]);
+    return () => {
+      clearTimeout(timer);
+      projectSearchSeqRef.current += 1;
+    };
+  }, [isOpen, scope, searchTerm, scanProject, clearDecorations, documentReady, documentRevision]);
 
   useEffect(() => {
     if (scope !== "project") return;
@@ -341,14 +348,37 @@ export function FindReplacePanel({
     goToMatch(prev, matches);
   }, [currentIdx, matches, goToMatch]);
 
+  const navigateProjectMatch = useCallback((index: number) => {
+    const match = projectMatches[index];
+    if (!match) return;
+    setProjectIdx(index);
+    if (match.filename === documentFilename) {
+      const view = getView();
+      if (view) goToMatch(match.documentMatchIndex, findAllMatches(view.state.doc, searchTerm));
+    } else {
+      onNavigateToDocument({
+        id: crypto.randomUUID(), filePath: match.filePath, filename: match.filename,
+        searchTerm, matchIndex: match.documentMatchIndex, scope: "project",
+      });
+    }
+  }, [projectMatches, documentFilename, getView, goToMatch, searchTerm, onNavigateToDocument]);
+
+  useEffect(() => {
+    if (!isOpen || !documentReady || scope !== "project" || !navigationRequest) return;
+    const view = getView();
+    if (view && searchTerm === navigationRequest.searchTerm) {
+      goToMatch(navigationRequest.matchIndex, findAllMatches(view.state.doc, searchTerm));
+    }
+  }, [navigationRequest, isOpen, documentReady, scope, searchTerm, getView, goToMatch, projectMatches]);
+
   const goNextActive = useCallback(() => {
     if (scope === "document") {
       goNext();
       return;
     }
     if (projectMatches.length === 0) return;
-    setProjectIdx((current) => (current + 1) % projectMatches.length);
-  }, [goNext, projectMatches.length, scope]);
+    navigateProjectMatch((projectIdx + 1) % projectMatches.length);
+  }, [goNext, projectMatches.length, projectIdx, navigateProjectMatch, scope]);
 
   const goPrevActive = useCallback(() => {
     if (scope === "document") {
@@ -356,8 +386,8 @@ export function FindReplacePanel({
       return;
     }
     if (projectMatches.length === 0) return;
-    setProjectIdx((current) => (current - 1 + projectMatches.length) % projectMatches.length);
-  }, [goPrev, projectMatches.length, scope]);
+    navigateProjectMatch((projectIdx - 1 + projectMatches.length) % projectMatches.length);
+  }, [goPrev, projectMatches.length, projectIdx, navigateProjectMatch, scope]);
 
   // ── Replace ───────────────────────────────────────────────────────────────
 
@@ -694,11 +724,29 @@ export function FindReplacePanel({
         </div>
       )}
 
+      {scope === "document" && searchTerm && (
+        <div style={{ maxHeight: 236, overflowY: "auto", overflowX: "hidden" }}>
+          {matches.map((match, index) => (
+            <button
+              key={`${match.from}:${match.to}`}
+              type="button"
+              onClick={() => { setCurrentIdx(index); goToMatch(index, matches); }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px",
+                fontSize: 11, whiteSpace: "pre-wrap", overflowWrap: "anywhere",
+                background: index === currentIdx ? "hsl(var(--primary) / 0.09)" : "transparent" }}
+            >
+              {highlightSnippet(match.snippet, searchTerm, match.snippetOffset)}
+            </button>
+          ))}
+        </div>
+      )}
+
       {scope === "project" && searchTerm && (
         <div
           style={{
             maxHeight: 236,
             overflowY: "auto",
+            overflowX: "hidden",
             border: "1px solid hsl(var(--border))",
             borderRadius: 6,
             background: "hsl(var(--muted) / 0.24)",
@@ -746,10 +794,7 @@ export function FindReplacePanel({
                       key={`${match.filePath}:${match.documentMatchIndex}`}
                       ref={selected ? selectedProjectMatchRef : undefined}
                       type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        setProjectIdx(match.globalIndex);
-                      }}
+                      onClick={() => navigateProjectMatch(match.globalIndex)}
                       style={{
                         display: "block",
                         width: "100%",
@@ -765,6 +810,7 @@ export function FindReplacePanel({
                         fontSize: 11,
                         lineHeight: 1.45,
                         whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
                       }}
                     >
                       {highlightSnippet(match.snippet, searchTerm, match.snippetOffset)}

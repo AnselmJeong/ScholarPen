@@ -31,7 +31,7 @@ export const figureBlock = createReactBlockSpec(
       };
 
       const commitUrl = (val: string) => {
-        editor.updateBlock(block, { props: { url: val, altText: val } });
+        editor.updateBlock(block, { props: { url: val } });
         setEditingUrl(false);
       };
 

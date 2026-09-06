@@ -1,7 +1,7 @@
 {
   "name": "scholarpen",
   "type": "module",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "description": "AI-Assisted Academic Article Writer for macOS",
   "private": true,
   "scripts": {

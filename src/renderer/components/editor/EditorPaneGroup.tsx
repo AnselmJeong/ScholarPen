@@ -1,3 +1,5 @@
+import type { DocumentFindRequest } from "../../utils/editor-text-find";
+import { documentRelativeFilename } from "../../utils/document-tree";
 import React, {
   useState,
   useRef,
@@ -86,6 +88,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const [leftPane, setLeftPane] = useState<PaneState>({ tabs: [], activeTabId: null });
     const [rightPane, setRightPane] = useState<PaneState | null>(null);
     const [focusedPane, setFocusedPane] = useState<PaneId>("left");
+    const [findRequests, setFindRequests] = useState<Record<string, DocumentFindRequest>>({});
     const [splitRatio, setSplitRatio] = useState(50);
 
     // Drag-to-split state
@@ -164,6 +167,27 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         Promise.resolve((editor as any).__scholarpenSaveNow?.())
       );
       await Promise.all(saveOperations);
+    }, []);
+
+    const navigateToDocumentMatch = useCallback((request: DocumentFindRequest) => {
+      const panes = [["left", leftPaneRef.current], ["right", rightPaneRef.current]] as const;
+      const existing = panes.flatMap(([paneId, pane]) =>
+        (pane?.tabs ?? []).filter((tab) => tab.file.path === request.filePath)
+          .map((tab) => ({ paneId, tab })))[0];
+      const paneId = existing?.paneId ?? (rightPaneRef.current ? focusedPaneRef.current : "left");
+      const tab = existing?.tab ?? {
+        id: crypto.randomUUID(),
+        file: { path: request.filePath, name: request.filename.split("/").at(-1)!,
+          kind: "document" as const, isDirectory: false, lastModified: 0 },
+      };
+      setFindRequests((current) => ({ ...current, [tab.id]: request }));
+      const activate = (pane: PaneState): PaneState => ({
+        tabs: pane.tabs.some((candidate) => candidate.id === tab.id) ? pane.tabs : [...pane.tabs, tab],
+        activeTabId: tab.id,
+      });
+      if (paneId === "left") setLeftPane(activate);
+      else setRightPane((pane) => pane ? activate(pane) : pane);
+      setFocusedPane(paneId);
     }, []);
 
     // ── Imperative handle ───────────────────────────────────────────────────
@@ -501,7 +525,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                     {tab.file.kind === "document" ? (
                       <EditorArea
                         project={project}
-                        documentFilename={tab.file.name}
+                        documentFilename={project ? documentRelativeFilename(project.path, tab.file.path) : tab.file.name}
                         ollamaStatus={ollamaStatus}
                         initialScrollTop={scrollPositionMapRef.current.get(tab.id) ?? 0}
                         reloadTrigger={reloadTrigger}
@@ -527,6 +551,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         onFindCitation={onFindCitation}
                         getOpenDocumentSnapshots={getOpenDocumentSnapshots}
                         saveAllOpenDocuments={saveAllOpenDocuments}
+                        navigationRequest={findRequests[tab.id]}
+                        onNavigateToDocument={navigateToDocumentMatch}
                       />
                     ) : (
                       <FileViewer

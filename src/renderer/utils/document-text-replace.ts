@@ -4,6 +4,7 @@ export interface DocumentTextMatch {
   path: TextPath;
   offset: number;
   length: number;
+  segments: Array<{ path: TextPath; offset: number; length: number }>;
   snippet: string;
   snippetOffset: number;
 }
@@ -18,46 +19,70 @@ interface TextLeaf {
   value: string;
 }
 
-const SEARCHABLE_PROP_KEYS = new Set(["caption", "altText"]);
+interface TextRun { leaves: TextLeaf[] }
 
-function isSearchableString(path: TextPath, key: string): boolean {
-  if (key === "text" || key === "content") return true;
-  return path.at(-1) === "props" && SEARCHABLE_PROP_KEYS.has(key);
-}
-
-function collectTextLeaves(value: unknown, path: TextPath = []): TextLeaf[] {
-  if (Array.isArray(value)) {
-    return value.flatMap((item, index) => collectTextLeaves(item, [...path, index]));
-  }
-  if (!value || typeof value !== "object") return [];
-
-  return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => {
-    const childPath = [...path, key];
-    if (typeof child === "string") {
-      return isSearchableString(path, key) ? [{ path: childPath, value: child }] : [];
+// Only traverse the document body schema. Never recurse into arbitrary props,
+// URLs, image data, citation identifiers, history or other metadata.
+function collectTextRuns(content: unknown): TextRun[] {
+  const runs: TextRun[] = [];
+  function inline(value: unknown, path: TextPath, run: TextRun) {
+    if (typeof value === "string") {
+      run.leaves.push({ path, value });
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => inline(item, [...path, index], run));
+    } else if (value && typeof value === "object") {
+      const item = value as Record<string, unknown>;
+      if (item.type === "text" && typeof item.text === "string") {
+        run.leaves.push({ path: [...path, "text"], value: item.text });
+      } else if (item.type === "link") {
+        inline(item.content, [...path, "content"], run);
+      } else {
+        // An inline atom (citation, footnote, math) separates prose runs.
+        runs.push({ leaves: run.leaves });
+        run.leaves = [];
+      }
     }
-    return collectTextLeaves(child, childPath);
-  });
-}
-
-function occurrenceOffsets(value: string, searchTerm: string): number[] {
-  if (!searchTerm) return [];
-  const offsets: number[] = [];
-  const haystack = value.toLocaleLowerCase();
-  const needle = searchTerm.toLocaleLowerCase();
-  let cursor = 0;
-
-  while (cursor <= haystack.length - needle.length) {
-    const offset = haystack.indexOf(needle, cursor);
-    if (offset === -1) break;
-    offsets.push(offset);
-    cursor = offset + searchTerm.length;
   }
-
-  return offsets;
+  function body(value: unknown, path: TextPath) {
+    const run: TextRun = { leaves: [] };
+    inline(value, path, run);
+    runs.push(run);
+  }
+  function blocks(value: unknown, path: TextPath) {
+    if (!Array.isArray(value)) return;
+    value.forEach((value, index) => {
+      if (!value || typeof value !== "object") return;
+      const block = value as Record<string, unknown>;
+      const blockPath = [...path, index];
+      const content = block.content as Record<string, unknown> | undefined;
+      if (content && content.type === "tableContent" && Array.isArray(content.rows)) {
+        content.rows.forEach((row, r) => {
+          if (!Array.isArray(row.cells)) return;
+          row.cells.forEach((cell: unknown, c: number) => {
+            const cellPath = [...blockPath, "content", "rows", r, "cells", c];
+            // BlockNote supports both legacy inline arrays and tableCell objects.
+            if (cell && typeof cell === "object" && !Array.isArray(cell)) {
+              body((cell as Record<string, unknown>).content, [...cellPath, "content"]);
+            } else body(cell, cellPath);
+          });
+        });
+      } else body(block.content, [...blockPath, "content"]);
+      blocks(block.children, [...blockPath, "children"]);
+    });
+  }
+  blocks(content, []);
+  return runs.filter((run) => run.leaves.length > 0);
 }
 
-function buildSnippet(
+export function occurrenceOffsets(value: string, searchTerm: string): number[] {
+  if (!searchTerm) return [];
+  // Regex preserves offsets in the original UTF-16 string even when case
+  // folding changes length (for example capital dotted I before a match).
+  const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return Array.from(value.matchAll(new RegExp(escaped, "giu")), (match) => match.index!);
+}
+
+export function buildSnippet(
   value: string,
   offset: number,
   length: number,
@@ -103,17 +128,26 @@ export function findDocumentTextMatches(
 ): DocumentTextMatch[] {
   if (!searchTerm) return [];
 
-  return collectTextLeaves(content).flatMap((leaf) =>
-    occurrenceOffsets(leaf.value, searchTerm).map((offset) => {
-      const preview = buildSnippet(leaf.value, offset, searchTerm.length);
+  return collectTextRuns(content).flatMap((run) => {
+    const value = run.leaves.map((leaf) => leaf.value).join("");
+    return occurrenceOffsets(value, searchTerm).map((offset) => {
+      let cursor = 0;
+      const segments = run.leaves.flatMap((leaf) => {
+        const start = Math.max(offset, cursor);
+        const end = Math.min(offset + searchTerm.length, cursor + leaf.value.length);
+        const segment = { path: leaf.path, offset: start - cursor, length: end - start };
+        cursor += leaf.value.length;
+        return end > start ? [segment] : [];
+      });
       return {
-        path: leaf.path,
-        offset,
+        path: segments[0].path,
+        offset: segments[0].offset,
         length: searchTerm.length,
-        ...preview,
+        segments,
+        ...buildSnippet(value, offset, searchTerm.length),
       };
-    }),
-  );
+    });
+  });
 }
 
 export function replaceDocumentText(
@@ -134,19 +168,21 @@ export function replaceDocumentText(
   }
 
   const next = cloneJson(content);
-  const matchesByPath = new Map<string, DocumentTextMatch[]>();
+  const matchesByPath = new Map<string, Array<{ path: TextPath; offset: number; length: number; replacement: string }>>();
   for (const match of selectedMatches) {
-    const key = JSON.stringify(match.path);
-    const group = matchesByPath.get(key) ?? [];
-    group.push(match);
-    matchesByPath.set(key, group);
+    match.segments.forEach((segment, index) => {
+      const key = JSON.stringify(segment.path);
+      const group = matchesByPath.get(key) ?? [];
+      group.push({ ...segment, replacement: index === 0 ? replacement : "" });
+      matchesByPath.set(key, group);
+    });
   }
 
   for (const group of matchesByPath.values()) {
     const path = group[0].path;
     let value = getStringAtPath(next, path);
     for (const match of [...group].sort((a, b) => b.offset - a.offset)) {
-      value = value.slice(0, match.offset) + replacement + value.slice(match.offset + match.length);
+      value = value.slice(0, match.offset) + match.replacement + value.slice(match.offset + match.length);
     }
     setStringAtPath(next, path, value);
   }

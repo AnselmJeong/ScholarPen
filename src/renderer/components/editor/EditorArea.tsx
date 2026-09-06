@@ -1,3 +1,4 @@
+import type { DocumentFindRequest } from "../../utils/editor-text-find";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildDoiResolverUrl,
@@ -118,6 +119,8 @@ interface EditorAreaProps {
   onFindCitation: (request: FindCitationRequest) => void;
   getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
   saveAllOpenDocuments?: () => Promise<void>;
+  navigationRequest?: DocumentFindRequest;
+  onNavigateToDocument: (request: DocumentFindRequest) => void;
   reloadTrigger?: number;
   bibReloadTrigger?: number;
 }
@@ -186,6 +189,8 @@ export function EditorArea({
   onFindCitation,
   getOpenDocumentSnapshots,
   saveAllOpenDocuments,
+  navigationRequest,
+  onNavigateToDocument,
   reloadTrigger,
   bibReloadTrigger,
 }: EditorAreaProps) {
@@ -220,9 +225,15 @@ export function EditorArea({
   const [doiDialogOpen, setDoiDialogOpen] = useState(false);
   const [doiLoading, setDoiLoading] = useState(false);
   const [doiError, setDoiError] = useState<string | null>(null);
+  const [documentReady, setDocumentReady] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
   const [findScope, setFindScope] = useState<"document" | "project">("document");
+  useEffect(() => {
+    if (!navigationRequest || !documentReady) return;
+    setFindScope(navigationRequest.scope);
+    setFindOpen(true);
+  }, [navigationRequest, documentReady]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasRestoredScrollRef = useRef(false);
   const initialScrollTopRef = useRef(initialScrollTop);
@@ -271,9 +282,10 @@ export function EditorArea({
 
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
+    if (!documentReady) return;
     onEditorReady(editor);
     return () => onEditorReady(null);
-  }, [editor]);
+  }, [editor, documentReady]);
 
   // Hot-swap the AIExtension transport whenever Ollama status changes.
   useEffect(() => {
@@ -325,6 +337,7 @@ export function EditorArea({
   useEffect(() => {
     hasRestoredScrollRef.current = false;
     if (!project) return;
+    setDocumentReady(false);
     const loadSeq = ++loadRequestSeqRef.current;
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -350,6 +363,10 @@ export function EditorArea({
           onWordCountChangeRef.current(count);
         });
         restoreScrollPosition();
+        // Scroll restoration uses two frames; navigation must run afterwards.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (loadSeq === loadRequestSeqRef.current) setDocumentReady(true);
+        }));
       })
       .catch(console.error);
   }, [project?.path, documentFilename, editor, reloadTrigger, replaceDocumentWithoutSaving, restoreScrollPosition, updateSaveStatus]);
@@ -805,6 +822,9 @@ export function EditorArea({
         documentFilename={documentFilename || "manuscript.scholarpen.json"}
         getOpenDocumentSnapshots={getOpenDocumentSnapshots}
         saveAllOpenDocuments={saveAllOpenDocuments}
+        navigationRequest={navigationRequest}
+        onNavigateToDocument={onNavigateToDocument}
+        documentReady={documentReady}
       />
 
       {/* DOI input dialog */}

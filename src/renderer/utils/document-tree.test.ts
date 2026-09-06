@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { FileNode } from "@shared/rpc-types";
-import { findBibliographyNode } from "./document-tree";
+import { findBibliographyNode, collectSearchDocumentNodes, documentRelativeFilename } from "./document-tree";
 
 describe("document tree", () => {
   test("finds the canonical bibliography inside the exports folder", () => {
@@ -79,4 +79,17 @@ describe("document tree", () => {
   test("returns null when references.bib is absent", () => {
     expect(findBibliographyNode([])).toBeNull();
   });
+});
+
+
+test("searches native documents only inside documents, retaining nested paths", () => {
+  const file = (path: string): FileNode => ({ name: path.split("/").at(-1)!, path, kind: "document", isDirectory: false, lastModified: 0 });
+  const nested = file("/project/documents/chapter/a.scholarpen.json");
+  const root = file("/project/documents/a.scholarpen.json");
+  const folder = (path: string, children: FileNode[]): FileNode => ({ ...file(path), isDirectory: true, children });
+  const tree = [folder("/project/documents", [root, file("/project/documents/a.json"),
+    folder("/project/documents/chapter", [nested]), file("/project/documents/../drafts/a.scholarpen.json")]),
+    folder("/project/drafts", [file("/project/drafts/a.scholarpen.json")])];
+  expect(collectSearchDocumentNodes(tree, "/project")).toEqual([root, nested]);
+  expect(documentRelativeFilename("/project", nested.path)).toBe("chapter/a.scholarpen.json");
 });

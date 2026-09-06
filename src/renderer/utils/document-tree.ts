@@ -24,3 +24,20 @@ export function findBibliographyNode(nodes: FileNode[]): FileNode | null {
       && node.name.toLowerCase() === "references.bib",
   ) ?? null;
 }
+
+/** Exact search boundary: only native documents beneath the project documents folder. */
+export function collectSearchDocumentNodes(nodes: FileNode[], projectPath: string): FileNode[] {
+  const prefix = `${projectPath.replace(/\/$/, "")}/documents/`;
+  const folder = nodes.find((node) => node.isDirectory && node.path === prefix.slice(0, -1));
+  if (!folder) return [];
+  return collectDocumentNodes([folder]).filter((node) => {
+    const relative = node.path.slice(prefix.length);
+    return node.path.startsWith(prefix)
+      && relative.endsWith(".scholarpen.json")
+      && relative.split("/").every((part) => part && part !== "." && part !== "..");
+  });
+}
+
+export function documentRelativeFilename(projectPath: string, filePath: string): string {
+  return filePath.slice(`${projectPath.replace(/\/$/, "")}/documents/`.length);
+}

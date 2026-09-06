@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  symlink,
   mkdir,
   mkdtemp,
   readFile,
@@ -52,4 +53,29 @@ describe("batch document save", () => {
     expect(await readFile(join(backupPath, "02-b.scholarpen.json"), "utf-8"))
       .toBe('["before-b"]');
   });
+});
+
+
+test("nested documents load, save, and back up by relative path without touching namesakes", async () => {
+  const project = await mkdtemp(join(tmpdir(), "scholarpen-nested-find-"));
+  temporaryProjects.push(project);
+  await mkdir(join(project, "documents", "chapter"), { recursive: true });
+  await writeFile(join(project, "documents", "a.scholarpen.json"), '["root"]');
+  await writeFile(join(project, "documents", "chapter", "a.scholarpen.json"), '["nested"]');
+  await fileSystem.openProjectByPath(project);
+  expect(await fileSystem.loadDocument(project, "chapter/a.scholarpen.json")).toEqual(["nested"]);
+  await fileSystem.saveDocument(project, "chapter/a.scholarpen.json", ["edited"]);
+  await fileSystem.saveDocuments(project, [{ filename: "chapter/a.scholarpen.json", content: ["replaced"] }]);
+  expect(await fileSystem.loadDocument(project, "chapter/a.scholarpen.json")).toEqual(["replaced"]);
+  expect(await fileSystem.loadDocument(project, "a.scholarpen.json")).toEqual(["root"]);
+  const backups = join(project, ".scholarpen", "backups");
+  const [backup] = await readdir(backups);
+  expect(JSON.parse(await readFile(join(backups, backup, "chapter", "a.scholarpen.json"), "utf8"))).toEqual(["edited"]);
+  await expect(fileSystem.loadDocument(project, "../a.scholarpen.json")).rejects.toThrow();
+  await expect(fileSystem.loadDocument(project, "/a.scholarpen.json")).rejects.toThrow();
+  await mkdir(join(project, "drafts"));
+  await writeFile(join(project, "drafts", "a.scholarpen.json"), '["outside"]');
+  await symlink(join(project, "drafts"), join(project, "documents", "escape"));
+  await expect(fileSystem.loadDocument(project, "escape/a.scholarpen.json")).rejects.toThrow();
+  await expect(fileSystem.saveDocument(project, "escape/a.scholarpen.json", [])).rejects.toThrow();
 });
