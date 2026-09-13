@@ -1,6 +1,10 @@
 import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { prepareMarkdownMath, remarkRestoreScholarMath } from "../../blocks/markdown-math";
+import { MarkdownImage } from "./MarkdownImage";
 import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
@@ -113,6 +117,7 @@ export function FileViewer({
     () => isMarkdown && content ? parseFrontmatter(content) : { frontmatter: null, body: content ?? "" },
     [content, isMarkdown]
   );
+  const preparedMath = useMemo(() => prepareMarkdownMath(markdownBody), [markdownBody]);
 
   // PDF viewer — binary file, handled separately
   if (file.kind === "pdf" || ext === ".pdf") {
@@ -218,9 +223,13 @@ export function FileViewer({
         {isMarkdown && (
           <div className="max-w-3xl mx-auto px-8 py-6">
             {parsedFrontmatter && <FrontmatterCard frontmatter={parsedFrontmatter} />}
-            <div className="prose prose-gray dark:prose-invert" style={{ fontSize }}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {markdownBody}
+            <div className="scholar-markdown prose prose-gray dark:prose-invert" style={{ fontSize }}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm, [remarkRestoreScholarMath, preparedMath]]}
+                rehypePlugins={[rehypeKatex]}
+                components={{ img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} documentPath={file.path} /> }}
+              >
+                {preparedMath.markdown}
               </ReactMarkdown>
             </div>
           </div>

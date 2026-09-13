@@ -62,6 +62,8 @@ function containsCustomInline(content: unknown): boolean {
   if (typeof content === "object" && content !== null) {
     const obj = content as Record<string, unknown>;
     if (obj.type === "citation" || obj.type === "footnote" || obj.type === "inlineMath") return true;
+    if (obj.type === "tableContent") return containsCustomInline(obj.rows);
+    if (Array.isArray(obj.cells)) return containsCustomInline(obj.cells);
     return containsCustomInline(obj.content);
   }
   return false;
@@ -139,6 +141,10 @@ function inlineContentToMarkdown(content: unknown, format: ExportFormat): string
     if (obj.type === "inlineMath") {
       const formula = inlineProp(obj, "formula");
       if (typeof formula === "string") return `$${formula}$`;
+    }
+
+    if (obj.type === "link" && typeof obj.href === "string") {
+      return `[${inlineContentToMarkdown(obj.content, format)}](${obj.href})`;
     }
 
     let result = text;
@@ -254,6 +260,15 @@ function standardBlockToMarkdown(
   const text = inlineContentToMarkdown(block.content, format);
 
   switch (block.type) {
+    case "table": {
+      const table = block.content as { rows: { cells: unknown[] }[] };
+      const rows = table.rows.map((row) => `${indent}| ${row.cells.map((cell) => {
+        const content = Array.isArray(cell) ? cell : (cell as { content: unknown }).content;
+        return inlineContentToMarkdown(content, format).replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+      }).join(" | ")} |`);
+      if (rows.length) rows.splice(1, 0, `${indent}| ${table.rows[0].cells.map(() => "---").join(" | ")} |`);
+      return rows.join("\n");
+    }
     case "heading": {
       const level = typeof block.props.level === "number" ? block.props.level : 1;
       return `${indent}${"#".repeat(Math.max(1, Math.min(level, 6)))} ${text}`;
@@ -281,9 +296,11 @@ function standardBlockToMarkdown(
   }
 }
 
-function mathBlockToMarkdown(block: Block, _format: ExportFormat): string {
+function mathBlockToMarkdown(block: Block, format: ExportFormat): string {
   const formula = (block.props.formula as string) || "";
-  return `$$\n${formula}\n$$`;
+  const label = format === "qmd" && typeof block.props.label === "string" && /^eq-[\w:.-]+$/.test(block.props.label)
+    ? ` {#${block.props.label}}` : "";
+  return `$$\n${formula}\n$$${label}`;
 }
 
 function figureBlockToMarkdown(block: Block, format: ExportFormat): string {

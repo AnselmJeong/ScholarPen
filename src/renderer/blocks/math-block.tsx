@@ -91,6 +91,7 @@ export const mathBlock = createReactBlockSpec(
     type: "math" as const,
     propSchema: {
       formula: { default: "" },
+      label: { default: "" },
     },
     content: "none",
   },
@@ -104,7 +105,7 @@ export const mathBlock = createReactBlockSpec(
       };
 
       return (
-        <div className="my-1 w-full select-none rounded-md border border-border bg-card px-4 py-1 text-card-foreground">
+        <div id={block.props.label || undefined} className="my-1 w-full select-none rounded-md border border-border bg-card px-4 py-1 text-card-foreground">
           <div className="mb-1 text-xs text-muted-foreground">Math</div>
           {editing ? (
             <MathEditor formula={block.props.formula} onCommit={handleCommit} />

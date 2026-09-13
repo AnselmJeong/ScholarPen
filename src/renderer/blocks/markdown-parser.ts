@@ -5,6 +5,8 @@
 import { BlockNoteEditor } from "@blocknote/core";
 import { scholarSchema, type ScholarEditor } from "./schema";
 import { stripFrontmatter } from "../utils/frontmatter";
+import { prepareMarkdownMath, splitMathPlaceholders, type PreparedMarkdownMath } from "./markdown-math";
+import { prepareMarkdownCitations, type PreparedMarkdownCitations } from "./markdown-citations";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyBlock = Record<string, any>;
@@ -41,18 +43,15 @@ export async function markdownToScholarBlocks(
   const processedMd = md.trimStart().startsWith("---") ? stripFrontmatter(md) : md;
 
   // Pre-process: replace custom patterns with annotated markdown
-  const annotated = annotateCustomBlocks(processedMd);
+  const math = prepareMarkdownMath(processedMd);
+  const citations = prepareMarkdownCitations(math.markdown);
+  const annotated = annotateCustomBlocks(citations.markdown);
 
   // Parse using BlockNote's built-in converter
-  let blocks: AnyBlock[];
-  try {
-    blocks = await parseEditor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
-  } catch {
-    blocks = (await parseEditor.tryParseMarkdownToBlocks(processedMd) || []) as AnyBlock[];
-  }
+  const blocks = await parseEditor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
 
   // Post-process: convert annotated blocks to custom types
-  return postProcessBlocks(blocks);
+  return postProcessBlocks(blocks, math, citations);
 }
 
 /**
@@ -62,15 +61,6 @@ export async function markdownToScholarBlocks(
  */
 function annotateCustomBlocks(md: string): string {
   let result = md;
-
-  // 1. Math blocks: $$...$$ → fenced code block with language "math"
-  //    BlockNote will parse these as code blocks, which we convert back to math blocks
-  result = result.replace(
-    /\$\$\n([\s\S]*?)\n\$\$/g,
-    (_match, formula: string) => {
-      return "```math\n" + formula.trim() + "\n```";
-    }
-  );
 
   // 2. Quarto abstract: ::: abstract ... :::
   //    Convert to blockquote with "SCHOLAR_ABSTRACT" marker
@@ -98,10 +88,21 @@ function annotateCustomBlocks(md: string): string {
  * Post-process parsed blocks to convert annotated standard blocks
  * back to custom ScholarPen block types.
  */
-function postProcessBlocks(blocks: AnyBlock[]): AnyBlock[] {
+function postProcessBlocks(blocks: AnyBlock[], math: PreparedMarkdownMath, citations: PreparedMarkdownCitations): AnyBlock[] {
   const result: AnyBlock[] = [];
 
   for (const block of blocks) {
+    const formula = math.formulas.get(extractBlockText(block).trim());
+    if (formula?.display) {
+      result.push({
+        ...block,
+        type: "math",
+        props: { formula: formula.formula, label: formula.label },
+        content: undefined,
+        children: postProcessBlocks(block.children ?? [], math, citations),
+      });
+      continue;
+    }
     // Check for math code blocks
     if (block.type === "codeBlock" || block.type === "code") {
       const props = block.props as Record<string, unknown> | undefined;
@@ -127,7 +128,7 @@ function postProcessBlocks(blocks: AnyBlock[]): AnyBlock[] {
           .trim();
         result.push({
           type: "abstract",
-          content: content,
+          content: processInlineContent([{ type: "text", text: content, styles: {} }], math, citations),
         });
         continue;
       }
@@ -194,12 +195,18 @@ function postProcessBlocks(blocks: AnyBlock[]): AnyBlock[] {
 
     // Handle citation inline content: [@citekey]
     if (block.content && Array.isArray(block.content)) {
-      block.content = processInlineContent(block.content);
+      block.content = processInlineContent(block.content, math, citations);
+    } else if (block.content?.type === "tableContent") {
+      for (const row of block.content.rows) {
+        row.cells = row.cells.map((cell: AnyBlock | unknown[]) => Array.isArray(cell)
+          ? processInlineContent(cell, math, citations)
+          : { ...cell, content: processInlineContent(cell.content, math, citations) });
+      }
     }
 
     // Handle children recursively
     if (block.children && Array.isArray(block.children)) {
-      block.children = postProcessBlocks(block.children);
+      block.children = postProcessBlocks(block.children, math, citations);
     }
 
     result.push(block);
@@ -211,33 +218,36 @@ function postProcessBlocks(blocks: AnyBlock[]): AnyBlock[] {
 /**
  * Process inline content to convert [@citekey] patterns to citation inline content.
  */
-function processInlineContent(content: unknown[]): unknown[] {
-  return content.map((item: unknown) => {
+function processInlineContent(content: unknown[], math: PreparedMarkdownMath, citations: PreparedMarkdownCitations): unknown[] {
+  return content.flatMap((item: unknown): unknown[] => {
     if (typeof item === "object" && item !== null) {
       const obj = item as Record<string, unknown>;
       const text = (obj.text as string) || "";
-
-      // Check for citation pattern: [@citekey]
-      const citationMatch = text.match(/^\[@(.+)\]$/);
-      if (citationMatch) {
-        return {
-          type: "citation",
-          props: { citekey: citationMatch[1] },
-          content: undefined,
-        };
+      if (Array.isArray(obj.content)) {
+        return [{ ...obj, content: processInlineContent(obj.content, math, citations) }];
       }
+      if (obj.type !== "text" || (obj.styles as Record<string, unknown> | undefined)?.code) return [item];
+
+      const parts = splitMathPlaceholders(text, math).flatMap((part): unknown[] => {
+        if (typeof part !== "string") return [{ type: "inlineMath", props: { formula: part.formula } }];
+        return part.split(citations.pattern).filter(Boolean).flatMap((segment): unknown[] => {
+          const entries = citations.citations.get(segment);
+          return entries ? entries.map((props) => ({ type: "citation", props })) : [{ ...obj, text: segment }];
+        });
+      });
+      if (parts.some((part) => (part as AnyBlock).type !== "text")) return parts;
 
       // Check for footnote pattern: [^N]
       const footnoteMatch = text.match(/^\[\^(\d+)\]$/);
       if (footnoteMatch) {
-        return {
+        return [{
           type: "footnote",
-          props: { number: parseInt(footnoteMatch[1], 10) },
+          props: { index: parseInt(footnoteMatch[1], 10) },
           content: undefined,
-        };
+        }];
       }
     }
-    return item;
+    return [item];
   });
 }
 

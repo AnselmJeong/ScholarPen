@@ -1,7 +1,7 @@
 {
   "name": "scholarpen",
   "type": "module",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "AI-Assisted Academic Article Writer for macOS",
   "private": true,
   "scripts": {
@@ -47,7 +47,9 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
     "tailwind-merge": "^3.5.0",
+    "unified": "^11.0.5",
     "yaml": "^2.8.3"
   },
   "devDependencies": {
@@ -60,6 +62,7 @@
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.2",
+    "happy-dom": "^20.14.5",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",

@@ -200,6 +200,13 @@ body {
 }
 
 /* Headings: system-ui for structural clarity */
+/* BlockNote sizes the wrapper in em too; reset it so heading sizes do not multiply. */
+.bn-editor .bn-block-content[data-content-type="heading"]:not([data-level]),
+.bn-editor .bn-block-content[data-content-type="heading"][data-level="1"],
+.bn-editor .bn-block-content[data-content-type="heading"][data-level="2"] {
+  font-size: 16px !important;
+}
+
 .bn-editor h1,
 .bn-editor h2,
 .bn-editor h3 {
@@ -214,9 +221,13 @@ body {
   color: hsl(240 20% 92%);
 }
 
-.bn-editor h1 { font-size: 2em;   line-height: 1.2;  font-weight: 700; }
-.bn-editor h2 { font-size: 1.35em; line-height: 1.35; font-weight: 600; }
+.bn-editor h1 { font-size: 1.5em; line-height: 1.3;  font-weight: 700; }
+.bn-editor h2 { font-size: 1.25em; line-height: 1.4; font-weight: 600; }
 .bn-editor h3 { font-size: 1.2em; line-height: 1.4;  font-weight: 600; }
+
+.scholar-markdown h1 { font-size: 1.5em; line-height: 1.3; }
+.scholar-markdown h2 { font-size: 1.25em; line-height: 1.4; }
+.scholar-markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.25em 0; }
 
 /* ── Text-find highlights (DOM <mark> injection) ─────────────────── */
 mark[data-find] {
