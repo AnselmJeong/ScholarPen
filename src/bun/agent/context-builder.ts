@@ -6,7 +6,6 @@ import { resolveMentionedFiles } from "./mention-resolver";
 import { createEnglishAcademicSearchQuery } from "./research-query";
 import { searchScholarlyEvidence } from "./scholarly-search";
 import { searchAndFetchWebWithTinyFish, type WebSearchResult } from "./web-search";
-import { shouldUseWebSearch } from "./web-search-decision";
 import {
   buildProjectSourcePrompt,
   buildProjectSourceReferences,
@@ -164,7 +163,6 @@ export async function buildAgentMessages(
   const selectedSkills = await Promise.all(
     params.selectedSkillIds.map((id) => loadAgentSkill(id, params.projectPath ?? undefined))
   );
-  const pubMedSkillSelected = selectedSkills.some((skill) => skill.name === "pubmed-research");
 
   const mentionedFiles = params.projectPath
     ? await resolveMentionedFiles({
@@ -232,49 +230,40 @@ export async function buildAgentMessages(
 
   const webSearchAvailable = !isFindCitation && settings.webSearchEnabled;
   const generalWebSearchAvailable = webSearchAvailable && Boolean(settings.tinyfishApiKey.trim());
-  let webSearchNeeded = false;
+  const webSearchNeeded = !isFindCitation && params.searchEnabled === true;
   let webSearchFailed = false;
   let webResults: WebSearchResult[] = [];
-  if (!isFindCitation) {
+  if (!isFindCitation && webSearchNeeded && webSearchAvailable) {
     try {
-      webSearchNeeded = pubMedSkillSelected || await shouldUseWebSearch(
-        params,
-        settings,
-        params.provider,
-        params.model,
-        signal,
+      englishAcademicSearchQuery ||= await createEnglishAcademicSearchQuery(
+        query, settings, params.provider, params.model, signal,
       );
-      if (webSearchNeeded && webSearchAvailable) {
-        englishAcademicSearchQuery ||= await createEnglishAcademicSearchQuery(
-          query, settings, params.provider, params.model, signal,
-        );
-        if (englishAcademicSearchQuery) {
-          try {
-            webResults = await searchScholarlyEvidence(
-              englishAcademicSearchQuery,
-              5,
-              {
-                openAlexApiKey: settings.openAlexApiKey || undefined,
-                ncbiApiKey: settings.ncbiApiKey || undefined,
-                signal,
-              },
-            );
-          } catch (err) {
-            if ((err as Error).name === "AbortError") throw err;
-            console.warn("[Agent] Scholarly search failed:", err);
-            webSearchFailed = true;
-          }
-
-          if (webResults.length < 5 && generalWebSearchAvailable) {
-            const generalResults = await searchAndFetchWebWithTinyFish(
-              englishAcademicSearchQuery,
-              settings,
-              5 - webResults.length,
+      if (englishAcademicSearchQuery) {
+        try {
+          webResults = await searchScholarlyEvidence(
+            englishAcademicSearchQuery,
+            5,
+            {
+              openAlexApiKey: settings.openAlexApiKey || undefined,
+              ncbiApiKey: settings.ncbiApiKey || undefined,
               signal,
-            );
-            const seenUrls = new Set(webResults.map((result) => result.url));
-            webResults.push(...generalResults.filter((result) => !seenUrls.has(result.url)));
-          }
+            },
+          );
+        } catch (err) {
+          if ((err as Error).name === "AbortError") throw err;
+          console.warn("[Agent] Scholarly search failed:", err);
+          webSearchFailed = true;
+        }
+
+        if (webResults.length < 5 && generalWebSearchAvailable) {
+          const generalResults = await searchAndFetchWebWithTinyFish(
+            englishAcademicSearchQuery,
+            settings,
+            5 - webResults.length,
+            signal,
+          );
+          const seenUrls = new Set(webResults.map((result) => result.url));
+          webResults.push(...generalResults.filter((result) => !seenUrls.has(result.url)));
         }
       }
     } catch (err) {
@@ -288,13 +277,13 @@ export async function buildAgentMessages(
   const systemParts = [
     "<scholarpen_system>",
     "You are ScholarPen's research writing assistant.",
-    "Use only the project files, project source excerpts, selected instructions, verified citation candidates, and web search results that are explicitly provided in this request.",
+    "Use supplied project files, source excerpts, selected instructions, verified citation candidates, and web results when available. For general explanations and writing tasks, you may also use general knowledge, but never present it as live-verified evidence or invent citations.",
     "Do not claim to have read files that were not provided.",
     "Whenever external search is used, ScholarPen combines OpenAlex semantic retrieval with PubMed Best Match, verifies and enriches PMID-linked semantic candidates through PubMed, then uses general web results only to fill evidence gaps. The final answer must still follow the user's selected response language.",
     webResults.length > 0
       ? "Web search was used for this request. Cite specific web sources inline as [W1], [W2], etc.; do not cite broad ranges like [W1]-[W5] unless every listed source supports the same sentence. A Web Sources list will be appended automatically."
       : webSearchNeeded && !webSearchAvailable
-        ? "Live search is needed for this request but automatic web search is disabled. Do not present current or externally verifiable claims as confirmed; clearly state the limitation."
+        ? "Live search was requested but web search is disabled in Settings. Do not present current or externally verifiable claims as confirmed; clearly state the limitation."
       : webSearchNeeded && webSearchFailed
         ? "Live web search was attempted but failed. Do not present current or externally verifiable claims as confirmed; clearly state that verification failed."
       : webSearchNeeded

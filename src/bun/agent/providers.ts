@@ -1,4 +1,5 @@
-import type { AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
+import type { AgentThinkingLevel, AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
+import { agentThinkingConfig } from "../../shared/agent-thinking";
 import { resolveOllamaConnection } from "../../shared/ollama-connection";
 
 export interface AgentStreamRequest {
@@ -6,6 +7,7 @@ export interface AgentStreamRequest {
   model: string;
   messages: OllamaMessage[];
   think?: boolean;
+  thinkingLevel?: AgentThinkingLevel;
   signal?: AbortSignal;
 }
 
@@ -88,7 +90,7 @@ export async function completeAgentModel(
         model: request.model || settings.ollamaDefaultModel,
         messages: request.messages,
         stream: false,
-        think: false,
+        ...agentThinkingConfig("ollama", request.model || settings.ollamaDefaultModel).fields,
         max_tokens: maxTokens,
         options: { temperature },
       }),
@@ -158,6 +160,13 @@ export async function* streamAgentModel(
   request: AgentStreamRequest,
   settings: AppSettings,
 ): AsyncGenerator<string> {
+  const model = request.model || ({
+    ollama: settings.ollamaDefaultModel,
+    anthropic: settings.anthropicDefaultModel,
+    deepseek: settings.deepseekDefaultModel,
+    openai: settings.openaiDefaultModel,
+  }[request.provider]);
+  const thinking = agentThinkingConfig(request.provider, model, request.thinkingLevel ?? (request.think ? "medium" : "none"));
   if (request.provider === "ollama") {
     const apiKey = ensureApiKey("Ollama", settings.ollamaApiKey);
     const connection = resolveOllamaConnection(settings.ollamaBaseUrl, apiKey);
@@ -171,14 +180,14 @@ export async function* streamAgentModel(
         model: request.model || settings.ollamaDefaultModel,
         messages: request.messages,
         stream: true,
-        think: request.think ?? false,
+        ...thinking.fields,
       }),
       signal: request.signal,
     });
     if (!res.ok) throw new Error(`Ollama error: HTTP ${res.status} ${await res.text()}`);
     for await (const json of streamSse(res)) {
       const text = json.choices?.[0]?.delta?.content;
-      if (text) yield text;
+      yield text || "";
     }
     return;
   }
@@ -199,13 +208,15 @@ export async function* streamAgentModel(
         system,
         messages,
         stream: true,
+        ...thinking.fields,
       }),
       signal: request.signal,
     });
     if (!res.ok) throw new Error(`Claude API error: HTTP ${res.status} ${await res.text()}`);
     for await (const json of streamSse(res)) {
       const text = json.delta?.text;
-      if (text) yield text;
+      if (json.type === "error") throw new Error(json.error?.message || "Claude stream error");
+      yield text || "";
     }
     return;
   }
@@ -223,13 +234,14 @@ export async function* streamAgentModel(
       model: request.model || (isDeepSeek ? settings.deepseekDefaultModel : settings.openaiDefaultModel),
       messages: request.messages,
       stream: true,
+      ...thinking.fields,
     }),
     signal: request.signal,
   });
   if (!res.ok) throw new Error(`${isDeepSeek ? "DeepSeek" : "OpenAI"} API error: HTTP ${res.status} ${await res.text()}`);
   for await (const json of streamSse(res)) {
     const text = json.choices?.[0]?.delta?.content;
-    if (text) yield text;
+    yield text || "";
   }
 }
 

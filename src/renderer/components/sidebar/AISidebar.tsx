@@ -26,11 +26,13 @@ import type {
   AgentSkill,
   AgentThread,
   AgentThreadMessage,
+  AgentThinkingLevel,
   AppSettings,
   OllamaStatus,
   ProjectInfo,
   ProjectSourcesStatus,
 } from "@shared/rpc-types";
+import { AGENT_THINKING_LEVELS, agentThinkingConfig } from "@shared/agent-thinking";
 import { parseProjectFileReference, type ProjectFileReference } from "@shared/project-file-reference";
 import {
   findActiveFileMention,
@@ -118,12 +120,11 @@ function assistantLabel(provider: AppSettings["sidebarAgentProvider"]): string {
 }
 
 function AssistantMessage({
-  message,
   onOpenProjectSource,
 }: {
-  message: MessageState;
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
 }) {
+  const message = useAuiState((state) => state.message);
   const text = messageText(message);
   const isUser = message.role === "user";
   const isStreaming = message.status?.type === "running";
@@ -326,7 +327,7 @@ function AssistantThread({
         </ThreadPrimitive.Empty>
         <div className="space-y-4 w-full overflow-hidden">
           <ThreadPrimitive.Messages>
-            {({ message }) => <AssistantMessage message={message} onOpenProjectSource={onOpenProjectSource} />}
+            {() => <AssistantMessage onOpenProjectSource={onOpenProjectSource} />}
           </ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
@@ -371,7 +372,7 @@ function ProjectContextBar({
             className="flex items-center gap-1 flex-shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
           >
             <Globe2 className="h-2.5 w-2.5" />
-            Web auto
+            Search available
           </span>
         )}
       </div>
@@ -536,6 +537,13 @@ function AssistantComposer({
   projectSourcesEnabled,
   setProjectSourcesEnabled,
   sourceStatus,
+  searchEnabled,
+  setSearchEnabled,
+  searchAvailable,
+  thinkingLevel,
+  setThinkingLevel,
+  provider,
+  model,
 }: {
   editor: BlockNoteEditor<any, any, any> | null;
   project: ProjectInfo | null;
@@ -549,12 +557,20 @@ function AssistantComposer({
   projectSourcesEnabled: boolean;
   setProjectSourcesEnabled: (enabled: boolean) => void;
   sourceStatus: ProjectSourcesStatus | null;
+  searchEnabled: boolean;
+  setSearchEnabled: (enabled: boolean) => void;
+  searchAvailable: boolean;
+  thinkingLevel: AgentThinkingLevel;
+  setThinkingLevel: (level: AgentThinkingLevel) => void;
+  provider: AppSettings["sidebarAgentProvider"];
+  model: string;
 }) {
   const aui = useAui();
   const input = useAuiState((s) => s.composer.text);
   const isEmpty = useAuiState((s) => s.composer.isEmpty);
   const loading = useAuiState((s) => s.thread.isRunning);
   const [dropdownIndex, setDropdownIndex] = useState(0);
+  const thinkingConfig = agentThinkingConfig(provider, model, thinkingLevel);
 
   const { mode: dropdownMode, query: dropdownQuery } = useMemo(() => analyzeInput(input), [input]);
 
@@ -734,6 +750,37 @@ function AssistantComposer({
           disabled={loading}
           className="w-full resize-none rounded-md border border-input bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
         />
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            aria-label="이 질문에서 웹 검색 사용"
+            aria-pressed={searchEnabled && searchAvailable}
+            disabled={loading || !searchAvailable}
+            onClick={() => setSearchEnabled(!searchEnabled)}
+            title={searchAvailable ? "이 질문에 외부 자료 검색을 사용합니다" : "Settings에서 Web search를 먼저 켜세요"}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs disabled:opacity-50",
+              searchEnabled && searchAvailable ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground",
+            )}
+          >
+            <Globe2 className="h-3 w-3" />
+            Search {searchEnabled && searchAvailable ? "on" : "off"}
+          </button>
+          <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            Thinking
+            <select
+              aria-label="이 질문의 Thinking 수준"
+              value={thinkingLevel}
+              onChange={(event) => setThinkingLevel(event.target.value as AgentThinkingLevel)}
+              disabled={loading || thinkingConfig.supported === false}
+              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground disabled:opacity-50"
+            >
+              {AGENT_THINKING_LEVELS.map((level) => <option key={level} value={level}>{level === "none" ? "None" : level[0].toUpperCase() + level.slice(1)}</option>)}
+            </select>
+          </label>
+          <span className="text-[10px] text-muted-foreground">이번 질문에만 적용</span>
+        </div>
+        {thinkingConfig.notice && <p className="text-[10px] leading-relaxed text-muted-foreground">{thinkingConfig.notice}</p>}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
             <Button
@@ -816,6 +863,8 @@ export function AISidebar({
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
   const [lang, setLang] = useState<"ko" | "en">("ko");
   const [projectSourcesEnabled, setProjectSourcesEnabled] = useState(true);
+  const [searchEnabled, setSearchEnabled] = useState(false);
+  const [thinkingLevel, setThinkingLevel] = useState<AgentThinkingLevel>("none");
   const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
@@ -835,6 +884,7 @@ export function AISidebar({
     settings?.ollamaDefaultModel ||
     "qwen3.5:397b";
   const modelKey = `${activeProvider}:${activeModel}`;
+  const searchAvailable = appSettings?.webSearchEnabled ?? settings?.webSearchEnabled ?? false;
 
   const refreshThreads = useCallback(async () => {
     if (!project?.path) {
@@ -869,6 +919,8 @@ export function AISidebar({
     setSelectedSkillIds([]);
     setSelectedFilePaths([]);
     setProjectSourcesEnabled(true);
+    setSearchEnabled(false);
+    setThinkingLevel("none");
   }, []);
 
   const loadThread = useCallback(
@@ -880,6 +932,8 @@ export function AISidebar({
       setThreadResetKey(`thread-${threadId}-${data.thread.updatedAt}`);
       setSelectedSkillIds([]);
       setSelectedFilePaths([]);
+      setSearchEnabled(false);
+      setThinkingLevel("none");
       const latestSourceSetting = [...data.messages].reverse().find(
         (message) => typeof message.metadata?.projectSourcesEnabled === "boolean",
       )?.metadata?.projectSourcesEnabled;
@@ -955,6 +1009,13 @@ export function AISidebar({
           message === buildFindCitationMessage(findCitation);
         if (isFindCitation) findCitationRequestRef.current = null;
         const isPreparedRequest = isDeepen || isFindCitation;
+        // Snapshot before any awaits; the next question returns to fast defaults.
+        const requestOptions = {
+          searchEnabled: isFindCitation || (searchEnabled && searchAvailable),
+          thinkingLevel,
+        };
+        setSearchEnabled(false);
+        setThinkingLevel("none");
         const analysisMode = isDeepen
           ? "deepen" as const
           : isFindCitation
@@ -998,6 +1059,7 @@ export function AISidebar({
             setActiveThread(runThread);
           }
           await rpc.saveAgentThreadMessage(projectPath, runThread.id, "user", message, "complete", {
+            ...requestOptions,
             provider: activeProvider,
             model: activeModel,
             analysisMode,
@@ -1010,6 +1072,7 @@ export function AISidebar({
         }
 
         return {
+          ...requestOptions,
           projectPath,
           provider: activeProvider,
           model: activeModel,
@@ -1073,6 +1136,7 @@ export function AISidebar({
 
             if (!projectPath || !runThread || !visibleAssistantMessage.trim()) return;
             await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", visibleAssistantMessage, status, {
+              ...requestOptions,
               provider: activeProvider,
               model: activeModel,
               analysisMode,
@@ -1094,6 +1158,9 @@ export function AISidebar({
       selectedFilePaths,
       lang,
       projectSourcesEnabled,
+      searchEnabled,
+      searchAvailable,
+      thinkingLevel,
       slashCommands,
       refreshThreads,
       onDeepenResult,
@@ -1215,6 +1282,13 @@ export function AISidebar({
         <AssistantThread slashCommands={slashCommands} onOpenProjectSource={onOpenProjectSource} />
 
         <AssistantComposer
+          searchEnabled={searchEnabled}
+          setSearchEnabled={setSearchEnabled}
+          searchAvailable={searchAvailable}
+          thinkingLevel={thinkingLevel}
+          setThinkingLevel={setThinkingLevel}
+          provider={activeProvider}
+          model={activeModel}
           editor={editor}
           project={project}
           slashCommands={slashCommands}

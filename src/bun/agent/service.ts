@@ -42,6 +42,7 @@ export async function streamScholarAgent(
             provider,
             model,
             messages: context.messages,
+            thinkingLevel: params.thinkingLevel ?? "none",
             signal: requestController.signal,
           },
           settings,
@@ -55,7 +56,8 @@ export async function streamScholarAgent(
 
     let result = firstResult.result;
     while (!result.done) {
-      if (result.value) callbacks.onChunk(result.value);
+      // Empty chunks carry provider activity while it is thinking.
+      callbacks.onChunk(result.value);
       result = await withAgentStreamTimeout(
         firstResult.iterator.next(),
         "idle",

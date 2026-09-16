@@ -220,6 +220,8 @@ export interface AgentMentionableFile {
   kind: FileNodeKind;
 }
 
+export type AgentThinkingLevel = "none" | "low" | "medium" | "high";
+
 export interface AgentStreamParams {
   message: string;
   projectPath: string | null;
@@ -230,6 +232,8 @@ export interface AgentStreamParams {
   selectedFilePaths: string[];
   lang: "ko" | "en";
   projectSourcesEnabled?: boolean;
+  searchEnabled?: boolean;
+  thinkingLevel?: AgentThinkingLevel;
   analysisMode?: "deepen" | "find-citation";
   deepenContext?: {
     selectedText: string;
