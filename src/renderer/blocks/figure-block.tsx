@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { createReactBlockSpec } from "@blocknote/react";
 import { QuartoPropertiesButton } from "./quarto-properties-button";
 import { FigureImage } from "./figure-image";
-import { blockLabel } from "../../shared/quarto-references";
 
 // ── Figure Block ────────────────────────────────────────────────────────────
 // Image + caption + auto figure numbering.
@@ -40,14 +39,12 @@ export const figureBlock = createReactBlockSpec(
       return (
         <div className="my-2 w-full overflow-hidden rounded-md border border-border bg-card text-card-foreground">
           <FigureImage sourcePath={block.props.sourcePath} url={url} alt={altText || caption || figLabel}
-            onSourceChange={(source) => {
-              if (editor.getBlock(block.id)) editor.updateBlock(block, { props: source });
-            }}
+            editor={editor} blockId={block.id}
             style={{ width: /^\d+(\.\d+)?$/.test(block.props.width) ? Number(block.props.width) : block.props.width || "100%",
               height: /^\d+(\.\d+)?$/.test(block.props.height) ? Number(block.props.height) : block.props.height || "auto",
               marginLeft: block.props.alignment === "left" ? 0 : "auto",
               marginRight: block.props.alignment === "right" ? 0 : "auto" }}>
-            <QuartoPropertiesButton editor={editor} blockId={block.id} label={blockLabel(block)} />
+            <QuartoPropertiesButton editor={editor} blockId={block.id} label="" />
           </FigureImage>
 
           {/* Caption */}
@@ -69,7 +66,7 @@ export const figureBlock = createReactBlockSpec(
               />
             ) : (
               <span
-                onClick={() => setEditingCaption(true)}
+                onClick={() => { setCaptionValue(caption); setEditingCaption(true); }}
                 className="cursor-pointer text-sm text-foreground hover:text-primary"
               >
                 {caption || <span className="italic text-muted-foreground">Add caption...</span>}

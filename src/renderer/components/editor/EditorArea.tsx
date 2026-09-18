@@ -676,6 +676,8 @@ export function EditorArea({
   }
 
   return (
+    <FigureDocumentContext.Provider value={{ projectPath: project.path,
+      documentPath: `${project.path}/documents/${documentFilename || "manuscript.scholarpen.json"}` }}>
     <div
       className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "hsl(var(--background))" }}
       onKeyDown={(e) => {
@@ -707,7 +709,7 @@ export function EditorArea({
           </>
         )}
       </div>
-      {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={propertiesBlockId}
+      {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={`${project.path}/${documentFilename}/${propertiesBlockId}`}
         editor={editor} blockId={propertiesBlockId} onClose={() => setPropertiesBlockId(null)} />}
       <div
         ref={scrollContainerRef}
@@ -718,8 +720,6 @@ export function EditorArea({
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
         <div style={{ maxWidth: "800px", margin: "0 auto" }}>
           <QuartoBlockControls editor={editor} enabled={documentReady} onOpen={setPropertiesBlockId}>
-          <FigureDocumentContext.Provider value={{ projectPath: project.path,
-            documentPath: `${project.path}/documents/${documentFilename || "manuscript.scholarpen.json"}` }}>
           <BlockNoteView
             editor={editor}
             onChange={handleChange}
@@ -826,7 +826,6 @@ export function EditorArea({
               )}
             />
           </BlockNoteView>
-          </FigureDocumentContext.Provider>
           </QuartoBlockControls>
         </div>
       </div>
@@ -882,5 +881,6 @@ export function EditorArea({
         />
       )}
     </div>
+    </FigureDocumentContext.Provider>
   );
 }
