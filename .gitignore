@@ -5,3 +5,4 @@ node_modules
 Knowledge_Base/
 artifacts/
 .claude/worktrees/
+.DS_Store

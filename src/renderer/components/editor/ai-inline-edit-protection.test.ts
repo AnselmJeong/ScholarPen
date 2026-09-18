@@ -18,6 +18,10 @@ const schema = new Schema({
       atom: true,
       attrs: { citekey: { default: "" }, locator: { default: "" } },
     },
+    crossReference: {
+      inline: true, group: "inline", atom: true,
+      attrs: { label: { default: "" }, locator: { default: "" }, bracketed: { default: false } },
+    },
   },
   marks: {
     bold: {},
@@ -39,6 +43,14 @@ function makeProtectedSelection(selectedText = "원문 인용 강조") {
 }
 
 describe("AI inline edit protection", () => {
+  test("preserves cross-reference targets through an AI text rewrite", () => {
+    const paragraph = schema.nodes.paragraph.create(null, [schema.text("See "), schema.nodes.crossReference.create({ label: "eq-steady-state" })]);
+    const doc = schema.nodes.doc.create(null, [paragraph]);
+    const slice = doc.slice(1, doc.content.size - 1);
+    const protectedSelection = protectSelectionSlice(slice, "See @eq-steady-state", "crossref");
+    const restored = restoreProtectedSelection(schema, protectedSelection, protectedSelection.protectedText.replace("See", "Consult"));
+    expect(restored.toJSON().content[1]).toMatchObject({ type: "crossReference", attrs: { label: "eq-steady-state" } });
+  });
   test("keeps Korean rewrites in Korean unless translation is requested", () => {
     const selection = makeProtectedSelection();
     const messages = buildInlineEditMessages("Improve the writing quality", selection);

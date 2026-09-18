@@ -14,12 +14,14 @@ import { getProjectSourceIndex, isProjectSourceDigestPath } from "./project-sour
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
 import { cleanValidateAndApplyBibliography } from "./citation/bibliography-maintenance";
 import { renderQuartoBookProject } from "./quarto/render";
+import { discoverQuartoExtensionFormats } from "./quarto/extensions";
 import {
   proposeBibliographyRepair,
   validateBibliographyRepair,
 } from "./citation/bibliography-repair";
 import type { BibliographyValidationProgress } from "../shared/rpc-types";
 import type { ScholarRPC } from "../shared/scholar-rpc";
+import { figureMimeType } from "../shared/figure-files";
 
 
 function buildSubprocessEnv(): Record<string, string> {
@@ -87,6 +89,10 @@ function watchProjectDir(projectPath: string) {
     activeProjectWatcher = watch(projectPath, { recursive: true }, (_event, filename) => {
       if (!filename) return;
       const norm = filename.replace(/\\/g, "/");
+      if (figureMimeType(norm)) {
+        sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
+        return;
+      }
       // Suppress if we just saved this file
       if (internallyUpdatingProjects.has(projectPath)) return;
       if (recentlySavedFiles.has(norm) || recentlySavedFiles.has(filename)) return;
@@ -228,6 +234,8 @@ async function main() {
 
         loadDocument: ({ projectPath, filename }) =>
           fileSystem.loadDocument(projectPath, filename),
+
+        listProjectReferences: ({ projectPath }) => fileSystem.listProjectReferences(projectPath),
 
         createDocument: ({ projectPath, filename, content }) =>
           fileSystem.createDocument(projectPath, filename, content),
@@ -377,6 +385,8 @@ async function main() {
         openFolderDialog: () => fileSystem.openFolderDialog(),
 
         // ── Export ─────────────────────────────────────────
+        discoverQuartoExtensions: async ({ projectPath }) =>
+          discoverQuartoExtensionFormats(await fileSystem.getQuartoProjectDirectory(projectPath)),
         exportFile: ({ projectPath, filename, content }) =>
           fileSystem.exportFile(projectPath, filename, content),
 
@@ -393,6 +403,8 @@ async function main() {
         // ── File Management ────────────────────────────────
         readTextFile: ({ filePath }) => fileSystem.readTextFile(filePath),
         readBinaryFile: ({ filePath }) => fileSystem.readBinaryFile(filePath),
+        selectFigure: ({ projectPath }) => fileSystem.selectFigure(projectPath),
+        readFigure: ({ projectPath, sourcePath }) => fileSystem.readFigure(projectPath, sourcePath),
         renameFile: ({ filePath, newName }) => fileSystem.renameFile(filePath, newName),
         deleteFile: ({ filePath }) => fileSystem.deleteFile(filePath),
 

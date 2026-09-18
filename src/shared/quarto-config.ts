@@ -1,7 +1,7 @@
 import { Document, parseDocument } from "yaml";
 import type { FileNode, QuartoRenderFormat } from "./rpc-types";
 
-export type QuartoBookFormat = "docx" | "html" | "pdf";
+export type QuartoBookFormat = string;
 
 export interface QuartoBookConfigInput {
   title: string;
@@ -13,6 +13,8 @@ export interface QuartoBookConfigInput {
   bibliographyFiles: string[];
   formats: QuartoBookFormat[];
   existingYaml?: string | null;
+  /** Extra format keys the dialog manages; other keys are preserved. */
+  extensionFormats?: string[];
 }
 
 export interface QuartoBookEditorValues {
@@ -123,15 +125,25 @@ function readFormatKeys(value: unknown): string[] {
 
 function readBookFormats(value: unknown): QuartoBookFormat[] {
   const keys = new Set(readFormatKeys(value));
-  return QUARTO_BOOK_FORMAT_ORDER.filter((format) => (
-    format === "pdf" ? keys.has("typst") || keys.has("pdf") : keys.has(format)
-  ));
+  return [
+    ...QUARTO_BOOK_FORMAT_ORDER.filter((format) => (
+      format === "pdf" ? keys.has("typst") || keys.has("pdf") : keys.has(format)
+    )),
+    ...[...keys].filter((key) => !["docx", "html", "pdf", "typst"].includes(key)),
+  ];
+}
+
+export function isQuartoFormatName(value: string): boolean {
+  return /^(?:[A-Za-z0-9][A-Za-z0-9_-]*\/)?[A-Za-z0-9][A-Za-z0-9_.+-]*$/.test(value);
 }
 
 export function getQuartoRenderFormats(source: string): QuartoRenderFormat[] {
   const root = parseYamlRoot(source);
   const keys = new Set(readFormatKeys(root.format));
-  return QUARTO_RENDER_FORMAT_ORDER.filter((format) => keys.has(format));
+  return [
+    ...QUARTO_RENDER_FORMAT_ORDER.filter((format) => keys.has(format)),
+    ...[...keys].filter((key) => !(QUARTO_RENDER_FORMAT_ORDER as readonly string[]).includes(key)),
+  ].filter(isQuartoFormatName);
 }
 
 function defaultFormatOptions(
@@ -141,7 +153,7 @@ function defaultFormatOptions(
   if (format === "docx" && isNewConfiguration) {
     return {
       toc: false,
-      "number-sections": false,
+      "number-sections": true,
     };
   }
   return {};
@@ -152,6 +164,7 @@ function updateManagedFormats(
   currentValue: unknown,
   formats: QuartoBookFormat[],
   isNewConfiguration: boolean,
+  extensionFormats: string[],
 ): void {
   const selected = new Set(formats);
   const selectedKeys: QuartoRenderFormat[] = formats.map(
@@ -160,7 +173,7 @@ function updateManagedFormats(
 
   if (!isRecord(currentValue)) {
     const preservedUnknownKeys = readFormatKeys(currentValue).filter(
-      (key) => !["docx", "html", "pdf", "typst"].includes(key),
+      (key) => !["docx", "html", "pdf", "typst", ...extensionFormats].includes(key),
     );
     const next: Record<string, unknown> = {};
     for (const key of preservedUnknownKeys) next[key] = {};
@@ -187,6 +200,14 @@ function updateManagedFormats(
     document.deleteIn(["format", "typst"]);
   }
   document.deleteIn(["format", "pdf"]);
+  for (const key of new Set([...extensionFormats, ...selectedKeys])) {
+    if (["docx", "html", "pdf", "typst"].includes(key)) continue;
+    if (selected.has(key)) {
+      if (!Object.hasOwn(currentValue, key)) document.setIn(["format", key], {});
+    } else {
+      document.deleteIn(["format", key]);
+    }
+  }
 }
 
 export function parseQuartoBookConfig(
@@ -276,7 +297,7 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
     .map((filename) => filename.trim())
     .filter(Boolean);
   const bibliographyFiles = normalizeResourcePaths(requestedBibliographies, ".bib");
-  const formats = QUARTO_BOOK_FORMAT_ORDER.filter((format) => input.formats.includes(format));
+  const formats = input.formats.filter(isQuartoFormatName);
 
   if (!title) throw new Error("A book title is required.");
   if (authors.length === 0) throw new Error("At least one author is required.");
@@ -334,7 +355,7 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
     bibliographyFiles.length === 1 ? bibliographyFiles[0] : bibliographyFiles,
   );
   document.set("csl", cslFilename);
-  updateManagedFormats(document, rootValue.format, formats, !existingSource);
+  updateManagedFormats(document, rootValue.format, formats, !existingSource, input.extensionFormats ?? []);
 
   return document.toString({ lineWidth: 0 });
 }

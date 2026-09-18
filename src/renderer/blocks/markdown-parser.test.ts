@@ -58,6 +58,19 @@ $$ {#eq-quasipotential-preview}
 `;
 
 describe("Markdown/Quarto math and citation import", () => {
+  test("turning a paragraph into Heading 4 survives JSON reload and Quarto export", async () => {
+    editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "Fourth-level section" }]);
+    editor.updateBlock(editor.document[0]!, { type: "heading", props: { level: 4 } });
+    const saved = JSON.parse(JSON.stringify(editor.document));
+    editor.replaceBlocks(editor.document, saved);
+    expect(editor.document[0]!.props).toMatchObject({ level: 4 });
+    const exported = await blocksToScholarMarkdown(editor, editor.document as any, "qmd");
+    expect(exported).toContain("#### Fourth-level section");
+    const imported = await markdownToScholarBlocks(exported, editor);
+    expect(imported[0]).toMatchObject({ type: "heading", props: { level: 1 } });
+    expect(imported[1]).toMatchObject({ type: "heading", props: { level: 4 } });
+  });
+
   test("imports the manuscript's inline, display, labelled and table formulas without TeX loss", async () => {
     const blocks = await markdownToScholarBlocks(sample, editor);
     const all = nodes(blocks);

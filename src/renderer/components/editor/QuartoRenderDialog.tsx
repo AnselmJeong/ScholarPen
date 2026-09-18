@@ -28,7 +28,7 @@ interface QuartoRenderDialogProps {
   onRender: (format: QuartoRenderFormat) => Promise<QuartoRenderResult>;
 }
 
-const FORMAT_DETAILS = {
+const FORMAT_DETAILS: Record<string, { title: string; subtitle: string; icon: typeof FileText }> = {
   docx: {
     title: "Word",
     subtitle: "Microsoft Word (.docx)",
@@ -44,11 +44,20 @@ const FORMAT_DETAILS = {
     subtitle: "PDF generated with Typst",
     icon: FileCode2,
   },
-} as const satisfies Record<QuartoRenderFormat, {
-  title: string;
-  subtitle: string;
-  icon: typeof FileText;
-}>;
+  pdf: {
+    title: "PDF (LaTeX)",
+    subtitle: "PDF generated with LaTeX",
+    icon: FileCode2,
+  },
+};
+
+function getFormatDetails(format: string) {
+  return Object.hasOwn(FORMAT_DETAILS, format) ? FORMAT_DETAILS[format]! : {
+    title: format,
+    subtitle: "Custom Quarto format",
+    icon: FileCode2,
+  };
+}
 
 export function QuartoRenderDialog({
   open,
@@ -123,7 +132,7 @@ export function QuartoRenderDialog({
             <fieldset className="space-y-2">
               <legend className="mb-2 text-sm font-medium">Output format</legend>
               {formats.map((format) => {
-                const details = FORMAT_DETAILS[format];
+                const details = getFormatDetails(format);
                 const Icon = details.icon;
                 const selected = selectedFormat === format;
                 return (
@@ -144,17 +153,17 @@ export function QuartoRenderDialog({
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{details.title}</p>
+                      <p className="break-words text-sm font-medium">{details.title}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">{details.subtitle}</p>
                     </div>
-                    <code className="text-[10px] text-muted-foreground">{format}</code>
+                    <code className="max-w-[40%] break-all text-[10px] text-muted-foreground">{format}</code>
                   </label>
                 );
               })}
             </fieldset>
           ) : !visibleError ? (
             <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              No supported output format is configured. Open the Quarto editor and select Word, HTML, or PDF.
+              No output format is configured. Open the Quarto editor and select an output format.
             </p>
           ) : null}
 
@@ -162,7 +171,7 @@ export function QuartoRenderDialog({
             <div className="rounded-xl border border-primary/25 bg-primary/[0.04] px-3.5 py-3">
               <div className="flex items-center gap-2 text-sm font-medium text-primary">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Rendering {selectedFormat ? FORMAT_DETAILS[selectedFormat].title : "book"}…
+                Rendering {selectedFormat ? getFormatDetails(selectedFormat).title : "book"}…
               </div>
               <p className="mt-1 pl-6 text-xs text-muted-foreground">
                 Quarto is processing every configured chapter. Keep this dialog open.

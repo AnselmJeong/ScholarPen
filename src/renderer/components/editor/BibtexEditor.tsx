@@ -8,6 +8,7 @@ import type {
 } from "../../../shared/rpc-types";
 import {
   areBibtexEntriesDuplicates,
+  collectDocumentCitationKeys,
   findDuplicateBibtexGroups,
   parseBibtexEntries,
   type BibtexEntry,
@@ -43,23 +44,7 @@ function flattenDocumentFiles(nodes: FileNode[]): FileNode[] {
 }
 
 function collectCitationKeys(value: unknown, keys = new Set<string>()): Set<string> {
-  if (Array.isArray(value)) {
-    for (const item of value) collectCitationKeys(item, keys);
-    return keys;
-  }
-  if (!value || typeof value !== "object") return keys;
-  const obj = value as Record<string, unknown>;
-  const props = obj.props && typeof obj.props === "object" ? obj.props as Record<string, unknown> : null;
-  if (obj.type === "citation") {
-    const citekey = typeof props?.citekey === "string"
-      ? props.citekey
-      : typeof obj.citekey === "string"
-        ? obj.citekey
-        : "";
-    if (citekey) keys.add(citekey);
-  }
-  for (const nested of Object.values(obj)) collectCitationKeys(nested, keys);
-  return keys;
+  return collectDocumentCitationKeys(value, keys);
 }
 
 function entrySummary(entry: BibtexEntry): string {

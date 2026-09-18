@@ -1,6 +1,9 @@
+import { imageAttachmentAdapter, imagesFromMessage, restoredImageAttachments } from "../../ai/image-attachments";
+import { MAX_MESSAGE_IMAGES } from "@shared/agent-images";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   AssistantRuntimeProvider,
+  AttachmentPrimitive,
   ComposerPrimitive,
   ThreadPrimitive,
   useAui,
@@ -9,7 +12,7 @@ import {
   type MessageState,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { BookOpen, Bot, ChevronDown, ChevronRight, Clipboard, Copy, Globe2, MessageSquare, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
+import { BookOpen, Bot, ChevronDown, ChevronRight, Clipboard, Copy, Globe2, MessageSquare, Paperclip, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type {
+  ActiveDocumentContext,
   AgentMentionableFile,
   AgentSkill,
   AgentThread,
@@ -61,6 +65,8 @@ interface AISidebarProps {
   ollamaStatus: OllamaStatus;
   appSettings?: Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">;
   editor: BlockNoteEditor<any, any, any> | null;
+  activeDocumentName?: string | null;
+  getActiveDocumentContext?: () => ActiveDocumentContext | undefined;
   onClose: () => void;
   width?: number;
   deepenRequest?: DeepenAnalysisRequest | null;
@@ -79,6 +85,7 @@ function savedMessagesToThreadMessages(messages: AgentThreadMessage[]): ThreadMe
     role: message.role,
     content: message.content,
     createdAt: new Date(message.createdAt),
+    attachments: message.role === "user" ? restoredImageAttachments(message.metadata?.images) : undefined,
     status:
       message.role === "assistant"
         ? message.status === "aborted"
@@ -131,9 +138,13 @@ function AssistantMessage({
   const isError = text.trimStart().startsWith("❌") || text.includes("\n\n❌");
 
   if (isUser) {
+    const images = imagesFromMessage(message);
     return (
       <div className="flex justify-end w-full overflow-hidden">
         <div className="max-w-[84%] min-w-0 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground shadow-sm whitespace-pre-wrap break-words overflow-hidden">
+          {images.length > 0 && <div className="mb-2 flex flex-wrap gap-2">
+            {images.map((image, index) => <img key={index} src={image.dataUrl} alt={image.name} title={image.name} className="max-h-48 max-w-full rounded border border-primary-foreground/20 object-contain" />)}
+          </div>}
           {text}
         </div>
       </div>
@@ -524,6 +535,21 @@ function ThreadHistoryPanel({
   );
 }
 
+function ComposerImageAttachment() {
+  const attachment = useAuiState((s) => s.attachment);
+  const image = attachment.content?.find((part) => part.type === "image");
+  const failed = attachment.status.type === "incomplete";
+  return (
+    <AttachmentPrimitive.Root className="relative flex w-28 flex-col gap-1 rounded-md border bg-muted/30 p-2">
+      {image?.type === "image" && <img src={image.image} alt={attachment.name} className="h-16 w-full rounded object-contain" />}
+      <span className="truncate text-[11px]" title={attachment.name}>{attachment.name}</span>
+      {failed && <span role="alert" className="text-[10px] text-destructive">이미지 읽기 실패 · 지원 형식과 5 MB 제한을 확인하세요.</span>}
+      {attachment.status.type === "running" && <span className="text-[10px]">이미지 준비 중…</span>}
+      <AttachmentPrimitive.Remove aria-label="첨부 이미지 제거" className="absolute right-0 top-0 rounded-full border bg-background p-0.5"><X className="h-3 w-3" /></AttachmentPrimitive.Remove>
+    </AttachmentPrimitive.Root>
+  );
+}
+
 function AssistantComposer({
   editor,
   project,
@@ -568,6 +594,8 @@ function AssistantComposer({
   const aui = useAui();
   const input = useAuiState((s) => s.composer.text);
   const isEmpty = useAuiState((s) => s.composer.isEmpty);
+  const attachments = useAuiState((s) => s.composer.attachments);
+  const attachmentsBlocked = attachments.length > MAX_MESSAGE_IMAGES || attachments.some((item) => item.status.type === "incomplete" || item.status.type === "running");
   const loading = useAuiState((s) => s.thread.isRunning);
   const [dropdownIndex, setDropdownIndex] = useState(0);
   const thinkingConfig = agentThinkingConfig(provider, model, thinkingLevel);
@@ -741,12 +769,19 @@ function AssistantComposer({
         </div>
       )}
 
-      <ComposerPrimitive.Root className="space-y-2">
+      <ComposerPrimitive.Root className="space-y-2" onSubmitCapture={(event) => {
+        if (attachmentsBlocked) { event.preventDefault(); event.stopPropagation(); }
+      }}>
+        <div className="flex flex-wrap gap-2"><ComposerPrimitive.Attachments components={{ Attachment: ComposerImageAttachment }} /></div>
+        {attachments.length > MAX_MESSAGE_IMAGES && <p role="alert" className="text-xs text-destructive">이미지는 한 질문에 최대 {MAX_MESSAGE_IMAGES}개까지 첨부할 수 있습니다. 초과 이미지를 제거해 주세요.</p>}
         <ComposerPrimitive.Input
           rows={3}
           submitMode="enter"
-          onKeyDown={handleKeyDown}
-          placeholder={loading ? "응답 수신 중..." : "Scholar Assistant에게 질문 · / instruction · @ 파일"}
+          onKeyDown={(event) => {
+            if (attachmentsBlocked && event.key === "Enter" && !event.shiftKey) { event.preventDefault(); return; }
+            handleKeyDown(event);
+          }}
+          placeholder={loading ? "응답 수신 중..." : "질문 또는 이미지 붙여넣기 · / instruction · @ 파일"}
           disabled={loading}
           className="w-full resize-none rounded-md border border-input bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
         />
@@ -783,6 +818,11 @@ function AssistantComposer({
         {thinkingConfig.notice && <p className="text-[10px] leading-relaxed text-muted-foreground">{thinkingConfig.notice}</p>}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
+            <ComposerPrimitive.AddAttachment multiple asChild>
+              <Button size="icon" variant="ghost" className="h-6 w-6" type="button" aria-label="이미지 파일 첨부" title="이미지 첨부 · PNG, JPEG, WebP, GIF · 각각 5 MB 이하" disabled={loading || attachments.length >= MAX_MESSAGE_IMAGES}>
+                <Paperclip className="h-3 w-3 text-muted-foreground" />
+              </Button>
+            </ComposerPrimitive.AddAttachment>
             <Button
               size="icon"
               variant="ghost"
@@ -827,7 +867,7 @@ function AssistantComposer({
             </ComposerPrimitive.Cancel>
           ) : (
             <ComposerPrimitive.Send asChild>
-              <Button size="icon" className="h-8 w-8" disabled={isEmpty} type="submit">
+              <Button size="icon" className="h-8 w-8" disabled={isEmpty || attachmentsBlocked} type="submit">
                 <Send className="h-3.5 w-3.5" />
               </Button>
             </ComposerPrimitive.Send>
@@ -841,6 +881,8 @@ function AssistantComposer({
 export function AISidebar({
   project,
   ollamaStatus: _ollamaStatus,
+  activeDocumentName,
+  getActiveDocumentContext,
   appSettings,
   editor,
   onClose,
@@ -998,6 +1040,9 @@ export function AISidebar({
   const assistantAdapter = useMemo(
     () =>
       createScholarAgentAdapter(async (_messages, message) => {
+        const activeDocument = getActiveDocumentContext?.();
+        const lastMessage = _messages.at(-1);
+        const images = lastMessage ? imagesFromMessage(lastMessage) : [];
         const deepen = deepenRequestRef.current;
         const isDeepen =
           deepen !== null &&
@@ -1060,6 +1105,7 @@ export function AISidebar({
           }
           await rpc.saveAgentThreadMessage(projectPath, runThread.id, "user", message, "complete", {
             ...requestOptions,
+            images,
             provider: activeProvider,
             model: activeModel,
             analysisMode,
@@ -1073,6 +1119,7 @@ export function AISidebar({
 
         return {
           ...requestOptions,
+          activeDocument: isPreparedRequest ? undefined : activeDocument,
           projectPath,
           provider: activeProvider,
           model: activeModel,
@@ -1150,6 +1197,7 @@ export function AISidebar({
         };
       }),
     [
+      getActiveDocumentContext,
       activeProvider,
       activeModel,
       activeThread,
@@ -1166,7 +1214,7 @@ export function AISidebar({
       onDeepenResult,
     ],
   );
-  const assistantRuntime = useLocalRuntime(assistantAdapter);
+  const assistantRuntime = useLocalRuntime(assistantAdapter, { adapters: { attachments: imageAttachmentAdapter } });
 
   useEffect(() => {
     rpc.getSettings().then(setSettings).catch(console.error);
@@ -1278,6 +1326,10 @@ export function AISidebar({
             {deepenApplyNotice.message}
           </div>
         )}
+
+        {activeDocumentName && <div className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground" title="전송할 때 현재 편집 내용과 저장 전 수정 사항을 자동으로 참조합니다. 긴 문서는 일부가 생략됩니다.">
+          문서 자동 참조: <span className="text-foreground">{activeDocumentName}</span>
+        </div>}
 
         <AssistantThread slashCommands={slashCommands} onOpenProjectSource={onOpenProjectSource} />
 

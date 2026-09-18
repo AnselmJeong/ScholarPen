@@ -30,6 +30,35 @@ afterEach(async () => {
 });
 
 describe("Quarto book rendering", () => {
+  test("blocks duplicate labels across book chapters before starting Quarto", async () => {
+    const fixture = await createFixture("  html: {}", 'echo SHOULD_NOT_RUN');
+    await writeFile(join(fixture.projectDirectory, "_quarto.yml"), 'project:\n  type: book\nbook:\n  chapters:\n    - index.qmd\n    - part: Results\n      chapters: [results.qmd]\nformat:\n  html: {}\n');
+    await writeFile(join(fixture.projectDirectory, "index.qmd"), '# Introduction {#sec-same}\n');
+    await writeFile(join(fixture.projectDirectory, "results.qmd"), '# Results {#sec-same}\n');
+    const result = await renderQuartoBookProject({ ...fixture, format: "html" });
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toContain("sec-same (index.qmd, results.qmd)");
+      expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+    }
+  });
+  test("does not report success when Quarto exits zero with an unresolved internal reference", async () => {
+    const fixture = await createFixture("  html: {}", 'printf "WARNING Unable to resolve crossref @eq-missing\\n" >&2\nexit 0');
+    const result = await renderQuartoBookProject({ ...fixture, format: "html" });
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.exitCode).toBe(0);
+      expect(result.message).toContain("@eq-missing");
+      expect(result.message).toContain("not bibliography citations");
+    }
+  });
+  test.each(["dst-book-typst", "org/journal-pdf"])("passes the exact custom format %s to Quarto", async (format) => {
+    const fixture = await createFixture(`  ${format}: default`, 'printf "arguments:%s %s %s\\n" "$1" "$2" "$3"');
+    const result = await renderQuartoBookProject({ ...fixture, format });
+    expect(result.status).toBe("success");
+    expect(result.stdout).toContain(`arguments:render --to ${format}`);
+  });
+
   test("renders the explicitly selected configured format", async () => {
     const fixture = await createFixture(
       "  html: {}",

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createReactBlockSpec } from "@blocknote/react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
+import { QuartoPropertiesButton } from "./quarto-properties-button";
 
 // ── Math Block ──────────────────────────────────────────────────────────────
 // Renders a LaTeX equation using KaTeX.
@@ -106,7 +107,9 @@ export const mathBlock = createReactBlockSpec(
 
       return (
         <div id={block.props.label || undefined} className="my-1 w-full select-none rounded-md border border-border bg-card px-4 py-1 text-card-foreground">
-          <div className="mb-1 text-xs text-muted-foreground">Math</div>
+          <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">Math
+            <QuartoPropertiesButton editor={editor} blockId={block.id} label={block.props.label} />
+          </div>
           {editing ? (
             <MathEditor formula={block.props.formula} onCommit={handleCommit} />
           ) : (

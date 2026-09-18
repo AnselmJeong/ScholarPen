@@ -2,9 +2,21 @@
 
 import type { BibtexParseIssue } from "./bibtex-utils";
 
+export interface AgentImage {
+  name: string;
+  dataUrl: string;
+}
+
+export interface ActiveDocumentContext {
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
 export interface OllamaMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  images?: AgentImage[];
 }
 
 export interface OllamaChatRequest {
@@ -52,7 +64,19 @@ export interface ProjectInfo {
   lastModified: number;
 }
 
-export type QuartoRenderFormat = "docx" | "html" | "typst";
+export type QuartoRenderFormat = string;
+
+export interface QuartoExtensionFormat {
+  name: string;
+  baseFormat: string;
+  title: string;
+  manifestPath: string;
+}
+
+export interface QuartoExtensionDiscovery {
+  formats: QuartoExtensionFormat[];
+  warnings: string[];
+}
 
 export type QuartoRenderResult =
   | {
@@ -175,6 +199,7 @@ export interface ModelProviderSettings {
 export interface AgentMessage {
   role: "user" | "assistant";
   content: string;
+  images?: AgentImage[];
 }
 
 export interface AgentThread {
@@ -224,6 +249,8 @@ export type AgentThinkingLevel = "none" | "low" | "medium" | "high";
 
 export interface AgentStreamParams {
   message: string;
+  images?: AgentImage[];
+  activeDocument?: ActiveDocumentContext;
   projectPath: string | null;
   history: AgentMessage[];
   provider: LLMProvider;

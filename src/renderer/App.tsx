@@ -28,6 +28,7 @@ import type {
   ProjectInfo,
   QuartoRenderFormat,
   QuartoRenderResult,
+  QuartoExtensionDiscovery,
 } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import {
@@ -67,6 +68,7 @@ export function App() {
   const [exportTargets, setExportTargets]             = useState<FileNode[]>([]);
   const [quartoBookDialogOpen, setQuartoBookDialogOpen] = useState(false);
   const [quartoBookYaml, setQuartoBookYaml]           = useState<string | null>(null);
+  const [quartoExtensions, setQuartoExtensions] = useState<QuartoExtensionDiscovery>({ formats: [], warnings: [] });
   const [quartoBookLoading, setQuartoBookLoading]     = useState(false);
   const [quartoBookLoadError, setQuartoBookLoadError] = useState<string | null>(null);
   const [quartoRenderDialogOpen, setQuartoRenderDialogOpen] = useState(false);
@@ -259,8 +261,13 @@ export function App() {
     setQuartoBookLoading(true);
     setQuartoBookLoadError(null);
     setQuartoBookYaml(null);
+    setQuartoExtensions({ formats: [], warnings: [] });
     try {
-      const latestTree = await rpc.listProjectFiles(activeProject.path);
+      const [latestTree, extensions] = await Promise.all([
+        rpc.listProjectFiles(activeProject.path),
+        rpc.discoverQuartoExtensions(activeProject.path),
+      ]);
+      setQuartoExtensions(extensions);
       setFileTree(latestTree);
       const configNode = findQuartoConfigNode(latestTree);
       setQuartoBookYaml(configNode ? await rpc.readTextFile(configNode.path) : null);
@@ -292,7 +299,7 @@ export function App() {
       const formats = getQuartoRenderFormats(configSource);
       if (formats.length === 0) {
         throw new Error(
-          "No supported format is configured in exports/_quarto.yml. Select Word, HTML, or PDF in the Quarto book editor.",
+          "No output format is configured in exports/_quarto.yml. Select an output format in the Quarto book editor.",
         );
       }
       setQuartoRenderFormats(formats);
@@ -445,6 +452,7 @@ export function App() {
         blocks as any,
         format,
         title,
+        { filename: docName + ext },
       );
       await rpc.exportFile(activeProject.path, docName + ext, markdown);
     }
@@ -463,6 +471,7 @@ export function App() {
     bibliographyFiles,
     formats,
     existingYaml,
+    extensionFormats,
   }: QuartoBookSetup) => {
     if (!activeProject) throw new Error("Open a project first.");
 
@@ -487,6 +496,7 @@ export function App() {
       bibliographyFiles,
       formats,
       existingYaml,
+      extensionFormats,
     });
 
     if (cslFile) {
@@ -812,6 +822,8 @@ export function App() {
                 ollamaStatus={ollamaStatus}
                 appSettings={appSettings}
                 editor={editorRef.current}
+                activeDocumentName={activeFile?.kind === "document" ? activeFile.name : null}
+                getActiveDocumentContext={() => editorGroupRef.current?.getActiveDocumentContext()}
                 onClose={() => setAiSidebarOpen(false)}
                 width={aiSidebarWidth}
                 deepenRequest={pendingDeepenRequest}
@@ -861,6 +873,7 @@ export function App() {
         onOpenChange={setQuartoBookDialogOpen}
         qmdFilenames={quartoChapterFilenames}
         initialYaml={quartoBookYaml}
+        extensions={quartoExtensions}
         loading={quartoBookLoading}
         loadError={quartoBookLoadError}
         onGenerate={handleGenerateQuartoBook}

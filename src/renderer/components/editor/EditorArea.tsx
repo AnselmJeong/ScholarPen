@@ -34,6 +34,7 @@ import "@blocknote/mantine/style.css";
 import { Sparkles } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
+import { FigureDocumentContext } from "../../blocks/figure-image";
 import { scholarSchema } from "../../blocks/schema";
 import {
   getScholarSlashMenuItems,
@@ -61,6 +62,11 @@ import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
 import { createDeepenAnalysisRequest } from "../../ai/deepen-analysis";
 import type { FindCitationRequest } from "../../ai/find-citation";
 import { createFindCitationRequest } from "../../ai/find-citation";
+import { referenceSuggestions } from "../../blocks/reference-suggestions";
+import { mergeProjectReferences, type ReferenceDocument } from "../../../shared/project-references";
+import { QuartoPropertiesDialog } from "./QuartoPropertiesDialog";
+import { QuartoBlockControls } from "./QuartoBlockControls";
+import { LABEL_PREFIXES, normalizeQuartoBlocks } from "../../../shared/quarto-references";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -131,6 +137,7 @@ const BLOCK_TYPE_ITEMS = [
   { type: "heading",         label: "Heading 1",        props: { level: 1 } },
   { type: "heading",         label: "Heading 2",        props: { level: 2 } },
   { type: "heading",         label: "Heading 3",        props: { level: 3 } },
+  { type: "heading",         label: "Heading 4",        props: { level: 4 } },
   { type: "bulletListItem",  label: "Bullet List",      props: {} },
   { type: "numberedListItem",label: "Numbered List",    props: {} },
   { type: "checkListItem",   label: "Check List",       props: {} },
@@ -171,8 +178,16 @@ function BlockTypeDragItem() {
   );
 }
 
+function QuartoPropertiesDragItem({ onOpen }: { onOpen: (id: string) => void }) {
+  const editor = useBlockNoteEditor();
+  const components = useComponentsContext();
+  const block = (editor.getExtension("sideMenu") as any)?.store?.state?.block ?? editor.getTextCursorPosition().block;
+  if (!components || !LABEL_PREFIXES[block.type]) return null;
+  return <components.Generic.Menu.Item className="bn-menu-item" onClick={() => onOpen(block.id)}>Quarto properties…</components.Generic.Menu.Item>;
+}
+
 function normalizeDocumentContent(content: unknown) {
-  if (Array.isArray(content) && content.length > 0) return content;
+  if (Array.isArray(content) && content.length > 0) return normalizeQuartoBlocks(content);
   return [{ type: "paragraph", content: "" }];
 }
 
@@ -226,6 +241,7 @@ export function EditorArea({
   const [doiLoading, setDoiLoading] = useState(false);
   const [doiError, setDoiError] = useState<string | null>(null);
   const [documentReady, setDocumentReady] = useState(false);
+  const [propertiesBlockId, setPropertiesBlockId] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
   const [findScope, setFindScope] = useState<"document" | "project">("document");
@@ -325,6 +341,22 @@ export function EditorArea({
   useEffect(() => {
     citekeysRef.current = citekeys;
   }, [citekeys]);
+
+  const getReferenceItems = useCallback(async (query: string) => {
+    if (!project) return referenceSuggestions(editor, citekeysRef.current, query);
+    const loadSeq = loadRequestSeqRef.current;
+    let saved: ReferenceDocument[] = [];
+    let failed = false;
+    try { saved = await rpc.listProjectReferences(project.path); }
+    catch (error) { console.error("Project references could not be loaded", error); failed = true; }
+    // Do not populate a newly switched document with an older project's results.
+    if (loadSeq !== loadRequestSeqRef.current) return [];
+    const references = mergeProjectReferences(saved, project.path,
+      getOpenDocumentSnapshots?.() ?? new Map(),
+      documentFilename || "manuscript.scholarpen.json", editor.document);
+    if (failed) references.errors.push("Project index unavailable; close and reopen @ to retry");
+    return referenceSuggestions(editor, citekeysRef.current, query, references);
+  }, [editor, project?.path, documentFilename, getOpenDocumentSnapshots]);
 
   const updateSaveStatus = useCallback((status: SaveStatus) => {
     if (saveStatusRef.current === status) return;
@@ -675,6 +707,8 @@ export function EditorArea({
           </>
         )}
       </div>
+      {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={propertiesBlockId}
+        editor={editor} blockId={propertiesBlockId} onClose={() => setPropertiesBlockId(null)} />}
       <div
         ref={scrollContainerRef}
         className="flex-1 overflow-y-auto"
@@ -683,6 +717,9 @@ export function EditorArea({
       >
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
         <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+          <QuartoBlockControls editor={editor} enabled={documentReady} onOpen={setPropertiesBlockId}>
+          <FigureDocumentContext.Provider value={{ projectPath: project.path,
+            documentPath: `${project.path}/documents/${documentFilename || "manuscript.scholarpen.json"}` }}>
           <BlockNoteView
             editor={editor}
             onChange={handleChange}
@@ -696,6 +733,7 @@ export function EditorArea({
                   dragHandleMenu={(props) => (
                     <DragHandleMenu {...props}>
                       <BlockTypeDragItem />
+                      <QuartoPropertiesDragItem onOpen={setPropertiesBlockId} />
                       <BlockColorsItem {...props}>Colors</BlockColorsItem>
                       <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
                     </DragHandleMenu>
@@ -717,29 +755,10 @@ export function EditorArea({
                 },
               ]}
             />
-            {/* @ → citation picker from references.bib */}
+            {/* @ → document cross-references and bibliography citations */}
             <SuggestionMenuController
               triggerCharacter="@"
-              getItems={async (query) => {
-                const filtered = citekeysRef.current.filter((k) =>
-                  k.toLowerCase().includes(query.toLowerCase())
-                );
-                if (filtered.length === 0) return [];
-                return filtered.map((key) => ({
-                  title: key,
-                  group: "Citations",
-                  icon: (
-                    <span className="text-xs font-mono font-bold leading-none">
-                      [@]
-                    </span>
-                  ),
-                  subtext: "Insert inline citation",
-                  onItemClick: () =>
-                    editor.insertInlineContent([
-                      { type: "citation", props: { citekey: key, locator: "" } },
-                    ]),
-                }));
-              }}
+              getItems={getReferenceItems}
             />
             {/* / → main slash menu: Scholar → Headings → other defaults → AI */}
             <SuggestionMenuController
@@ -807,6 +826,8 @@ export function EditorArea({
               )}
             />
           </BlockNoteView>
+          </FigureDocumentContext.Provider>
+          </QuartoBlockControls>
         </div>
       </div>
 

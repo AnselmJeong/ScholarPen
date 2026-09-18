@@ -8,6 +8,8 @@ import { figureBlock } from "./figure-block";
 import { abstractBlock } from "./abstract-block";
 import { citationInline, footnoteInline } from "./citation-inline";
 import { inlineMath } from "./inline-math";
+import { crossReferenceInline, quartoLiteralInline } from "./cross-reference-inline";
+import { quartoHeading, quartoTable } from "./quarto-block-specs";
 
 // ── Scholar BlockNote Schema ────────────────────────────────────────────────
 // Extends the default schema with scholar-specific block and inline types.
@@ -15,6 +17,8 @@ import { inlineMath } from "./inline-math";
 export const scholarSchema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
+    heading: quartoHeading,
+    table: quartoTable,
     math: mathBlock(),
     figure: figureBlock(),
     abstract: abstractBlock(),
@@ -24,6 +28,8 @@ export const scholarSchema = BlockNoteSchema.create({
     citation: citationInline,
     footnote: footnoteInline,
     inlineMath: inlineMath,
+    crossReference: crossReferenceInline,
+    quartoLiteral: quartoLiteralInline,
   },
 });
 

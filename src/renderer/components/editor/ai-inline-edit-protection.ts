@@ -88,6 +88,7 @@ function detectSourceLanguage(text: string): SourceLanguage {
 
 function nodePreview(node: ProseMirrorNode) {
   const attrs = node.attrs as Record<string, unknown>;
+  if (node.type.name === "crossReference") return `@${attrs.label ?? ""}`;
   if (node.type.name === "citation") {
     const citekey = typeof attrs.citekey === "string" ? attrs.citekey : "citation";
     const locator = typeof attrs.locator === "string" && attrs.locator ? `, ${attrs.locator}` : "";

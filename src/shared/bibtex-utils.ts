@@ -1,3 +1,5 @@
+import { isQuartoReference } from "./quarto-references";
+
 export interface BibtexEntry {
   entryType: string;
   citekey: string;
@@ -294,7 +296,7 @@ export function collectDocumentCitationKeys(
       : typeof obj.citekey === "string"
         ? obj.citekey
         : "";
-    if (citekey.trim()) keys.add(citekey.trim());
+    if (citekey.trim() && !isQuartoReference(citekey.trim())) keys.add(citekey.trim());
   }
   Object.values(obj).forEach((nested) => collectDocumentCitationKeys(nested, keys));
   return keys;
@@ -681,7 +683,7 @@ export function remapDocumentCitationKeys(
           ? obj
           : null;
       const citekey = citekeyOwner?.citekey;
-      if (citekeyOwner && typeof citekey === "string") {
+      if (citekeyOwner && typeof citekey === "string" && !isQuartoReference(citekey)) {
         const replacement = exact.get(citekey)
           ?? caseInsensitive.get(citekey.toLocaleLowerCase());
         if (replacement && replacement !== citekey) {

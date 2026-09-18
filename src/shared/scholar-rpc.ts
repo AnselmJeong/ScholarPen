@@ -1,4 +1,5 @@
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
+import type { ReferenceDocument } from "./project-references";
 import type {
   OllamaStatus,
   ProjectInfo,
@@ -21,6 +22,7 @@ import type {
   ProjectSourcesStatus,
   QuartoRenderFormat,
   QuartoRenderResult,
+  QuartoExtensionDiscovery,
 } from "./rpc-types";
 
 // Requests Bun handles (Webview → Bun)
@@ -47,6 +49,7 @@ type BunRequests = RPCSchema<{
       response: void;
     };
     loadDocument: { params: { projectPath: string; filename: string }; response: unknown };
+    listProjectReferences: { params: { projectPath: string }; response: ReferenceDocument[] };
     createDocument: { params: { projectPath: string; filename: string; content?: unknown }; response: string };
     // Legacy (backward compat)
     saveManuscript: { params: { projectPath: string; content: unknown }; response: void };
@@ -100,6 +103,7 @@ type BunRequests = RPCSchema<{
     listProjectFiles: { params: { projectPath: string }; response: FileNode[] };
     openFolderDialog: { params: void; response: string | null };
     // Export
+    discoverQuartoExtensions: { params: { projectPath: string }; response: QuartoExtensionDiscovery };
     exportFile: { params: { projectPath: string; filename: string; content: string }; response: string };
     renderQuartoBook: {
       params: { projectPath: string; format: QuartoRenderFormat };
@@ -108,6 +112,8 @@ type BunRequests = RPCSchema<{
     // File management
     readTextFile: { params: { filePath: string }; response: string };
     readBinaryFile: { params: { filePath: string }; response: string };
+    selectFigure: { params: { projectPath: string }; response: import("./figure-files").FigureSelection | null };
+    readFigure: { params: { projectPath: string; sourcePath: string }; response: string };
     renameFile: { params: { filePath: string; newName: string }; response: string };
     deleteFile: { params: { filePath: string }; response: void };
     // Settings

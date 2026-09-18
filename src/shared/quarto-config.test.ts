@@ -11,6 +11,45 @@ import {
 } from "./quarto-config";
 
 describe("Quarto book configuration", () => {
+  test("adds an extension as the only selected format and round-trips its options and comments", () => {
+    const existingYaml = `# Book layout\nformat:\n  dst-book-typst: # keep layout\n    papersize: jis-b5\n    toc: true\n  docx: default\n`;
+    const values = parseQuartoBookConfig(existingYaml, []);
+    expect(values.formats).toEqual(["docx", "dst-book-typst"]);
+    const yaml = buildQuartoBookConfig({
+      ...values, title: "Book", authors: ["Author"], cslFilename: "style.csl",
+      qmdFilenames: ["index.qmd"], formats: ["dst-book-typst"],
+      extensionFormats: ["dst-book-typst"], existingYaml,
+    });
+    expect(parse(yaml).format).toEqual({ "dst-book-typst": { papersize: "jis-b5", toc: true } });
+    expect(yaml).toContain("# keep layout");
+    expect(getQuartoRenderFormats(yaml)).toEqual(["dst-book-typst"]);
+  });
+
+  test.each(["format: docx", "format: [docx, epub]", "format:\n  docx: default"])("adds discovered formats to %s", (existingYaml) => {
+    const yaml = buildQuartoBookConfig({
+      ...parseQuartoBookConfig(existingYaml, []), title: "Book", authors: ["Author"],
+      cslFilename: "style.csl", qmdFilenames: ["index.qmd"],
+      formats: ["docx", "dst-book-typst"], extensionFormats: ["dst-book-typst"], existingYaml,
+    });
+    expect(parse(yaml).format["dst-book-typst"]).toEqual({});
+    expect(getQuartoRenderFormats(yaml)).toContain("dst-book-typst");
+  });
+
+  test("removes a deselected extension while preserving unrelated formats", () => {
+    const existingYaml = "format:\n  dst-book-typst: default\n  epub: {toc: true}\n";
+    const yaml = buildQuartoBookConfig({
+      ...parseQuartoBookConfig(existingYaml, []), title: "Book", authors: ["Author"],
+      cslFilename: "style.csl", qmdFilenames: ["index.qmd"],
+      formats: ["html"], extensionFormats: ["dst-book-typst"], existingYaml,
+    });
+    expect(parse(yaml).format).toEqual({ html: {}, epub: { toc: true } });
+  });
+
+  test("renders custom and namespaced configured formats without accepting CLI options or paths", () => {
+    expect(getQuartoRenderFormats("format: [docx, dst-book-typst, org/journal-pdf, pdf, '--help', '../file']"))
+      .toEqual(["docx", "dst-book-typst", "org/journal-pdf", "pdf"]);
+  });
+
   test("pins index first and naturally sorts the remaining QMD filenames", () => {
     expect(sortQuartoChapterFilenames([
       "10 conclusion.qmd",
@@ -133,7 +172,7 @@ format:
     expect(parsed.csl).toBe("journal-style.csl");
     expect(parsed.format.docx).toEqual({
       toc: false,
-      "number-sections": false,
+      "number-sections": true,
     });
     expect(parsed.format.html).toEqual({});
     expect(parsed.format.typst).toEqual({});

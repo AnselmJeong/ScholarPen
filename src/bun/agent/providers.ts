@@ -1,3 +1,4 @@
+import { openAIImageMessages, validateAgentImages } from "../../shared/agent-images";
 import type { AgentThinkingLevel, AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
 import { agentThinkingConfig } from "../../shared/agent-thinking";
 import { resolveOllamaConnection } from "../../shared/ollama-connection";
@@ -62,11 +63,20 @@ async function* streamSse(response: Response): AsyncGenerator<Record<string, any
   }
 }
 
-function splitSystem(messages: OllamaMessage[]): { system: string; messages: Array<{ role: "user" | "assistant"; content: string }> } {
+function splitSystem(messages: OllamaMessage[]) {
   const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
   const rest = messages
     .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+    .map((m) => {
+      const images = validateAgentImages(m.images);
+      return { role: m.role, content: images.length ? [
+        { type: "text", text: m.content },
+        ...images.map((image) => {
+          const [header, data] = image.dataUrl.split(",");
+          return { type: "image", source: { type: "base64", media_type: header.slice(5, -7), data } };
+        }),
+      ] : m.content };
+    });
   return { system, messages: rest };
 }
 
@@ -88,7 +98,7 @@ export async function completeAgentModel(
       },
       body: JSON.stringify({
         model: request.model || settings.ollamaDefaultModel,
-        messages: request.messages,
+        messages: openAIImageMessages(request.messages),
         stream: false,
         ...agentThinkingConfig("ollama", request.model || settings.ollamaDefaultModel).fields,
         max_tokens: maxTokens,
@@ -143,7 +153,7 @@ export async function completeAgentModel(
     },
     body: JSON.stringify({
       model: request.model || (isDeepSeek ? settings.deepseekDefaultModel : settings.openaiDefaultModel),
-      messages: request.messages,
+      messages: openAIImageMessages(request.messages),
       temperature,
       max_tokens: maxTokens,
     }),
@@ -178,7 +188,7 @@ export async function* streamAgentModel(
       },
       body: JSON.stringify({
         model: request.model || settings.ollamaDefaultModel,
-        messages: request.messages,
+        messages: openAIImageMessages(request.messages),
         stream: true,
         ...thinking.fields,
       }),
@@ -232,7 +242,7 @@ export async function* streamAgentModel(
     },
     body: JSON.stringify({
       model: request.model || (isDeepSeek ? settings.deepseekDefaultModel : settings.openaiDefaultModel),
-      messages: request.messages,
+      messages: openAIImageMessages(request.messages),
       stream: true,
       ...thinking.fields,
     }),

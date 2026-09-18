@@ -135,6 +135,31 @@ body {
 }
 
 /* ── BlockNote editor overrides ─────────────────────────────────── */
+.quarto-block-controls-host {
+  position: relative;
+}
+.quarto-block-properties {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+.quarto-block-properties:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+.quarto-block-properties:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
 .bn-editor,
 .bn-container,
 .bn-editor .bn-block-group,
@@ -200,33 +225,36 @@ body {
 }
 
 /* Headings: system-ui for structural clarity */
-/* BlockNote sizes the wrapper in em too; reset it so heading sizes do not multiply. */
-.bn-editor .bn-block-content[data-content-type="heading"]:not([data-level]),
-.bn-editor .bn-block-content[data-content-type="heading"][data-level="1"],
-.bn-editor .bn-block-content[data-content-type="heading"][data-level="2"] {
-  font-size: 16px !important;
+/* Normalize every wrapper: BlockNote's level multiplier must not compound
+   with the heading element's size (including imported H5/H6). */
+.bn-editor .bn-block-content[data-content-type="heading"] {
+  font-size: 1rem !important;
 }
 
-.bn-editor h1,
-.bn-editor h2,
-.bn-editor h3 {
+.bn-editor .bn-block-content :is(h1, h2, h3, h4, h5, h6) {
   font-family: system-ui, -apple-system, sans-serif;
   color: #1e1b4b;
   letter-spacing: -0.01em;
 }
 
-.dark .bn-editor h1,
-.dark .bn-editor h2,
-.dark .bn-editor h3 {
+.dark .bn-editor .bn-block-content :is(h1, h2, h3, h4, h5, h6) {
   color: hsl(240 20% 92%);
 }
 
-.bn-editor h1 { font-size: 1.5em; line-height: 1.3;  font-weight: 700; }
-.bn-editor h2 { font-size: 1.25em; line-height: 1.4; font-weight: 600; }
-.bn-editor h3 { font-size: 1.2em; line-height: 1.4;  font-weight: 600; }
+/* Outrank .bn-default-styles hN regardless of stylesheet load order.
+   At the default root size: 32 / 26 / 21 / 18px over 16px body text. */
+.bn-editor .bn-block-content h1 { font-size: 2rem;      line-height: 1.3; font-weight: 700; }
+.bn-editor .bn-block-content h2 { font-size: 1.625rem;  line-height: 1.4; font-weight: 700; }
+.bn-editor .bn-block-content h3 { font-size: 1.3125rem; line-height: 1.4; font-weight: 600; }
+.bn-editor .bn-block-content h4 { font-size: 1.125rem;  line-height: 1.5; font-weight: 600; }
+.bn-editor .bn-block-content h5 { font-size: 1rem;      line-height: 1.5; font-weight: 600; }
+.bn-editor .bn-block-content h6 { font-size: 1rem;      line-height: 1.5; font-weight: 500; }
 
-.scholar-markdown h1 { font-size: 1.5em; line-height: 1.3; }
-.scholar-markdown h2 { font-size: 1.25em; line-height: 1.4; }
+/* Keep the same hierarchy in Markdown previews while respecting their zoom. */
+.scholar-markdown h1 { font-size: 2em;      line-height: 1.3; }
+.scholar-markdown h2 { font-size: 1.625em;  line-height: 1.4; }
+.scholar-markdown h3 { font-size: 1.3125em; line-height: 1.4; }
+.scholar-markdown h4 { font-size: 1.125em;  line-height: 1.5; }
 .scholar-markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.25em 0; }
 
 /* ── Text-find highlights (DOM <mark> injection) ─────────────────── */

@@ -1,3 +1,5 @@
+import { snapshotActiveDocument } from "@shared/active-document-context";
+import type { ActiveDocumentContext } from "@shared/rpc-types";
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
 import { documentRelativeFilename } from "../../utils/document-tree";
 import React, {
@@ -36,6 +38,7 @@ export interface EditorPaneGroupHandle {
   saveActiveEditor: () => void;
   closeFileByPath: (filePath: string) => void;
   getDocumentSnapshot: (filePath: string) => unknown[] | null;
+  getActiveDocumentContext: () => ActiveDocumentContext | undefined;
   openProjectFindReplace: () => boolean;
 }
 
@@ -230,6 +233,15 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       },
 
       saveActiveEditor: saveActiveEditorNow,
+
+      getActiveDocumentContext() {
+        const pane = focusedPaneRef.current === "left"
+          ? leftPaneRef.current : (rightPaneRef.current ?? leftPaneRef.current);
+        const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
+        if (!tab || tab.file.kind !== "document") return undefined;
+        const editor = editorMapRef.current.get(tab.id);
+        return editor ? snapshotActiveDocument(tab.file.path, editor.document) : undefined;
+      },
 
       getDocumentSnapshot(filePath: string) {
         const tabs = [

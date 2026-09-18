@@ -1,3 +1,4 @@
+import { imagesFromMessage } from "./image-attachments";
 import type { ChatModelAdapter, ThreadMessage } from "@assistant-ui/react";
 import type { AgentStreamParams } from "@shared/rpc-types";
 import {
@@ -40,10 +41,11 @@ function compactHistory(messages: readonly ThreadMessage[]): AgentStreamParams["
   for (const message of messages.slice(0, -1).reverse()) {
     if (message.role !== "user" && message.role !== "assistant") continue;
     const content = trimHistoryText(textFromMessage(message));
-    if (!content) continue;
+    const images = imagesFromMessage(message);
+    if (!content && !images.length) continue;
     if (message.role === "assistant" && content.startsWith("❌")) continue;
     if (total + content.length > HISTORY_TOTAL_LIMIT) break;
-    history.unshift({ role: message.role, content });
+    history.unshift({ role: message.role, content, ...(images.length ? { images } : {}) });
     total += content.length;
     if (history.length >= 8) break;
   }
@@ -60,7 +62,8 @@ export function createScholarAgentAdapter(
   return {
     async *run({ messages, abortSignal }) {
       const last = messages.at(-1);
-      const message = last ? textFromMessage(last) : "";
+      const images = last ? imagesFromMessage(last) : [];
+      const message = (last ? textFromMessage(last) : "") || (images.length ? "첨부한 이미지를 설명해 주세요." : "");
       const {
         onComplete,
         ignoreHistory,
@@ -97,6 +100,7 @@ export function createScholarAgentAdapter(
           await rpc.agentStream({
             ...base,
             message,
+            images,
             history: ignoreHistory ? [] : compactHistory(messages),
           });
         } catch (error) {

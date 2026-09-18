@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { parseQuartoBookConfig } from "@shared/quarto-config";
 import type { QuartoBookFormat } from "@shared/quarto-config";
+import type { QuartoExtensionDiscovery } from "@shared/rpc-types";
 
 export interface QuartoBookSetup {
   title: string;
@@ -36,6 +37,7 @@ export interface QuartoBookSetup {
   bibliographyFiles: string[];
   formats: QuartoBookFormat[];
   existingYaml: string | null;
+  extensionFormats: string[];
 }
 
 interface QuartoBookDialogProps {
@@ -43,6 +45,7 @@ interface QuartoBookDialogProps {
   onOpenChange: (open: boolean) => void;
   qmdFilenames: string[];
   initialYaml: string | null;
+  extensions: QuartoExtensionDiscovery;
   loading: boolean;
   loadError: string | null;
   onGenerate: (setup: QuartoBookSetup) => Promise<void>;
@@ -63,6 +66,7 @@ export function QuartoBookDialog({
   onOpenChange,
   qmdFilenames,
   initialYaml,
+  extensions,
   loading,
   loadError,
   onGenerate,
@@ -80,6 +84,12 @@ export function QuartoBookDialog({
   const [error, setError] = useState<string | null>(null);
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const customFormats = useMemo(() => {
+    let configured: string[] = [];
+    try { configured = parseQuartoBookConfig(initialYaml, []).formats; } catch { /* Shown below. */ }
+    return [...new Set([...extensions.formats.map((format) => format.name), ...configured])]
+      .filter((format) => !(FORMAT_ORDER as readonly string[]).includes(format));
+  }, [initialYaml, extensions]);
 
   useEffect(() => {
     if (!open || loading) return;
@@ -159,7 +169,7 @@ export function QuartoBookDialog({
       const selected = new Set(current);
       if (selected.has(format)) selected.delete(format);
       else selected.add(format);
-      return FORMAT_ORDER.filter((candidate) => selected.has(candidate));
+      return [...FORMAT_ORDER, ...customFormats].filter((candidate) => selected.has(candidate));
     });
   };
 
@@ -179,6 +189,7 @@ export function QuartoBookDialog({
         bibliographyFiles: normalizedBibliographies,
         formats,
         existingYaml: initialYaml,
+        extensionFormats: customFormats,
       });
       onOpenChange(false);
     } catch (generationError) {
@@ -345,6 +356,30 @@ export function QuartoBookDialog({
                 <p className="text-[10px] leading-relaxed text-muted-foreground">
                   PDF is stored as <span className="font-mono">typst</span> in YAML. Existing options for selected formats are preserved.
                 </p>
+                {customFormats.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Additional formats</Label>
+                    {customFormats.map((format) => {
+                      const extension = extensions.formats.find((item) => item.name === format);
+                      return (
+                        <label key={format} className={`flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-3 ${formats.includes(format) ? "border-primary/50 bg-primary/[0.06]" : "border-border hover:bg-muted/40"}`}>
+                          <input type="checkbox" checked={formats.includes(format)} onChange={() => toggleFormat(format)} className="mt-0.5 h-3.5 w-3.5 accent-primary" />
+                          <div className="min-w-0">
+                            <p className="break-all text-xs font-semibold">{format}</p>
+                            <p className="mt-1 text-[10px] text-muted-foreground">{extension ? `${extension.title} · ${extension.baseFormat}` : "Configured in _quarto.yml"}</p>
+                          </div>
+                        </label>
+                      );
+                    })}
+                    <p className="text-[10px] text-muted-foreground">Save selected formats to make them available in Render.</p>
+                  </div>
+                )}
+                {extensions.warnings.length > 0 && (
+                  <div role="status" className="rounded-lg bg-amber-500/10 p-3 text-xs">
+                    <p>Some extensions could not be loaded:</p>
+                    {extensions.warnings.map((warning, index) => <p key={index} className="mt-1 break-words">{warning}</p>)}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2.5">

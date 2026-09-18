@@ -23,6 +23,8 @@ import {
   remapDocumentCitationKeys,
 } from "../../shared/bibtex-utils";
 import { seedAppInstructions } from "../agent/app-skills";
+import { ProjectReferenceIndex } from "./project-references";
+import { linkSelectedFigure, readLinkedFigure } from "./figure-files";
 
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
@@ -208,6 +210,7 @@ export async function initializeProjectSkeleton(
 
 class FileSystemManager {
   private allowedProjectPaths = new Set<string>();
+  private referenceIndex = new ProjectReferenceIndex();
 
   private markProjectPath(projectPath: string): string {
     const resolved = resolve(projectPath);
@@ -479,6 +482,11 @@ class FileSystemManager {
     const filePath = await this.documentFilePath(projectPath, filename);
     const raw = await readFile(filePath, "utf-8");
     return JSON.parse(raw);
+  }
+
+  async listProjectReferences(projectPath: string) {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    return this.referenceIndex.read(projectPath, (filename) => this.loadDocument(projectPath, filename));
   }
 
   async createDocument(projectPath: string, filename: string, content?: unknown): Promise<string> {
@@ -817,6 +825,24 @@ class FileSystemManager {
     filePath = await this.assertProjectFilePath(filePath);
     const buf = await readFile(filePath);
     return buf.toString("base64");
+  }
+
+  async selectFigure(projectPath: string) {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    const { Utils } = await import("electrobun/bun");
+    const selected = await Utils.openFileDialog({
+      startingFolder: projectPath,
+      allowedFileTypes: "png,jpg,jpeg,gif,svg,webp,avif,bmp",
+      canChooseFiles: true, canChooseDirectory: false, allowsMultipleSelection: false,
+    });
+    // Electrobun 1.16 returns [""] on cancellation and splits paths on commas.
+    // Joining recovers a single selected filename containing commas.
+    const path = selected.join(",");
+    return path ? linkSelectedFigure(projectPath, path) : null;
+  }
+
+  async readFigure(projectPath: string, sourcePath: string): Promise<string> {
+    return readLinkedFigure(await this.assertKnownProjectPath(projectPath), sourcePath);
   }
 
   async renameFile(filePath: string, newName: string): Promise<string> {

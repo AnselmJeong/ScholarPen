@@ -3,6 +3,7 @@
 
 import { Electroview } from "electrobun/view";
 import type { ScholarRPC } from "../shared/scholar-rpc";
+import type { ReferenceDocument } from "../shared/project-references";
 import type {
   OllamaStatus,
   ProjectInfo,
@@ -25,6 +26,7 @@ import type {
   ProjectSourcesStatus,
   QuartoRenderFormat,
   QuartoRenderResult,
+  QuartoExtensionDiscovery,
 } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 
@@ -37,6 +39,8 @@ type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 type BibliographyValidationProgressHandler = (progress: BibliographyValidationProgress) => void;
 
 const strictRpcMethods = new Set([
+  "selectFigure",
+  "readFigure",
   "createProject",
   "openProject",
   "openProjectByPath",
@@ -189,6 +193,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     createProject: { name: "demo", path: "/demo", files: [], lastModified: Date.now() },
     loadManuscript: [],
     loadDocument: [],
+    listProjectReferences: [],
     loadBibtex: "",
     mergeBibtex: {
       bibtex: "",
@@ -227,6 +232,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     openFolderDialog: null,
     createDocument: "new-doc.scholarpen.json",
     exportFile: "/demo/exports/doc.md",
+    discoverQuartoExtensions: { formats: [], warnings: [] },
     renderQuartoBook: {
       status: "success",
       format: "html",
@@ -310,6 +316,8 @@ export const rpc = {
   ) => call<void>("saveDocuments", { projectPath, documents }),
   loadDocument: (projectPath: string, filename: string) =>
     call<unknown>("loadDocument", { projectPath, filename }),
+  listProjectReferences: (projectPath: string) =>
+    call<ReferenceDocument[]>("listProjectReferences", { projectPath }),
   createDocument: (projectPath: string, filename: string, content?: unknown) =>
     call<string>("createDocument", { projectPath, filename, content }),
   // ── Legacy ────────────────────────────────────────────
@@ -370,11 +378,17 @@ export const rpc = {
     call<string>("exportFile", { projectPath, filename, content }),
   renderQuartoBook: (projectPath: string, format: QuartoRenderFormat) =>
     call<QuartoRenderResult>("renderQuartoBook", { projectPath, format }),
+  discoverQuartoExtensions: (projectPath: string) =>
+    call<QuartoExtensionDiscovery>("discoverQuartoExtensions", { projectPath }),
   // ── File Management ───────────────────────────────────
   readTextFile: (filePath: string) =>
     call<string>("readTextFile", { filePath }),
   readBinaryFile: (filePath: string) =>
     call<string>("readBinaryFile", { filePath }),
+  selectFigure: (projectPath: string) =>
+    call<import("../shared/figure-files").FigureSelection | null>("selectFigure", { projectPath }),
+  readFigure: (projectPath: string, sourcePath: string) =>
+    call<string>("readFigure", { projectPath, sourcePath }),
   renameFile: (filePath: string, newName: string) =>
     call<string>("renameFile", { filePath, newName }),
   deleteFile: (filePath: string) =>

@@ -24,11 +24,10 @@ describe("Quarto export frontmatter", () => {
 
   test("does not insert blank lines between YAML fields", () => {
     expect(
-      buildQuartoFrontmatter("Document", new Date("2026-07-24T00:00:00.000Z")),
+      buildQuartoFrontmatter(new Date("2026-07-24T00:00:00.000Z")),
     ).toBe(
       [
         "---",
-        'title: "Document"',
         'date: "2026-07-24"',
         "bibliography: references.bib",
         "---",
@@ -51,7 +50,7 @@ describe("Quarto export frontmatter", () => {
     const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd");
 
     expect(qmd).toContain(
-      'bibliography: references.bib\n---\n\nBody text',
+      'bibliography: references.bib\n---\n\n# Document\n\nBody text',
     );
     expect(qmd).not.toContain('---\n\ntitle:');
     expect(qmd).not.toContain('title: "Document"\n\ndate:');
@@ -76,8 +75,48 @@ describe("Quarto export frontmatter", () => {
       documentTitleFromFilename("02 History of Placebo.scholarpen.json"),
     );
 
-    expect(qmd).toContain('title: "History of Placebo"');
-    expect(qmd).not.toContain('title: "Document"');
+    expect(qmd).toContain('# History of Placebo\n\nBody text');
+    expect(qmd).not.toMatch(/^title:/m);
+  });
+
+  test("keeps a chapter H1 and its section key as the sole title on repeated exports", async () => {
+    const editor = { blocksToMarkdownLossy: async () => "Body text" } as unknown as BlockNoteEditor;
+    const blocks = [
+      { id: "chapter", type: "heading", props: { level: 1, label: "sec-state-space" },
+        content: [{ type: "text", text: "상태공간과 동역학", styles: {} }], children: [] },
+      { id: "section", type: "heading", props: { level: 2, label: "sec-state-vs-parameter" },
+        content: [{ type: "text", text: "상태와 파라미터", styles: {} }], children: [] },
+      { id: "body", type: "paragraph", props: {},
+        content: [{ type: "text", text: "Body text", styles: {} }], children: [] },
+    ];
+    const original = JSON.stringify(blocks);
+    const first = await blocksToScholarMarkdown(editor, blocks, "qmd", "05 filename fallback");
+    expect(first).toBe(await blocksToScholarMarkdown(editor, blocks, "qmd", "05 filename fallback"));
+    expect(first).not.toMatch(/^title:/m);
+    expect(first.match(/^# /gm)).toHaveLength(1);
+    expect(first).toContain("# 상태공간과 동역학 {#sec-state-space}");
+    expect(first).toContain("## 상태와 파라미터 {#sec-state-vs-parameter}");
+    expect(first).toContain("bibliography: references.bib\nnumber-sections: true");
+    expect(first).toMatch(/^date: "\d{4}-\d{2}-\d{2}"$/m);
+    expect(first).toEndWith("Body text");
+    expect(JSON.stringify(blocks)).toBe(original);
+  });
+
+  test("marks an index title unnumbered without changing the source or other headings", async () => {
+    const editor = {} as BlockNoteEditor;
+    const blocks = [
+      { id: "preface", type: "heading", props: { level: 1, label: "sec-preface" }, content: "서문", children: [] },
+      { id: "sub", type: "heading", props: { level: 2 }, content: "독자에게", children: [] },
+    ];
+    const before = JSON.stringify(blocks);
+    const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd", "index", { filename: "index.qmd" });
+    expect(qmd).toContain("# 서문 {#sec-preface .unnumbered}");
+    expect(qmd).toContain("## 독자에게");
+    expect(qmd.match(/\.unnumbered/g)).toHaveLength(1);
+    expect(qmd).not.toMatch(/^title:/m);
+    expect(JSON.stringify(blocks)).toBe(before);
+    expect(await blocksToScholarMarkdown(editor, [], "qmd", "서문", { filename: "index.qmd" }))
+      .toContain("# 서문 {.unnumbered}");
   });
 });
 

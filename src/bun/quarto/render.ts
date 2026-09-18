@@ -3,6 +3,8 @@ import { access, readFile } from "fs/promises";
 import { join } from "path";
 import type { QuartoRenderFormat, QuartoRenderResult } from "../../shared/rpc-types";
 import { getQuartoRenderFormats, parseQuartoBookConfig } from "../../shared/quarto-config";
+import { isQuartoReference } from "../../shared/quarto-references";
+import { duplicateBookReferenceDiagnostic } from "./reference-validation";
 
 const DEFAULT_RENDER_TIMEOUT_MS = 9 * 60 * 1000;
 const MAX_LOG_CHARACTERS = 24_000;
@@ -25,6 +27,17 @@ function cleanLog(value: string): string {
   return withoutAnsi.length <= MAX_LOG_CHARACTERS
     ? withoutAnsi
     : `…${withoutAnsi.slice(-MAX_LOG_CHARACTERS)}`;
+}
+
+export function crossReferenceRenderDiagnostic(log: string): string | null {
+  const missing = new Set<string>();
+  for (const match of log.matchAll(/Unable to resolve crossref\s+@?([\w:.-]+)|citation\s+['"‘’]?([\w:.-]+)['"‘’]?\s+not found/gi)) {
+    const label = match[1] ?? match[2];
+    if (isQuartoReference(label)) missing.add(label);
+  }
+  if (missing.size) return `Unresolved document references: ${[...missing].map((label) => `@${label}`).join(", ")}. Check that each target has a matching identifier and that its chapter is included in the Quarto book. These are document references, not bibliography citations.`;
+  const duplicate = log.split(/\r?\n/).find((line) => /duplicate/i.test(line) && /label|identifier|cross.?ref/i.test(line));
+  return duplicate ? `Duplicate document identifiers: ${duplicate.trim()}. Give each target a unique identifier across all book chapters.` : null;
 }
 
 function errorResult(
@@ -122,6 +135,8 @@ export async function renderQuartoBookProject(
   }
 
   try {
+    const duplicateDiagnostic = await duplicateBookReferenceDiagnostic(options.projectDirectory, configSource);
+    if (duplicateDiagnostic) return errorResult(options.format, startedAt, duplicateDiagnostic);
     const timeoutMs = options.timeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS;
     const process = Bun.spawn({
       cmd: [executable, "render", "--to", options.format],
@@ -150,6 +165,7 @@ export async function renderQuartoBookProject(
     }
     const stdout = cleanLog(stdoutRaw);
     const stderr = cleanLog(stderrRaw);
+    const referenceDiagnostic = crossReferenceRenderDiagnostic(`${stderrRaw}\n${stdoutRaw}`);
 
     if (timedOut) {
       return errorResult(
@@ -164,9 +180,14 @@ export async function renderQuartoBookProject(
       return errorResult(
         options.format,
         startedAt,
-        summarizeRenderFailure(stderr, stdout, exitCode),
+        referenceDiagnostic ?? summarizeRenderFailure(stderr, stdout, exitCode),
         { exitCode, stdout, stderr },
       );
+    }
+
+    // Quarto can exit successfully while leaving "?" in unresolved references.
+    if (referenceDiagnostic) {
+      return errorResult(options.format, startedAt, referenceDiagnostic, { exitCode, stdout, stderr });
     }
 
     return {

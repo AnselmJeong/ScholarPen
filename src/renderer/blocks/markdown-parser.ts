@@ -7,9 +7,11 @@ import { scholarSchema, type ScholarEditor } from "./schema";
 import { stripFrontmatter } from "../utils/frontmatter";
 import { prepareMarkdownMath, splitMathPlaceholders, type PreparedMarkdownMath } from "./markdown-math";
 import { prepareMarkdownCitations, type PreparedMarkdownCitations } from "./markdown-citations";
+import { prepareQuartoBlocks, tableWidthRatios } from "./markdown-quarto";
+import { isQuartoReference, normalizeQuartoBlocks } from "../../shared/quarto-references";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyBlock = Record<string, any>;
+type AnyBlock = Record<string, any> & { type: string };
 
 /**
  * Create a headless BlockNoteEditor for parsing markdown
@@ -43,7 +45,8 @@ export async function markdownToScholarBlocks(
   const processedMd = md.trimStart().startsWith("---") ? stripFrontmatter(md) : md;
 
   // Pre-process: replace custom patterns with annotated markdown
-  const math = prepareMarkdownMath(processedMd);
+  const quarto = prepareQuartoBlocks(processedMd);
+  const math = prepareMarkdownMath(quarto.markdown);
   const citations = prepareMarkdownCitations(math.markdown);
   const annotated = annotateCustomBlocks(citations.markdown);
 
@@ -51,7 +54,7 @@ export async function markdownToScholarBlocks(
   const blocks = await parseEditor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
 
   // Post-process: convert annotated blocks to custom types
-  return postProcessBlocks(blocks, math, citations);
+  return normalizeQuartoBlocks(postProcessBlocks(blocks, math, citations, quarto));
 }
 
 /**
@@ -88,10 +91,28 @@ function annotateCustomBlocks(md: string): string {
  * Post-process parsed blocks to convert annotated standard blocks
  * back to custom ScholarPen block types.
  */
-function postProcessBlocks(blocks: AnyBlock[], math: PreparedMarkdownMath, citations: PreparedMarkdownCitations): AnyBlock[] {
+function postProcessBlocks(blocks: AnyBlock[], math: PreparedMarkdownMath, citations: PreparedMarkdownCitations, quarto: ReturnType<typeof prepareQuartoBlocks>): AnyBlock[] {
   const result: AnyBlock[] = [];
 
   for (const block of blocks) {
+    const token = extractBlockText(block).trim();
+    const figure = quarto.figures.get(token);
+    if (figure) {
+      result.push({ ...block, type: "figure", props: figure, content: undefined });
+      continue;
+    }
+    const table = quarto.tables.get(token);
+    const previous = result.at(-1);
+    if (table && previous?.type === "table") {
+      previous.props = { ...previous.props, label: table.label, caption: table.caption };
+      const widths = tableWidthRatios(table.widths, previous.content.rows[0]?.cells.length ?? 0);
+      if (widths) previous.content.columnWidths = widths;
+      for (const row of previous.content.rows) row.cells = row.cells.map((cell: any, index: number) => ({
+        ...(Array.isArray(cell) ? { type: "tableCell", content: cell } : cell),
+        props: { ...(cell.props ?? {}), textAlignment: table.align[index] ?? "left" },
+      }));
+      continue;
+    }
     const formula = math.formulas.get(extractBlockText(block).trim());
     if (formula?.display) {
       result.push({
@@ -99,7 +120,7 @@ function postProcessBlocks(blocks: AnyBlock[], math: PreparedMarkdownMath, citat
         type: "math",
         props: { formula: formula.formula, label: formula.label },
         content: undefined,
-        children: postProcessBlocks(block.children ?? [], math, citations),
+        children: postProcessBlocks(block.children ?? [], math, citations, quarto),
       });
       continue;
     }
@@ -206,7 +227,7 @@ function postProcessBlocks(blocks: AnyBlock[], math: PreparedMarkdownMath, citat
 
     // Handle children recursively
     if (block.children && Array.isArray(block.children)) {
-      block.children = postProcessBlocks(block.children, math, citations);
+      block.children = postProcessBlocks(block.children, math, citations, quarto);
     }
 
     result.push(block);
@@ -232,7 +253,10 @@ function processInlineContent(content: unknown[], math: PreparedMarkdownMath, ci
         if (typeof part !== "string") return [{ type: "inlineMath", props: { formula: part.formula } }];
         return part.split(citations.pattern).filter(Boolean).flatMap((segment): unknown[] => {
           const entries = citations.citations.get(segment);
-          return entries ? entries.map((props) => ({ type: "citation", props })) : [{ ...obj, text: segment }];
+          return entries ? entries.map(({ citekey, locator, bare, literal }) => literal
+            ? { type: "quartoLiteral", props: { source: literal } } : isQuartoReference(citekey)
+            ? { type: "crossReference", props: { label: citekey, locator, bracketed: !bare } }
+            : { type: "citation", props: { citekey, locator } }) : [{ ...obj, text: segment }];
         });
       });
       if (parts.some((part) => (part as AnyBlock).type !== "text")) return parts;
