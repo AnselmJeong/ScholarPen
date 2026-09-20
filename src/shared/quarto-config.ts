@@ -355,6 +355,8 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
     bibliographyFiles.length === 1 ? bibliographyFiles[0] : bibliographyFiles,
   );
   document.set("csl", cslFilename);
+  // Resolve citations before Typst so adjacent Korean particles cannot become part of a label.
+  document.set("citeproc", true);
   updateManagedFormats(document, rootValue.format, formats, !existingSource, input.extensionFormats ?? []);
 
   return document.toString({ lineWidth: 0 });

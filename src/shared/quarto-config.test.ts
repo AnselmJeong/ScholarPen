@@ -21,6 +21,7 @@ describe("Quarto book configuration", () => {
       extensionFormats: ["dst-book-typst"], existingYaml,
     });
     expect(parse(yaml).format).toEqual({ "dst-book-typst": { papersize: "jis-b5", toc: true } });
+    expect(parse(yaml).citeproc).toBe(true);
     expect(yaml).toContain("# keep layout");
     expect(getQuartoRenderFormats(yaml)).toEqual(["dst-book-typst"]);
   });
@@ -170,6 +171,7 @@ format:
     });
     expect(parsed.bibliography).toBe("references.bib");
     expect(parsed.csl).toBe("journal-style.csl");
+    expect(parsed.citeproc).toBe(true);
     expect(parsed.format.docx).toEqual({
       toc: false,
       "number-sections": true,
@@ -194,6 +196,7 @@ book:
   cover-image: cover.png
 bibliography: references.bib
 csl: old.csl
+citeproc: false
 format:
   docx:
     toc: false
@@ -219,6 +222,7 @@ format:
     expect(parsed.book["cover-image"]).toBe("cover.png");
     expect(parsed.book.chapters).toEqual(["02 methods.qmd", "index.qmd"]);
     expect(parsed.bibliography).toEqual(["references.bib", "additional.bib"]);
+    expect(parsed.citeproc).toBe(true);
     expect(parsed.format).toEqual({
       html: { theme: "cosmo" },
       typst: {},
