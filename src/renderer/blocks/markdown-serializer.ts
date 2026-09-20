@@ -4,6 +4,8 @@
 
 import type { BlockNoteEditor } from "@blocknote/core";
 import { figureExportUrl } from "../../shared/figure-files";
+import { NOTE_MARKER } from "./markdown-notes";
+import { normalizeFigureCaption } from "./caption-markdown";
 import { blockLabel, collectReferenceTargets, duplicateReferenceLabels, normalizeQuartoBlocks,
   validFigureDimension, validQuartoLabel } from "../../shared/quarto-references";
 
@@ -250,6 +252,19 @@ async function blockToMarkdown(
   const indent = depth > 0 ? "  ".repeat(depth) : "";
 
   switch (block.type) {
+    case "note": {
+      const title = String(block.props.title ?? "읽는 법").replace(/[\r\n]+/g, " ") || "읽는 법";
+      const body = [inlineContentToMarkdown(block.content, format)];
+      for (const child of block.children ?? []) body.push(await blockToMarkdown(editor, child, format, 0));
+      const text = body.filter(Boolean).join("\n\n");
+      if (format === "qmd") {
+        const longestFence = Math.max(2, ...Array.from(text.matchAll(/^(:{3,})/gm), (match) => match[1].length));
+        const fence = ":".repeat(longestFence + 1);
+        return `${fence} {.callout-note title="${title.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}" appearance="simple" icon="false"}\n${text}\n${fence}`;
+      }
+      const escapedTitle = title.replace(/[\\*]/g, "\\$&");
+      return `${NOTE_MARKER}\n> **${escapedTitle}**\n>\n${text.split("\n").map((line) => `> ${line}`).join("\n")}`;
+    }
     case "math":
       return mathBlockToMarkdown(block, format);
 
@@ -374,7 +389,7 @@ function mathBlockToMarkdown(block: Block, format: ExportFormat): string {
 
 function figureBlockToMarkdown(block: Block, format: ExportFormat): string {
   const url = block.props.sourcePath ? figureExportUrl(String(block.props.sourcePath)) : (block.props.url as string) || "";
-  const caption = (block.props.caption as string) || "";
+  const caption = normalizeFigureCaption((block.props.caption as string) || "");
   const altText = (block.props.altText as string) || caption || "figure";
 
   if (format === "qmd") {

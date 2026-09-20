@@ -30,7 +30,7 @@ export function staticQuartoLabels(source: string): string[] {
   return labels;
 }
 
-export async function duplicateBookReferenceDiagnostic(directory: string, config: string): Promise<string | null> {
+export function quartoBookChapterFiles(config: string): string[] {
   const document = parseDocument(config);
   const root = document.toJS({ maxAliasCount: 100 });
   const files: string[] = [];
@@ -46,8 +46,12 @@ export async function duplicateBookReferenceDiagnostic(directory: string, config
   }
   chapters(root?.book?.chapters);
   chapters(root?.book?.appendices);
+  return [...new Set(files)];
+}
+
+export async function duplicateBookReferenceDiagnostic(directory: string, config: string): Promise<string | null> {
   const definitions = new Map<string, string[]>();
-  for (const filename of new Set(files)) {
+  for (const filename of quartoBookChapterFiles(config)) {
     const path = resolve(directory, filename);
     const relativePath = relative(directory, path);
     if (isAbsolute(relativePath) || relativePath.startsWith("..")) continue;

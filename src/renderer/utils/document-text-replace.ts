@@ -1,6 +1,9 @@
+import { searchAnnotationText } from "./search-annotation";
+
 export type TextPath = Array<string | number>;
 
 export interface DocumentTextMatch {
+  kind: "text" | "annotation";
   path: TextPath;
   offset: number;
   length: number;
@@ -19,12 +22,17 @@ interface TextLeaf {
   value: string;
 }
 
-interface TextRun { leaves: TextLeaf[] }
+interface TextRun { leaves: TextLeaf[]; kind?: "annotation" }
 
 // Only traverse the document body schema. Never recurse into arbitrary props,
-// URLs, image data, citation identifiers, history or other metadata.
+// URLs, image data, history or other metadata. Reference keys are explicit,
+// read-only search runs so they cannot be modified by prose replacement.
 function collectTextRuns(content: unknown): TextRun[] {
   const runs: TextRun[] = [];
+  function annotation(item: Record<string, unknown>, path: TextPath) {
+    const value = searchAnnotationText(String(item.type), item.props as Record<string, unknown> | undefined);
+    if (value) runs.push({ kind: "annotation", leaves: [{ path, value }] });
+  }
   function inline(value: unknown, path: TextPath, run: TextRun) {
     if (typeof value === "string") {
       run.leaves.push({ path, value });
@@ -40,6 +48,7 @@ function collectTextRuns(content: unknown): TextRun[] {
         // An inline atom (citation, footnote, math) separates prose runs.
         runs.push({ leaves: run.leaves });
         run.leaves = [];
+        annotation(item, path);
       }
     }
   }
@@ -54,6 +63,7 @@ function collectTextRuns(content: unknown): TextRun[] {
       if (!value || typeof value !== "object") return;
       const block = value as Record<string, unknown>;
       const blockPath = [...path, index];
+      annotation(block, blockPath);
       const content = block.content as Record<string, unknown> | undefined;
       if (content && content.type === "tableContent" && Array.isArray(content.rows)) {
         content.rows.forEach((row, r) => {
@@ -140,10 +150,11 @@ export function findDocumentTextMatches(
         return end > start ? [segment] : [];
       });
       return {
+        kind: run.kind ?? "text",
         path: segments[0].path,
         offset: segments[0].offset,
         length: searchTerm.length,
-        segments,
+        segments: run.kind === "annotation" ? [] : segments,
         ...buildSnippet(value, offset, searchTerm.length),
       };
     });
@@ -157,11 +168,11 @@ export function replaceDocumentText(
   matchIndex?: number,
 ): DocumentReplacementResult {
   const matches = findDocumentTextMatches(content, searchTerm);
-  const selectedMatches = matchIndex === undefined
+  const selectedMatches = (matchIndex === undefined
     ? matches
     : matches[matchIndex]
       ? [matches[matchIndex]]
-      : [];
+      : []).filter((match) => match.kind === "text");
 
   if (selectedMatches.length === 0) {
     return { content, replacementCount: 0 };

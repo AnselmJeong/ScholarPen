@@ -6,6 +6,7 @@ import {
 import { mathBlock } from "./math-block";
 import { figureBlock } from "./figure-block";
 import { abstractBlock } from "./abstract-block";
+import { noteBlock } from "./note-block";
 import { citationInline, footnoteInline } from "./citation-inline";
 import { inlineMath } from "./inline-math";
 import { crossReferenceInline, quartoLiteralInline } from "./cross-reference-inline";
@@ -22,6 +23,7 @@ export const scholarSchema = BlockNoteSchema.create({
     math: mathBlock(),
     figure: figureBlock(),
     abstract: abstractBlock(),
+    note: noteBlock(),
   },
   inlineContentSpecs: {
     ...defaultInlineContentSpecs,

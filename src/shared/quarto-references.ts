@@ -107,11 +107,13 @@ export function normalizeQuartoBlocks<T extends ReferenceBlock>(blocks: T[]): T[
     }
     return block as T;
   });
-  // Earlier imports left a table caption/attributes in the following paragraph.
+  // Earlier imports left table captions in separate paragraphs above or below.
   // Upgrade only plain, unstyled text; never discard richer caption content.
   return normalized.filter((block, index) => {
-    const table = normalized[index - 1];
-    if (block.type !== "paragraph" || table?.type !== "table" || table.props?.label || table.props?.caption || block.children?.length) return true;
+    if (block.type !== "paragraph" || block.children?.length) return true;
+    const table = [normalized[index - 1], normalized[index + 1]].find((candidate) =>
+      candidate?.type === "table" && !candidate.props?.label && !candidate.props?.caption);
+    if (!table) return true;
     const plain = typeof block.content === "string" || Array.isArray(block.content) && block.content.every((part: any) =>
       part.type === "text" && !Object.values(part.styles ?? {}).some(Boolean));
     if (!plain) return true;

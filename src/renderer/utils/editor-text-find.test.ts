@@ -1,12 +1,38 @@
 import { expect, test } from "bun:test";
 import { Schema } from "prosemirror-model";
 import { TextSelection, EditorState } from "prosemirror-state";
+import { Decoration, DecorationSet } from "prosemirror-view";
 import { findEditorTextMatches } from "./editor-text-find";
 
 const schema = new Schema({
   nodes: { doc: { content: "paragraph+" }, paragraph: { content: "inline*", group: "block" },
     text: { group: "inline" }, atom: { inline: true, group: "inline", atom: true } },
   marks: { bold: {}, link: { attrs: { href: {} } } },
+});
+
+test("annotation search maps long and repeated keys to node boundaries, not text offsets", () => {
+  const refs = new Schema({ nodes: {
+    doc: { content: "block+" },
+    paragraph: { content: "inline*", group: "block" },
+    figure: { group: "block", atom: true, attrs: { label: {} } },
+    text: { group: "inline" },
+    crossReference: { inline: true, group: "inline", atom: true, attrs: { label: {} } },
+    citation: { inline: true, group: "inline", atom: true, attrs: { citekey: {} } },
+  } });
+  const doc = refs.node("doc", null, [refs.node("paragraph", null, [
+    refs.text("before "), refs.node("crossReference", { label: "fig-repeat-repeat" }),
+    refs.node("citation", { citekey: "repeat2024" }), refs.text(" after"),
+  ]), refs.node("figure", { label: "fig-repeat-repeat" })]);
+  const matches = findEditorTextMatches(doc, "repeat");
+  expect(matches).toHaveLength(5);
+  expect(matches.map((match) => match.kind)).toEqual(Array(5).fill("annotation"));
+  for (const match of matches) {
+    expect(match.to - match.from).toBe(doc.nodeAt(match.from)!.nodeSize);
+    expect(match.snippet.slice(match.snippetOffset, match.snippetOffset + 6)).toBe("repeat");
+    expect(DecorationSet.create(doc, [Decoration.node(match.from, match.to, { class: "find" })]).find()).toHaveLength(1);
+  }
+  expect(findEditorTextMatches(doc, "before @fig")).toHaveLength(0);
+  expect(findEditorTextMatches(doc, "after")[0].from).toBe(11);
 });
 
 test("finds exact positions across marks, skips atom boundaries, and navigates each occurrence", () => {

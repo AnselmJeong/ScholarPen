@@ -4,7 +4,9 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const dom = new Window();
-const globals = ["window", "document", "navigator", "Node", "Element", "HTMLElement", "MutationObserver", "CustomEvent", "Event", "HTMLInputElement", "HTMLSelectElement", "HTMLTextAreaElement", "MouseEvent", "DocumentFragment", "DOMParser", "Text", "NodeFilter", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "IS_REACT_ACT_ENVIRONMENT"] as const;
+// Happy DOM does not implement compatMode; KaTeX requires standards mode.
+Object.defineProperty(dom.document, "compatMode", { value: "CSS1Compat" });
+const globals = ["window", "document", "navigator", "Node", "Element", "HTMLElement", "MutationObserver", "CustomEvent", "Event", "HTMLInputElement", "HTMLSelectElement", "HTMLTextAreaElement", "MouseEvent", "KeyboardEvent", "DocumentFragment", "DOMParser", "Text", "NodeFilter", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "IS_REACT_ACT_ENVIRONMENT"] as const;
 const previous = new Map(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true,
   value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
@@ -135,8 +137,8 @@ test("a mounted BlockNote figure receives its project context and retains its ca
   </FigureDocumentContext.Provider>); });
   expect(read).toHaveBeenCalledWith("/project", "figures/plot.png");
   expect(container.querySelector("img")?.src).toBe(first);
-  expect([...container.querySelectorAll("button")].map((node) => node.textContent)).toEqual(["Properties"]);
-  await click("Properties");
+  expect([...container.querySelectorAll("button")].map((node) => node.textContent)).toEqual(["#fig-keep · Properties"]);
+  await click("#fig-keep · Properties");
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("그림 파일");
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("figures/plot.png");
   expect(document.querySelector('input[aria-label="이미지 URL"]')).toBeNull();
@@ -146,21 +148,57 @@ test("a mounted BlockNote figure receives its project context and retains its ca
   expect(editor.document[0].props).toMatchObject({ sourcePath: "figures/relinked.png", caption: "Keep caption",
     label: "fig-keep", width: "70%", figureNumber: 2, url: "" });
   const snapshot = JSON.stringify(editor.document);
-  await click("Properties");
+  await click("#fig-keep · Properties");
   await click("Reload"); expect(JSON.stringify(editor.document)).toBe(snapshot);
   await click("Cancel");
-  await click("Properties");
+  await click("#fig-keep · Properties");
   select.mockResolvedValue({ sourcePath: "figures/cancelled.png", copied: false });
   await click("다시 연결"); await click("Cancel");
   expect(JSON.stringify(editor.document)).toBe(snapshot);
-  await click("Properties");
+  await click("#fig-keep · Properties");
   select.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("Import failed"));
   await click("다시 연결"); await click("다시 연결");
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Import failed");
   await click("Cancel"); expect(JSON.stringify(editor.document)).toBe(snapshot);
   let finishSelect!: (value: { sourcePath: string; copied: boolean }) => void;
   select.mockImplementationOnce(() => new Promise((resolve) => { finishSelect = resolve; }));
-  await click("Properties"); await click("다시 연결"); await click("Cancel");
+  await click("#fig-keep · Properties"); await click("다시 연결"); await click("Cancel");
   await act(async () => { finishSelect({ sourcePath: "figures/late.png", copied: false }); });
   expect(JSON.stringify(editor.document)).toBe(snapshot);
+});
+
+test("mounted Note and figure caption render math; caption editing preserves source and updates preview", async () => {
+  const { BlockNoteEditor } = await import("@blocknote/core");
+  const { BlockNoteViewRaw } = await import("@blocknote/react");
+  const { scholarSchema } = await import("./schema");
+  const caption = 'M1($\\\\theta=0$), $x=\\\\pm0.5$';
+  const editor = BlockNoteEditor.create({ schema: scholarSchema, initialContent: [
+    { id: "note-render", type: "note", content: [{ type: "text", text: "변화율 ", styles: {} },
+      { type: "inlineMath", props: { formula: "x^2" } }], children: [{ type: "paragraph", content: "두 번째 문단" }] },
+    { id: "caption-render", type: "figure", props: { url: first, caption } },
+  ] });
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => { root!.render(<BlockNoteViewRaw editor={editor} formattingToolbar={false} linkToolbar={false}
+    slashMenu={false} emojiPicker={false} sideMenu={false} filePanel={false} tableHandles={false} comments={false} />); });
+  const note = container.querySelector('.bn-block-content[data-content-type="note"]')!;
+  expect(note.querySelector('input[aria-label="Note title"]')?.getAttribute("value")).toBe("읽는 법");
+  expect(note.closest(".bn-block")?.textContent).toContain("두 번째 문단");
+  expect(note.querySelector('[data-inline-content-type="inlineMath"]')?.getAttribute("data-formula")).toBe("x^2");
+  const rendered = container.querySelector(".scholar-figure-caption")!;
+  expect(rendered.querySelectorAll(".katex")).toHaveLength(2);
+  expect(rendered.textContent).toContain("θ");
+  expect(rendered.textContent).toContain("±");
+  expect(editor.document[1].props).toMatchObject({ caption });
+  await act(async () => { rendered.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+  const input = container.querySelector('input[placeholder="Caption..."]') as HTMLInputElement;
+  expect(input.value).toBe(caption);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, 'Edited $D=0.16$');
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: "6", bubbles: true }));
+  });
+  await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  expect(editor.document[1].props).toMatchObject({ caption: 'Edited $D=0.16$' });
+  expect(container.querySelectorAll(".scholar-figure-caption .katex")).toHaveLength(1);
 });

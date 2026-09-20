@@ -12,6 +12,14 @@ export function getScholarSlashMenuItems(
   onOpenDOIDialog: () => void,
 ): DefaultReactSuggestionItem[] {
   return [
+    {
+      title: "Note",
+      aliases: ["note", "callout", "alert", "읽는 법", "설명"],
+      group: "Scholar",
+      icon: <span className="text-base">ⓘ</span>,
+      subtext: "읽는 법 · 설명 박스",
+      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "note" }),
+    },
     // Math equation block
     {
       title: "Math Equation",

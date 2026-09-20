@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { prepareMarkdownMath, remarkRestoreScholarMath } from "../../blocks/markdown-math";
+import { prepareMarkdownNotes } from "../../blocks/markdown-notes";
+import { remarkScholarNotes } from "../../blocks/note-preview";
 import { MarkdownImage } from "./MarkdownImage";
 import { FileJson, FileText, BookOpen, Image as ImageIcon, File, ZoomIn, ZoomOut } from "lucide-react";
 import { rpc } from "../../rpc";
@@ -117,7 +119,8 @@ export function FileViewer({
     () => isMarkdown && content ? parseFrontmatter(content) : { frontmatter: null, body: content ?? "" },
     [content, isMarkdown]
   );
-  const preparedMath = useMemo(() => prepareMarkdownMath(markdownBody), [markdownBody]);
+  const preparedNotes = useMemo(() => prepareMarkdownNotes(markdownBody), [markdownBody]);
+  const preparedMath = useMemo(() => prepareMarkdownMath(preparedNotes.markdown), [preparedNotes]);
 
   // PDF viewer — binary file, handled separately
   if (file.kind === "pdf" || ext === ".pdf") {
@@ -225,7 +228,7 @@ export function FileViewer({
             {parsedFrontmatter && <FrontmatterCard frontmatter={parsedFrontmatter} />}
             <div className="scholar-markdown prose prose-gray dark:prose-invert" style={{ fontSize }}>
               <ReactMarkdown
-                remarkPlugins={[remarkGfm, [remarkRestoreScholarMath, preparedMath]]}
+                remarkPlugins={[remarkGfm, [remarkRestoreScholarMath, preparedMath], [remarkScholarNotes, preparedNotes]]}
                 rehypePlugins={[rehypeKatex]}
                 components={{ img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} documentPath={file.path} /> }}
               >

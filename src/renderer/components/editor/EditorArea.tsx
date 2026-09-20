@@ -1,5 +1,6 @@
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NoteToolbarButton } from "../../blocks/note-toolbar-button";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   buildDoiResolverUrl,
   buildDoiCitationInsertionPlan,
@@ -20,18 +21,11 @@ import {
   NestBlockButton,
   UnnestBlockButton,
   CreateLinkButton,
-  DragHandleMenu,
-  RemoveBlockItem,
-  BlockColorsItem,
-  useBlockNoteEditor,
-  useComponentsContext,
-  SideMenu,
-  SideMenuController,
 } from "@blocknote/react";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { Sparkles } from "lucide-react";
+import { ListTree, Sparkles } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
 import { FigureDocumentContext } from "../../blocks/figure-image";
@@ -65,8 +59,11 @@ import { createFindCitationRequest } from "../../ai/find-citation";
 import { referenceSuggestions } from "../../blocks/reference-suggestions";
 import { mergeProjectReferences, type ReferenceDocument } from "../../../shared/project-references";
 import { QuartoPropertiesDialog } from "./QuartoPropertiesDialog";
+import { EditorSideMenu } from "./EditorSideMenu";
+import { EditorOutline } from "./EditorOutline";
+import { setOutlineVisible, useOutlineVisibility } from "./outline-visibility";
 import { QuartoBlockControls } from "./QuartoBlockControls";
-import { LABEL_PREFIXES, normalizeQuartoBlocks } from "../../../shared/quarto-references";
+import { normalizeQuartoBlocks } from "../../../shared/quarto-references";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -131,61 +128,6 @@ interface EditorAreaProps {
   bibReloadTrigger?: number;
 }
 
-/** Block type submenu for the drag handle popup */
-const BLOCK_TYPE_ITEMS = [
-  { type: "paragraph",       label: "Paragraph",       props: {} },
-  { type: "heading",         label: "Heading 1",        props: { level: 1 } },
-  { type: "heading",         label: "Heading 2",        props: { level: 2 } },
-  { type: "heading",         label: "Heading 3",        props: { level: 3 } },
-  { type: "heading",         label: "Heading 4",        props: { level: 4 } },
-  { type: "bulletListItem",  label: "Bullet List",      props: {} },
-  { type: "numberedListItem",label: "Numbered List",    props: {} },
-  { type: "checkListItem",   label: "Check List",       props: {} },
-  { type: "quote",           label: "Quote",            props: {} },
-] as const;
-
-function BlockTypeDragItem() {
-  const editor = useBlockNoteEditor();
-  const components = useComponentsContext();
-  if (!components) return null;
-  return (
-    <components.Generic.Menu.Root position="right" sub={true}>
-      <components.Generic.Menu.Trigger sub={true}>
-        <components.Generic.Menu.Item className="bn-menu-item" subTrigger={true}>
-          Turn Into
-        </components.Generic.Menu.Item>
-      </components.Generic.Menu.Trigger>
-      <components.Generic.Menu.Dropdown sub={true} className="bn-menu-dropdown">
-        {BLOCK_TYPE_ITEMS.map(({ type, label, props: blockProps }) => (
-          <components.Generic.Menu.Item
-            key={label}
-            className="bn-menu-item"
-            onClick={() => {
-              // Read the hovered block from the side menu store at click time
-              const sideMenuExt = (editor as any).getExtension("sideMenu");
-              const block = sideMenuExt?.store?.state?.block
-                ?? editor.getTextCursorPosition().block;
-              editor.updateBlock(block, { type: type as any, props: blockProps as any });
-              editor.setTextCursorPosition(block.id, "end");
-              editor.focus();
-            }}
-          >
-            {label}
-          </components.Generic.Menu.Item>
-        ))}
-      </components.Generic.Menu.Dropdown>
-    </components.Generic.Menu.Root>
-  );
-}
-
-function QuartoPropertiesDragItem({ onOpen }: { onOpen: (id: string) => void }) {
-  const editor = useBlockNoteEditor();
-  const components = useComponentsContext();
-  const block = (editor.getExtension("sideMenu") as any)?.store?.state?.block ?? editor.getTextCursorPosition().block;
-  if (!components || !LABEL_PREFIXES[block.type]) return null;
-  return <components.Generic.Menu.Item className="bn-menu-item" onClick={() => onOpen(block.id)}>Quarto properties…</components.Generic.Menu.Item>;
-}
-
 function normalizeDocumentContent(content: unknown) {
   if (Array.isArray(content) && content.length > 0) return normalizeQuartoBlocks(content);
   return [{ type: "paragraph", content: "" }];
@@ -210,6 +152,9 @@ export function EditorArea({
   bibReloadTrigger,
 }: EditorAreaProps) {
   const isDark = useIsDark();
+  const outlineVisible = useOutlineVisibility();
+  const outlineId = useId();
+  const outlineToggleRef = useRef<HTMLButtonElement>(null);
   const editor = useCreateBlockNote({
     schema: scholarSchema,
     dictionary: {
@@ -679,7 +624,7 @@ export function EditorArea({
     <FigureDocumentContext.Provider value={{ projectPath: project.path,
       documentPath: `${project.path}/documents/${documentFilename || "manuscript.scholarpen.json"}` }}>
     <div
-      className="flex-1 flex flex-col overflow-hidden relative" style={{ background: "hsl(var(--background))" }}
+      className="scholar-editor-pane flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden relative" style={{ background: "hsl(var(--background))" }}
       onKeyDown={(e) => {
         if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "f") {
           e.preventDefault();
@@ -700,20 +645,26 @@ export function EditorArea({
       }}
     >
       {/* Breadcrumb */}
-      <div className="px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "var(--scholar-muted)", background: "hsl(var(--background))" }}>
+      <div className="editor-breadcrumb px-10 py-3 flex items-center gap-1.5 text-xs" style={{ color: "var(--scholar-muted)", background: "hsl(var(--background))" }}>
         <span className="font-medium" style={{ color: "var(--scholar-text)" }}>{project.name}</span>
         {documentFilename && (
           <>
             <span style={{ color: "var(--scholar-muted)" }}>/</span>
-            <span>{documentFilename.replace(".scholarpen.json", "")}</span>
+            <span className="min-w-0 truncate">{documentFilename.replace(".scholarpen.json", "")}</span>
           </>
         )}
+        <button ref={outlineToggleRef} type="button" className="editor-outline-toggle" aria-controls={outlineId}
+          aria-expanded={outlineVisible} title={outlineVisible ? "Hide outline" : "Show outline"}
+          onClick={() => setOutlineVisible(!outlineVisible)}>
+          <ListTree size={15} aria-hidden="true" /> Outline
+        </button>
       </div>
       {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={`${project.path}/${documentFilename}/${propertiesBlockId}`}
         editor={editor} blockId={propertiesBlockId} onClose={() => setPropertiesBlockId(null)} />}
+      <div className="scholar-editor-body">
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto"
+        className="scholar-editor-scroll flex-1 min-w-0 min-h-0 overflow-y-auto"
         style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}
         onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}
       >
@@ -726,21 +677,9 @@ export function EditorArea({
             theme={isDark ? "dark" : "light"}
             slashMenu={false}
             formattingToolbar={false}
+            sideMenu={false}
           >
-            <SideMenuController
-              sideMenu={() => (
-                <SideMenu
-                  dragHandleMenu={(props) => (
-                    <DragHandleMenu {...props}>
-                      <BlockTypeDragItem />
-                      <QuartoPropertiesDragItem onOpen={setPropertiesBlockId} />
-                      <BlockColorsItem {...props}>Colors</BlockColorsItem>
-                      <RemoveBlockItem {...props}>Delete</RemoveBlockItem>
-                    </DragHandleMenu>
-                  )}
-                />
-              )}
-            />
+            <EditorSideMenu onOpenProperties={setPropertiesBlockId} />
             <AIMenuController />
             <SuggestionMenuController
               triggerCharacter="$"
@@ -810,6 +749,7 @@ export function EditorArea({
                     </button>
                   )}
 
+                  <NoteToolbarButton editor={editor} key="noteToolbarButton" />
                   <BasicTextStyleButton basicTextStyle="bold" key="boldStyleButton" />
                   <BasicTextStyleButton basicTextStyle="italic" key="italicStyleButton" />
                   <BasicTextStyleButton basicTextStyle="underline" key="underlineStyleButton" />
@@ -828,6 +768,11 @@ export function EditorArea({
           </BlockNoteView>
           </QuartoBlockControls>
         </div>
+      </div>
+
+      <EditorOutline key={`${project.path}/${documentFilename}`} id={outlineId} editor={editor}
+        scrollContainerRef={scrollContainerRef} ready={documentReady} visible={outlineVisible}
+        onClose={() => { setOutlineVisible(false); outlineToggleRef.current?.focus(); }} />
       </div>
 
       {/* Find / Replace panel — absolutely positioned in top-right of editor */}

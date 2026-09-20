@@ -9,6 +9,7 @@ import { prepareMarkdownMath, splitMathPlaceholders, type PreparedMarkdownMath }
 import { prepareMarkdownCitations, type PreparedMarkdownCitations } from "./markdown-citations";
 import { prepareQuartoBlocks, tableWidthRatios } from "./markdown-quarto";
 import { isQuartoReference, normalizeQuartoBlocks } from "../../shared/quarto-references";
+import { prepareMarkdownNotes } from "./markdown-notes";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyBlock = Record<string, any> & { type: string };
@@ -45,7 +46,8 @@ export async function markdownToScholarBlocks(
   const processedMd = md.trimStart().startsWith("---") ? stripFrontmatter(md) : md;
 
   // Pre-process: replace custom patterns with annotated markdown
-  const quarto = prepareQuartoBlocks(processedMd);
+  const notes = prepareMarkdownNotes(processedMd);
+  const quarto = prepareQuartoBlocks(notes.markdown);
   const math = prepareMarkdownMath(quarto.markdown);
   const citations = prepareMarkdownCitations(math.markdown);
   const annotated = annotateCustomBlocks(citations.markdown);
@@ -54,7 +56,21 @@ export async function markdownToScholarBlocks(
   const blocks = await parseEditor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
 
   // Post-process: convert annotated blocks to custom types
-  return normalizeQuartoBlocks(postProcessBlocks(blocks, math, citations, quarto));
+  const processed = postProcessBlocks(blocks, math, citations, quarto);
+  async function restoreNotes(items: AnyBlock[]): Promise<AnyBlock[]> {
+    return Promise.all(items.map(async (block) => {
+      const note = notes.notes.get(extractBlockText(block).trim());
+      if (note) {
+        const body = await markdownToScholarBlocks(note.body, parseEditor);
+        const first = body[0]?.type === "paragraph" ? body.shift() : undefined;
+        return { ...block, type: "note", props: { title: note.title },
+          content: first?.content ?? [], children: [...(first?.children ?? []), ...body] };
+      }
+      if (block.children) block.children = await restoreNotes(block.children);
+      return block;
+    }));
+  }
+  return normalizeQuartoBlocks(await restoreNotes(processed));
 }
 
 /**

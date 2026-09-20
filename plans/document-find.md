@@ -1,6 +1,6 @@
 # Document find repair
 
-Scope: search body content only in documents/**/*.scholarpen.json, using live content for open documents. Exclude props, image data, URLs and other metadata. Preserve original files during investigation.
+Scope: search body content in documents/**/*.scholarpen.json, using live content for open documents. The annotation-find extension also explicitly includes reference keys and target labels for read-only search; other props, image data, URLs and metadata remain excluded. Preserve original files during investigation. See [annotation-find.md](annotation-find.md).
 
 - Traverse BlockNote body structure explicitly; match across inline formatting and links, keep table cells and atom boundaries separate, preserve formatting on replacement.
 - Use the same text matching rules for persisted documents and ProseMirror positions.

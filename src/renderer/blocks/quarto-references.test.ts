@@ -252,3 +252,57 @@ describe("Quarto identifiers and layout", () => {
     expect(nodes(await markdownToScholarBlocks(output, editor)).find((node) => node.type === "crossReference").props.label).toBe("eq-state");
   });
 });
+
+test("a table caption above the table imports, appears in @ suggestions and survives QMD export", async () => {
+  const source = ': 평균 체류 시간 {#tbl-m1-dwell tbl-colwidths="[30,70]"}\n\n| D | Time |\n| ---: | :--- |\n| 0.05 | 656 |\n\n[@tbl-m1-dwell]에서는 비교한다.';
+  const imported = await markdownToScholarBlocks(source, editor);
+  const restored = BlockNoteEditor.create({ schema: scholarSchema, initialContent: JSON.parse(JSON.stringify(imported)) });
+  const table = restored.document.find((block) => block.type === "table")!;
+  expect(table.props).toMatchObject({ label: "tbl-m1-dwell", caption: "평균 체류 시간" });
+  expect(table.content).toMatchObject({ columnWidths: [180, 420] });
+  expect(referenceSuggestions(restored, [], "tbl-m1").map((item) => item.title)).toEqual(["tbl-m1-dwell"]);
+  const qmd = await blocksToScholarMarkdown(restored, restored.document as any, "qmd");
+  expect(qmd.match(/#tbl-m1-dwell/g)).toHaveLength(1);
+  expect(qmd).toContain("[@tbl-m1-dwell]에서는");
+  expect(documentReferenceTargets(await markdownToScholarBlocks(qmd, restored)).map((target) => target.label)).toContain("tbl-m1-dwell");
+});
+
+test("legacy captions above tables are indexed and exported without changing saved input", async () => {
+  const legacy: any[] = [
+    { id: "caption", type: "paragraph", props: {}, content: [{ type: "text", text: ': Dwell time {#tbl-m1-dwell}', styles: {} }], children: [] },
+    { id: "table", type: "table", props: { label: "", caption: "" }, content: { type: "tableContent", rows: [{ cells: [[{ type: "text", text: "D", styles: {} }]] }] }, children: [] },
+  ];
+  const before = JSON.stringify(legacy);
+  const targets = documentReferenceTargets(legacy);
+  expect(targets).toEqual([{ label: "tbl-m1-dwell", blockId: "table", type: "table", title: "Dwell time" }]);
+  const project = mergeProjectReferences([{ filename: "other.scholarpen.json", targets }], "/project", new Map(), "current.scholarpen.json", []);
+  expect(referenceSuggestions(editor, [], "tbl-m1", project).map((item) => item.title)).toEqual(["tbl-m1-dwell"]);
+  const qmd = await blocksToScholarMarkdown(editor, legacy, "qmd");
+  expect(qmd.match(/#tbl-m1-dwell/g)).toHaveLength(1);
+  expect(qmd.indexOf("| D |")).toBeLessThan(qmd.indexOf(": Dwell time"));
+  expect(JSON.stringify(legacy)).toBe(before);
+  expect(documentReferenceTargets([{ type: "note", children: legacy }])).toEqual(targets);
+});
+
+test("caption migration preserves rich prose and existing table metadata", () => {
+  const table = { type: "table", props: { label: "tbl-existing", caption: "Existing" }, content: { type: "tableContent", rows: [] } };
+  const caption = { type: "paragraph", content: [{ type: "text", text: ": Different {#tbl-other}", styles: {} }] };
+  const original: import("../../shared/quarto-references").ReferenceBlock[] = [caption, table];
+  expect(normalizeQuartoBlocks(original)).toEqual([ { ...caption, props: {}, children: [] }, { ...table, children: [] } ]);
+  const rich = { ...caption, content: [{ ...caption.content[0], styles: { bold: true } }] };
+  expect(normalizeQuartoBlocks([rich, { ...table, props: {} }])).toHaveLength(2);
+});
+
+test("a caption between two tables belongs to only one table, matching existing below-table behavior", async () => {
+  const raw = '| A |\n| --- |\n| 1 |\n\n: First {#tbl-first}\n\n| B |\n| --- |\n| 2 |';
+  const imported = await markdownToScholarBlocks(raw, editor);
+  expect(documentReferenceTargets(imported).map((target) => target.label)).toEqual(["tbl-first"]);
+  const tables = imported.filter((block) => block.type === "table");
+  expect(tables[0].props.label).toBe("tbl-first");
+  expect(tables[1].props.label).toBe("");
+});
+
+test("table caption examples inside code are not indexed", async () => {
+  const raw = '```markdown\n: Example {#tbl-code}\n\n| A |\n| --- |\n| 1 |\n```';
+  expect(documentReferenceTargets(await markdownToScholarBlocks(raw, editor))).toEqual([]);
+});

@@ -136,3 +136,51 @@ test("preserves UTF-16 offsets and treats regex punctuation literally", () => {
   expect(findDocumentTextMatches(blocks, "CCK")[0].offset).toBe(2);
   expect(replaceDocumentText(blocks, "[CCK]", "term").content).toEqual([{ type: "paragraph", content: "İ CCK term" }]);
 });
+
+test("finds reference badges and targets with @, bare or partial keys, excluding other props", () => {
+  const keys = ["fig-network", "tbl-results", "sec-methods", "eq-energy", "Smith2024"];
+  const blocks = [
+    { type: "paragraph", content: keys.map((key, index) => index === 4
+      ? { type: "citation", props: { citekey: key, locator: "p. 2" } }
+      : { type: "crossReference", props: { label: key } }) },
+    ...["figure", "table", "heading", "math"].map((type, index) => ({
+      type, props: { label: keys[index], url: "@hidden", altText: "@hidden", formula: "@hidden" },
+    })),
+    { type: "figure", props: { figureNumber: 7 } },
+  ];
+  keys.forEach((key, index) => {
+    for (const query of [`@${key}`, key.toLowerCase(), key.slice(-4)]) {
+      const matches = findDocumentTextMatches(blocks, query);
+      expect(matches).toHaveLength(index === 4 ? 1 : 2);
+      expect(matches.every((match) => match.kind === "annotation" && match.segments.length === 0)).toBe(true);
+      for (const match of matches) {
+        expect(match.snippet.slice(match.snippetOffset, match.snippetOffset + query.length).toLowerCase()).toBe(query.toLowerCase());
+      }
+    }
+  });
+  expect(findDocumentTextMatches(blocks, "@fig-7")).toHaveLength(1);
+  expect(findDocumentTextMatches(blocks, "@hidden")).toHaveLength(0);
+});
+
+test("replacement preserves annotations and uses the original mixed-result index", () => {
+  const blocks = [
+    { type: "heading", props: { label: "sec-key" }, content: "@sec-key" },
+    { type: "paragraph", content: [
+      { type: "crossReference", props: { label: "sec-key" } },
+      { type: "text", text: "@sec-key", styles: { bold: true } },
+    ] },
+  ];
+  const matches = findDocumentTextMatches(blocks, "@sec-key");
+  expect(matches.map((match) => match.kind)).toEqual(["annotation", "text", "annotation", "text"]);
+  expect(replaceDocumentText(blocks, "@sec-key", "changed", 0)).toEqual({ content: blocks, replacementCount: 0 });
+  expect(replaceDocumentText(blocks, "@sec-key", "changed", 2)).toEqual({ content: blocks, replacementCount: 0 });
+  const one = replaceDocumentText(blocks, "@sec-key", "changed", 3);
+  expect(one.replacementCount).toBe(1);
+  expect(one.content).toEqual([blocks[0], { ...blocks[1], content: [
+    blocks[1].content![0], { type: "text", text: "changed", styles: { bold: true } },
+  ] }]);
+  const all = replaceDocumentText(blocks, "@sec-key", "");
+  expect(all.replacementCount).toBe(2);
+  expect(findDocumentTextMatches(all.content, "@sec-key").map((match) => match.kind)).toEqual(["annotation", "annotation"]);
+  expect(findDocumentTextMatches(blocks, "@sec-key")).toHaveLength(4);
+});

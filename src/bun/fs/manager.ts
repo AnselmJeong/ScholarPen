@@ -25,6 +25,7 @@ import {
 import { seedAppInstructions } from "../agent/app-skills";
 import { ProjectReferenceIndex } from "./project-references";
 import { linkSelectedFigure, readLinkedFigure } from "./figure-files";
+import { bundleExportImages } from "./export-image-bundle";
 
 const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
@@ -810,7 +811,11 @@ class FileSystemManager {
     const exportDir = join(projectPath, "exports");
     await mkdir(exportDir, { recursive: true });
     const filePath = join(exportDir, filename);
-    await writeFile(filePath, content, "utf-8");
+    if (/\.(?:md|qmd|markdown)$/i.test(filename)) {
+      const [prepared] = await bundleExportImages(projectPath, [{ path: filePath, content }]);
+      content = prepared.content;
+    }
+    await this.writeFileAtomically(filePath, content);
     return filePath;
   }
 

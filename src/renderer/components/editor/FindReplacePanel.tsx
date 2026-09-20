@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { TextSelection } from "prosemirror-state";
+import { Selection, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet } from "prosemirror-view";
 import { findEditorTextMatches as findAllMatches, type EditorTextMatch as Match, type DocumentFindRequest } from "../../utils/editor-text-find";
 import type { BlockNoteEditor } from "@blocknote/core";
@@ -119,11 +119,20 @@ export function FindReplacePanel({
     try {
       view.setProps({
         decorations: (state: any) => {
+          const decoratedNodes = new Set<string>();
           const decos = list.flatMap((m, i) => {
             if (m.from < 0 || m.to > state.doc.content.size) return [];
-            const isCurrent = i === idx;
+            if (m.kind === "annotation") {
+              const key = `${m.from}:${m.to}`;
+              if (decoratedNodes.has(key)) return [];
+              decoratedNodes.add(key);
+            }
+            // Multiple occurrences inside a key share one node decoration.
+            const isCurrent = i === idx || (m.kind === "annotation"
+              && m.from === list[idx]?.from && m.to === list[idx]?.to);
             return [
-              Decoration.inline(m.from, m.to, {
+              (m.kind === "annotation" ? Decoration.node : Decoration.inline)(m.from, m.to, {
+                "data-find-match": isCurrent ? "current" : "match",
                 style: isCurrent
                   ? "background:rgba(251,146,60,0.55);border-radius:2px;outline:1.5px solid rgba(251,146,60,0.8);"
                   : "background:rgba(253,224,71,0.45);border-radius:2px;",
@@ -266,20 +275,27 @@ export function FindReplacePanel({
   // Collapsed cursor means BlockNote's FormattingToolbar will NOT appear.
 
   const goToMatch = useCallback((idx: number, list: Match[]) => {
-    if (list.length === 0) return;
+    const match = list[idx];
+    if (!match) return;
     const view = getView();
     if (!view) return;
     try {
-      const { from } = list[idx];
+      const { from, kind } = match;
+      const position = view.state.doc.resolve(from);
       const tr = view.state.tr
-        .setSelection(TextSelection.create(view.state.doc, from))
+        .setSelection(position.parent.inlineContent
+          ? TextSelection.create(view.state.doc, from)
+          : Selection.near(position))
         .scrollIntoView();
       view.dispatch(tr);
       requestAnimationFrame(() => {
         const container = scrollContainerRef?.current;
         if (!container) return;
         try {
-          const coords = view.coordsAtPos(from);
+          const nodeDOM = kind === "annotation" ? view.nodeDOM(from) : null;
+          const coords = nodeDOM instanceof HTMLElement
+            ? nodeDOM.getBoundingClientRect()
+            : view.coordsAtPos(from);
           const containerRect = container.getBoundingClientRect();
           const targetTop = container.scrollTop + coords.top - containerRect.top;
           container.scrollTo({
@@ -392,7 +408,7 @@ export function FindReplacePanel({
   // ── Replace ───────────────────────────────────────────────────────────────
 
   const replaceCurrent = useCallback(() => {
-    if (matches.length === 0) return;
+    if (matches[currentIdx]?.kind !== "text") return;
     const view = getView();
     if (!view) return;
     try {
@@ -412,13 +428,14 @@ export function FindReplacePanel({
   }, [matches, currentIdx, replaceTerm, searchTerm, getView, goToMatch, clearDecorations]);
 
   const replaceAll = useCallback(() => {
-    if (matches.length === 0) return;
+    if (!matches.some((match) => match.kind === "text")) return;
     const view = getView();
     if (!view) return;
     try {
       const { state } = view;
       let tr = state.tr;
       for (let i = matches.length - 1; i >= 0; i--) {
+        if (matches[i].kind !== "text") continue;
         const { from, to } = matches[i];
         if (replaceTerm) {
           tr = tr.replaceWith(from, to, state.schema.text(replaceTerm));
@@ -427,11 +444,13 @@ export function FindReplacePanel({
         }
       }
       view.dispatch(tr);
-      setMatches([]);
+      const found = findAllMatches(view.state.doc, searchTerm);
+      setMatches(found);
       setCurrentIdx(0);
-      clearDecorations();
+      if (found.length > 0) goToMatch(0, found);
+      else clearDecorations();
     } catch { /* editor may have unmounted */ }
-  }, [matches, replaceTerm, getView, clearDecorations]);
+  }, [matches, replaceTerm, searchTerm, getView, goToMatch, clearDecorations]);
 
   const replaceProject = useCallback(async (replaceEveryMatch: boolean) => {
     if (
@@ -440,6 +459,8 @@ export function FindReplacePanel({
       || projectMatches.length === 0
       || !searchTerm
     ) return;
+    if (!replaceEveryMatch && projectMatches[projectIdx]?.kind !== "text") return;
+    if (replaceEveryMatch && !projectMatches.some((match) => match.kind === "text")) return;
 
     setProjectMutating(true);
     setProjectError(null);
@@ -560,6 +581,11 @@ export function FindReplacePanel({
 
   const activeMatchCount = scope === "document" ? matches.length : projectMatches.length;
   const activeMatchIndex = scope === "document" ? currentIdx : projectIdx;
+  const activeMatches = scope === "document" ? matches : projectMatches;
+  const replaceableMatchCount = activeMatches.filter((match) => match.kind === "text").length;
+  const canReplaceCurrent = activeMatches[activeMatchIndex]?.kind === "text";
+  const replaceableDocumentCount = projectGroups.filter((group) =>
+    group.matches.some((match) => match.kind === "text")).length;
   const noMatches = searchTerm.length > 0
     && !projectLoading
     && activeMatchCount === 0;
@@ -703,7 +729,7 @@ export function FindReplacePanel({
               if (scope === "document") replaceCurrent();
               else void replaceProject(false);
             }}
-            disabled={activeMatchCount === 0 || projectLoading || projectMutating}
+            disabled={!canReplaceCurrent || projectLoading || projectMutating}
             title={scope === "project" ? "Replace selected occurrence" : "Replace this"}
             style={actionBtnStyle}
           >
@@ -715,7 +741,7 @@ export function FindReplacePanel({
               if (scope === "document") replaceAll();
               else setConfirmReplaceAll(true);
             }}
-            disabled={activeMatchCount === 0 || projectLoading || projectMutating}
+            disabled={replaceableMatchCount === 0 || projectLoading || projectMutating}
             title={scope === "project" ? "Replace across all documents" : "Replace all"}
             style={actionBtnStyle}
           >
@@ -724,11 +750,17 @@ export function FindReplacePanel({
         </div>
       )}
 
+      {showReplace && replaceableMatchCount < activeMatchCount && (
+        <div style={{ fontSize: 10, color: "hsl(var(--muted-foreground))" }}>
+          Replace changes body text only. Reference keys are kept unchanged.
+        </div>
+      )}
+
       {scope === "document" && searchTerm && (
         <div style={{ maxHeight: 236, overflowY: "auto", overflowX: "hidden" }}>
           {matches.map((match, index) => (
             <button
-              key={`${match.from}:${match.to}`}
+              key={`${match.from}:${match.to}:${index}`}
               type="button"
               onClick={() => { setCurrentIdx(index); goToMatch(index, matches); }}
               style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 8px",
@@ -839,7 +871,7 @@ export function FindReplacePanel({
         >
           <AlertTriangle size={13} style={{ color: "hsl(var(--destructive))", flexShrink: 0 }} />
           <span style={{ flex: 1 }}>
-            Replace {projectMatches.length} occurrences across {projectGroups.length} documents?
+            Replace {replaceableMatchCount} occurrences across {replaceableDocumentCount} documents?
             <span style={{ display: "block", marginTop: 2, color: "hsl(var(--muted-foreground))" }}>
               A recovery copy is saved automatically.
             </span>

@@ -16,7 +16,11 @@ Missing and unreadable images direct the user to Properties, where the stored pa
 
 Previously embedded images continue to display. They cannot follow changes to their former originals because no original path was stored. Use 다시 연결 once to associate each image with its desired source. Existing manuscripts are not automatically rewritten or matched to guessed filenames.
 
-Markdown and Quarto files exported to `exports/` reference the project images using relative URLs such as `../figures/plot.png`. Keep the project folders together when sharing these source documents. Existing remote images and embedded images remain readable, but new selections use local files. There is no URL entry control.
+Markdown and Quarto files exported to `exports/` bundle referenced project images in `exports/figures/` and use local URLs such as `figures/plot.png`. Originals remain in their existing project locations. Both export and the app's Quarto render action refresh generated copies from their originals, including images selected from other project subfolders. Existing `../figures/` links are converted before rendering; original QMD files are backed up under `.scholarpen/backups/export-images-*/`. Captions, reference identifiers, prose and code examples are preserved.
+
+Legacy base64 images are first extracted into `figures/embedded-<content-hash>.<extension>` without changing the document JSON, then bundled alongside other images. Repeated exports reuse identical files; edited originals are never overwritten. To make edits to an extracted original appear in the editor, use 다시 연결 to select it. Re-export QMD files after selecting a different source link.
+
+The hidden `exports/.scholarpen-image-manifest.json` tracks generated copies. Edit the original images, rather than their exported copies. Missing originals, redirected export folders and independently edited generated copies stop preparation with a diagnostic; existing QMD content remains intact. Unrelated export-local images are preserved, including filename collisions. Share the whole `exports/` folder (including its figures, bibliography and extensions) to render it directly with Quarto elsewhere. Remote images still require network access. Direct CLI renders use the latest exported copies; refresh through ScholarPen after changing an original. No symlinks are required.
 
 ## Verification
 

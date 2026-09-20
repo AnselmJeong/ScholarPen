@@ -5,6 +5,7 @@ import type { QuartoRenderFormat, QuartoRenderResult } from "../../shared/rpc-ty
 import { getQuartoRenderFormats, parseQuartoBookConfig } from "../../shared/quarto-config";
 import { isQuartoReference } from "../../shared/quarto-references";
 import { duplicateBookReferenceDiagnostic } from "./reference-validation";
+import { prepareQuartoBookImages } from "./prepare-images";
 
 const DEFAULT_RENDER_TIMEOUT_MS = 9 * 60 * 1000;
 const MAX_LOG_CHARACTERS = 24_000;
@@ -137,6 +138,7 @@ export async function renderQuartoBookProject(
   try {
     const duplicateDiagnostic = await duplicateBookReferenceDiagnostic(options.projectDirectory, configSource);
     if (duplicateDiagnostic) return errorResult(options.format, startedAt, duplicateDiagnostic);
+    await prepareQuartoBookImages(options.projectDirectory, configSource);
     const timeoutMs = options.timeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS;
     const process = Bun.spawn({
       cmd: [executable, "render", "--to", options.format],

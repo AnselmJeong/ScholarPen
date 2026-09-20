@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { createReactBlockSpec } from "@blocknote/react";
 import { QuartoPropertiesButton } from "./quarto-properties-button";
 import { FigureImage } from "./figure-image";
+import { FigureCaption } from "./figure-caption";
 
 // ── Figure Block ────────────────────────────────────────────────────────────
 // Image + caption + auto figure numbering.
@@ -44,7 +45,7 @@ export const figureBlock = createReactBlockSpec(
               height: /^\d+(\.\d+)?$/.test(block.props.height) ? Number(block.props.height) : block.props.height || "auto",
               marginLeft: block.props.alignment === "left" ? 0 : "auto",
               marginRight: block.props.alignment === "right" ? 0 : "auto" }}>
-            <QuartoPropertiesButton editor={editor} blockId={block.id} label="" />
+            <QuartoPropertiesButton editor={editor} blockId={block.id} label={block.props.label} />
           </FigureImage>
 
           {/* Caption */}
@@ -69,7 +70,7 @@ export const figureBlock = createReactBlockSpec(
                 onClick={() => { setCaptionValue(caption); setEditingCaption(true); }}
                 className="cursor-pointer text-sm text-foreground hover:text-primary"
               >
-                {caption || <span className="italic text-muted-foreground">Add caption...</span>}
+                {caption ? <FigureCaption caption={caption} /> : <span className="italic text-muted-foreground">Add caption...</span>}
               </span>
             )}
           </div>
