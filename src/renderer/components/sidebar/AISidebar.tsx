@@ -43,6 +43,7 @@ import {
   replaceActiveFileMention,
 } from "@shared/file-mentions";
 import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
+import type { AIResponsePreferences } from "../../hooks/useAIResponsePreferences";
 import { applySelectionReviewResult, type SelectionReviewNotice } from "../../ai/selection-review-result";
 import {
   buildDeepenAnalysisMessage,
@@ -61,6 +62,9 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
 interface AISidebarProps {
+  responsePreferences: AIResponsePreferences;
+  onSearchEnabledChange: (enabled: boolean) => void;
+  onThinkingLevelChange: (level: AgentThinkingLevel) => void;
   project: ProjectInfo | null;
   ollamaStatus: OllamaStatus;
   appSettings?: Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">;
@@ -788,11 +792,11 @@ function AssistantComposer({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            aria-label="이 질문에서 웹 검색 사용"
+            aria-label="웹 검색 사용"
             aria-pressed={searchEnabled && searchAvailable}
             disabled={loading || !searchAvailable}
             onClick={() => setSearchEnabled(!searchEnabled)}
-            title={searchAvailable ? "이 질문에 외부 자료 검색을 사용합니다" : "Settings에서 Web search를 먼저 켜세요"}
+            title={searchAvailable ? "다시 변경할 때까지 새 대화에도 이 검색 설정을 사용합니다" : "Settings에서 Web search를 먼저 켜세요"}
             className={cn(
               "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs disabled:opacity-50",
               searchEnabled && searchAvailable ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground",
@@ -804,7 +808,7 @@ function AssistantComposer({
           <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             Thinking
             <select
-              aria-label="이 질문의 Thinking 수준"
+              aria-label="Thinking 수준"
               value={thinkingLevel}
               onChange={(event) => setThinkingLevel(event.target.value as AgentThinkingLevel)}
               disabled={loading || thinkingConfig.supported === false}
@@ -813,7 +817,7 @@ function AssistantComposer({
               {AGENT_THINKING_LEVELS.map((level) => <option key={level} value={level}>{level === "none" ? "None" : level[0].toUpperCase() + level.slice(1)}</option>)}
             </select>
           </label>
-          <span className="text-[10px] text-muted-foreground">이번 질문에만 적용</span>
+          <span className="text-[10px] text-muted-foreground">변경 전까지 새 대화에도 유지</span>
         </div>
         {thinkingConfig.notice && <p className="text-[10px] leading-relaxed text-muted-foreground">{thinkingConfig.notice}</p>}
         <div className="flex items-center justify-between">
@@ -879,6 +883,9 @@ function AssistantComposer({
 }
 
 export function AISidebar({
+  responsePreferences: { searchEnabled, thinkingLevel },
+  onSearchEnabledChange: setSearchEnabled,
+  onThinkingLevelChange: setThinkingLevel,
   project,
   ollamaStatus: _ollamaStatus,
   activeDocumentName,
@@ -905,8 +912,6 @@ export function AISidebar({
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
   const [lang, setLang] = useState<"ko" | "en">("ko");
   const [projectSourcesEnabled, setProjectSourcesEnabled] = useState(true);
-  const [searchEnabled, setSearchEnabled] = useState(false);
-  const [thinkingLevel, setThinkingLevel] = useState<AgentThinkingLevel>("none");
   const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
@@ -958,8 +963,6 @@ export function AISidebar({
     setSelectedSkillIds([]);
     setSelectedFilePaths([]);
     setProjectSourcesEnabled(true);
-    setSearchEnabled(false);
-    setThinkingLevel("none");
   }, []);
 
   const loadThread = useCallback(
@@ -971,8 +974,6 @@ export function AISidebar({
       setThreadResetKey(`thread-${threadId}-${data.thread.updatedAt}`);
       setSelectedSkillIds([]);
       setSelectedFilePaths([]);
-      setSearchEnabled(false);
-      setThinkingLevel("none");
       const latestSourceSetting = [...data.messages].reverse().find(
         (message) => typeof message.metadata?.projectSourcesEnabled === "boolean",
       )?.metadata?.projectSourcesEnabled;
@@ -1053,13 +1054,12 @@ export function AISidebar({
           message === buildFindCitationMessage(findCitation);
         if (isFindCitation) findCitationRequestRef.current = null;
         const isPreparedRequest = isDeepen || isFindCitation;
-        // Snapshot before any awaits; the next question returns to fast defaults.
+        // Snapshot the user's persistent choices before any awaits. Mandatory
+        // search for a review affects this request, never the saved preference.
         const requestOptions = {
           searchEnabled: isValidate || isFindCitation || (searchEnabled && searchAvailable),
           thinkingLevel,
         };
-        setSearchEnabled(false);
-        setThinkingLevel("none");
         const analysisMode = isDeepen
           ? deepen?.mode ?? "deepen"
           : isFindCitation

@@ -39,6 +39,7 @@ import {
 import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
+import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
 
@@ -47,6 +48,7 @@ type SaveStatus = "saved" | "saving" | "unsaved";
 const AISidebar = lazy(() => import("./components/sidebar/AISidebar").then((m) => ({ default: m.AISidebar })));
 
 export function App() {
+  const { preferences: aiResponsePreferences, setSearchEnabled, setThinkingLevel } = useAIResponsePreferences();
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>({
     connected: false,
     models: [],
@@ -822,6 +824,9 @@ export function App() {
             />
             <Suspense fallback={<div style={{ width: aiSidebarWidth }} className="h-full border-l border-border flex items-center justify-center text-sm text-muted-foreground">Loading AI...</div>}>
               <AISidebar
+                responsePreferences={aiResponsePreferences}
+                onSearchEnabledChange={setSearchEnabled}
+                onThinkingLevelChange={setThinkingLevel}
                 project={activeProject}
                 ollamaStatus={ollamaStatus}
                 appSettings={appSettings}
