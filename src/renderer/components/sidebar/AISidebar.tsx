@@ -43,10 +43,9 @@ import {
   replaceActiveFileMention,
 } from "@shared/file-mentions";
 import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
-import { extractValidationResult } from "../../ai/validate-analysis";
+import { applySelectionReviewResult, type SelectionReviewNotice } from "../../ai/selection-review-result";
 import {
   buildDeepenAnalysisMessage,
-  extractDeepenProtectedRevision,
   formatDeepenAnalysisForDisplay,
   type DeepenAnalysisRequest,
 } from "../../ai/deepen-analysis";
@@ -911,10 +910,7 @@ export function AISidebar({
   const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
-  const [deepenApplyNotice, setDeepenApplyNotice] = useState<{
-    kind: "success" | "error";
-    message: string;
-  } | null>(null);
+  const [deepenApplyNotice, setDeepenApplyNotice] = useState<SelectionReviewNotice | null>(null);
   const modelKeyRef = useRef<string | null>(null);
   const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
   const findCitationRequestRef = useRef<FindCitationRequest | null>(null);
@@ -1151,51 +1147,10 @@ export function AISidebar({
               ? formatDeepenAnalysisForDisplay(assistantMessage, deepen.protection)
               : assistantMessage;
 
-            if (isDeepen && deepen) {
-              if (status === "complete") {
-                try {
-                  const validation = isValidate
-                    ? extractValidationResult(assistantMessage, deepen.protection)
-                    : null;
-                  const revision = validation
-                    ? validation.revision
-                    : extractDeepenProtectedRevision(assistantMessage, deepen.protection);
-                  let applyError: string | null = null;
-                  if (revision === null) {
-                    onDeepenResult?.(deepen.id, null);
-                  } else {
-                    applyError = onDeepenResult
-                      ? onDeepenResult(deepen.id, revision)
-                      : "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
-                  }
-                  setDeepenApplyNotice(
-                    applyError
-                      ? { kind: "error", message: applyError }
-                      : { kind: "success", message: validation?.verdict === "UNCERTAIN"
-                          ? "검증 근거가 부족하거나 상충하여 원문을 유지했습니다."
-                          : validation?.verdict === "UNCHANGED"
-                            ? "검색 근거 내에서 오류를 발견하지 못해 원문을 유지했습니다."
-                            : isValidate
-                              ? "검색 근거에 따른 수정안을 선택 영역에 반영했습니다."
-                              : "통합 개선문을 선택 영역에 반영했습니다." },
-                  );
-                } catch (error) {
-                  onDeepenResult?.(deepen.id, null);
-                  setDeepenApplyNotice({
-                    kind: "error",
-                    message: error instanceof Error
-                      ? error.message
-                      : `${reviewLabel} 결과를 안전하게 적용하지 못해 문서를 변경하지 않았습니다.`,
-                  });
-                }
-              } else {
-                onDeepenResult?.(deepen.id, null);
-                setDeepenApplyNotice({
-                  kind: "error",
-                  message: `${reviewLabel} 생성이 완료되지 않아 문서를 변경하지 않았습니다.`,
-                });
-              }
-            }
+            const reviewNotice = isDeepen && deepen
+              ? applySelectionReviewResult(deepen, assistantMessage, status, onDeepenResult)
+              : null;
+            if (reviewNotice) setDeepenApplyNotice(reviewNotice);
 
             if (!projectPath || !runThread || !visibleAssistantMessage.trim()) return;
             await rpc.saveAgentThreadMessage(projectPath, runThread.id, "assistant", visibleAssistantMessage, status, {
@@ -1203,6 +1158,7 @@ export function AISidebar({
               provider: activeProvider,
               model: activeModel,
               analysisMode,
+              ...(reviewNotice ? { selectionReview: reviewNotice } : {}),
               selectedSkillIds: skillIds,
               selectedFilePaths: filePaths,
               projectSourcesEnabled,

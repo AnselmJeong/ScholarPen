@@ -113,6 +113,10 @@ describe("Validate evidence requirements", () => {
         expect(system).not.toContain("<deepen_review_mode>");
         expect(system).toContain("protected selection");
         expect(system).toContain("CORRECTED or UNCHANGED or UNCERTAIN");
+        expect(system).toContain("ALL confirmed corrections from the findings actually applied");
+        expect(system).toContain("CORRECTED must never contain an unchanged copy");
+        expect(system).toContain("even if a separate claim remains unresolved");
+        expect(system).not.toContain("choose UNCERTAIN and leave the entire selection unchanged");
         expect(system).toContain("Observational evidence");
         expect(result.references).toContain("https://openalex.org/W123");
       } else {

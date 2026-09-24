@@ -14,3 +14,17 @@
 - Confirmed unchanged/uncertain verdicts return no replacement; incomplete verdicts, absent evidence citations, and broken revision markers are rejected.
 - TypeScript and Vite production frontend build passed. Re-ran all 11 review tests after refining the Validate error labels.
 - Installed desktop app was not replaced; live-model and desktop interaction verification remain unperformed.
+
+## Validate revision repair (2026-09-24)
+
+- Make each confirmed finding specify its actual before/after correction and require that correction in the final protected passage. Preserve unresolved claims without vetoing independent supported corrections. Allow unambiguous spelling/agreement corrections, without expanding Validate into stylistic rewriting.
+- Accept harmless Markdown emphasis and CRLF in verdict/revision headings; continue rejecting conflicting verdicts, missing evidence, invalid markers, incomplete streams, and stale selections.
+- Reject a CORRECTED result that contains no text change, and exercise the same completion/apply function used by the sidebar against a real ProseMirror document replacement.
+- Verify prompt assembly, result parsing, automatic application, citation/format preservation, typecheck, and frontend build. Saved chat contains visible text only, so it cannot establish the original marker/application failure. Do not change manuscript data during verification.
+
+### Repair validation
+
+- 44 focused tests passed, including CORRECTED with an unchanged copy, emphasized/CRLF headings, automatic replacement of a saved ProseMirror range, preserved surrounding text/citations/bold marks, and no writes for interrupted or invalid results.
+- TypeScript, Vite production frontend build, and `git diff --check` passed. Vite still reports existing bundle-size and Browserslist-age warnings.
+- The configured live model (`ollama` / `deepseek-v4.1-flash`) corrected a synthetic causal-overclaim fixture and its raw response passed the sidebar completion function, which replaced the in-memory document selection while preserving bold marks and a citation node. Retrieval used synthetic evidence, not a live literature search; no user manuscript was edited.
+- Apply success/failure is now included in saved assistant-message metadata for future diagnosis. Installed desktop app was not replaced or click-tested.

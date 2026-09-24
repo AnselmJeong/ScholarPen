@@ -326,6 +326,13 @@ function replaceSerializedText(nodes: SerializedNode[] | undefined, rewrittenTex
   return content;
 }
 
+/** Validate the marker structure before comparing editable text with the snapshot. */
+export function hasProtectedTextChanges(selection: ProtectedSelection, response: string): boolean {
+  const revised = parseProtectedRewrite(response, selection);
+  const original = parseProtectedRewrite(selection.protectedText, selection);
+  return revised.some((text, index) => text !== original[index]);
+}
+
 export function restoreProtectedSelection(
   schema: Schema,
   selection: ProtectedSelection,

@@ -34,6 +34,8 @@ export function buildDeepenAnalysisMessage(request: DeepenAnalysisRequest): stri
 
 선택문을 검색된 자료에 근거하여 간략히 검증해 주세요. 사실, 논리, 개념, 인과관계 및 범위의 오류만 점검하고, 근거로 확인된 오류가 있을 때만 최소한으로 수정해 주세요. 문체 개선, 내용 확장, 장문의 비평이나 체크리스트는 필요하지 않습니다.
 검증 결과와 근거를 짧게 설명하고, 오류가 없으면 원문을 유지하며 근거가 부족하면 확인 불가로 보고하세요. 검색 결과가 있다는 이유만으로 검증된 것으로 간주하지 마세요.
+확인된 오류마다 원문 구절과 실제 수정할 표현을 짝지어 제시하고, 명백한 오탈자·중복어·문법 오류도 최소한으로 교정하세요. 별도의 확인 불가 주장은 그대로 두되, 독립적으로 고칠 수 있는 오류까지 미수정 상태로 남기지 마세요.
+CORRECTED이면 반드시 마지막에 \`## 통합 개선문\`을 두고, 확인된 수정 사항을 모두 실제로 반영한 선택문 전체를 작성하세요. 보호 마커 자체만 그대로 유지하고 그 안의 수정 대상 문장은 고쳐야 합니다. 원문을 그대로 복사한 뒤 수정했다고 보고하지 마세요. UNCHANGED 또는 UNCERTAIN이면 통합 개선문을 출력하지 마세요.
 시스템의 판정 형식과 보호 마커 규칙을 따르세요. 수정안은 원문의 언어와 기존 인용·서식을 보존하며 검증 후 선택 영역에 자동 반영됩니다.
 
 선택문:
@@ -71,7 +73,7 @@ export function extractDeepenProtectedRevision(
   label = "Deepen",
 ): string {
   const headingMatches = Array.from(
-    response.matchAll(/^#{1,3}[ \t]+(?:\*\*)?(?:통합 개선문|Integrated Revision)(?:\*\*)?[ \t]*:?[ \t]*$/gim),
+    response.matchAll(/^#{1,3}[ \t]+(?:\*\*)?(?:통합\s*개선문|Integrated Revision)(?:\*\*)?[ \t]*:?[ \t]*\r?$/gim),
   );
   const heading = headingMatches.at(-1);
   if (!heading || heading.index === undefined) {

@@ -1,4 +1,4 @@
-import type { ProtectedSelection } from "../components/editor/ai-inline-edit-protection";
+import { hasProtectedTextChanges, type ProtectedSelection } from "../components/editor/ai-inline-edit-protection";
 import { extractDeepenProtectedRevision } from "./deepen-analysis";
 
 export type ValidationResult =
@@ -11,7 +11,7 @@ export function extractValidationResult(
   protection: ProtectedSelection,
 ): ValidationResult {
   const verdicts = Array.from(response.matchAll(
-    /^## Validation verdict[ \t]*\r?\n[ \t]*(CORRECTED|UNCHANGED|UNCERTAIN)[ \t]*\r?$/gm,
+    /^#{1,3}[ \t]+(?:\*\*)?Validation verdict(?:\*\*)?[ \t]*:?[ \t]*\r?\n[ \t]*(?:\*\*|`)?(CORRECTED|UNCHANGED|UNCERTAIN)(?:\*\*|`)?[ \t]*\r?$/gm,
   ));
   if (verdicts.length !== 1) {
     throw new Error("Validate 판정을 확인할 수 없어 원문을 유지했습니다.");
@@ -27,5 +27,8 @@ export function extractValidationResult(
   const revision = extractDeepenProtectedRevision(
     response.slice(verdicts[0].index), protection, "Validate",
   );
+  if (!hasProtectedTextChanges(protection, revision)) {
+    throw new Error("Validate가 수정했다고 판정했지만 통합 개선문이 원문과 동일하여 적용하지 않았습니다. 다시 실행해 주세요.");
+  }
   return { verdict, revision };
 }

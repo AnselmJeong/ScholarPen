@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "prosemirror-model";
+import { EditorState } from "prosemirror-state";
 import { extractValidationResult } from "./validate-analysis";
+import { applySelectionReviewResult } from "./selection-review-result";
 import {
   buildDeepenAnalysisMessage,
   createDeepenAnalysisRequest,
@@ -38,6 +40,8 @@ describe("Validate selection review", () => {
     expect(message).toStartWith("[ScholarPen Validate]");
     expect(message).toContain("검색된 자료");
     expect(message).toContain("오류가 있을 때만 최소한으로 수정");
+    expect(message).toContain("확인된 수정 사항을 모두 실제로 반영");
+    expect(message).toContain("원문을 그대로 복사한 뒤 수정했다고 보고하지 마세요");
     expect(isDeepenAnalysisMessage(message)).toBe(false);
   });
 
@@ -78,6 +82,68 @@ describe("Validate selection review", () => {
     ]) {
       expect(() => extractValidationResult(response, protection)).toThrow();
     }
+  });
+
+  test("rejects CORRECTED when the model copied the original, even with different boundary whitespace", () => {
+    const protection = makeProtection();
+    const response = `Evidence [W1]\n## Validation verdict\nCORRECTED\n## 통합 개선문\n${protection.protectedText}`;
+    expect(() => extractValidationResult(response, protection)).toThrow("원문과 동일");
+    expect(() => extractValidationResult(response.replace(/⟧⟦/g, "⟧\n⟦"), protection)).toThrow("원문과 동일");
+  });
+
+  test("automatically applies an emphasized CRLF verdict to the saved range while preserving surrounding text, citations, and marks", () => {
+    let state = EditorState.create({ schema, doc: schema.nodes.doc.create(null, [
+      schema.nodes.paragraph.create(null, [
+        schema.text("Before. "),
+        schema.text("The study proves causation", [schema.marks.bold.create()]),
+        schema.nodes.citation.create({ citekey: "kim2025" }),
+        schema.text(" After."),
+      ]),
+    ]) });
+    const from = 1 + "Before. ".length;
+    const to = from + "The study proves causation".length + 1;
+    const protection = protectSelectionSlice(state.doc.slice(from, to), "The study proves causation", "applytest");
+    const request = createDeepenAnalysisRequest("The study proves causation", { beforeSelection: "Before.", afterSelection: "After." }, protection, "validate");
+    const revision = protection.protectedText.replace("proves causation", "reports an association");
+    let applied = 0;
+    const notice = applySelectionReviewResult(request,
+      `## 검증 결과\r\n“proves causation” → “reports an association” [W1]\r\n## **Validation verdict**\r\n**CORRECTED**\r\n## 통합개선문\r\n${revision}\r\n\r\n**Research Sources**\r\n[W1] Evidence`,
+      "complete", (id, text) => {
+        expect(id).toBe(request.id);
+        expect(text).not.toBeNull();
+        const replacement = restoreProtectedSelection(schema, protection, text!);
+        state = state.apply(state.tr.replace(from, to, replacement));
+        applied++;
+        return null;
+      });
+    expect(applied).toBe(1);
+    expect(notice.kind).toBe("success");
+    expect(state.doc.textContent).toBe("Before. The study reports an association After.");
+    expect(state.doc.firstChild!.child(1).marks[0].type.name).toBe("bold");
+    expect(state.doc.firstChild!.child(2).attrs.citekey).toBe("kim2025");
+  });
+
+  test("never applies unchanged, uncertain, malformed, copied, or interrupted responses", () => {
+    const protection = makeProtection();
+    const request = createDeepenAnalysisRequest("선택된 핵심 주장", { beforeSelection: "", afterSelection: "" }, protection, "validate");
+    const corrected = `Evidence [W1]\n## Validation verdict\nCORRECTED\n## 통합 개선문\n${protection.protectedText.replace("핵심 주장", "수정된 주장")}`;
+    for (const [response, status, kind] of [
+      ["## Validation verdict\nUNCHANGED", "complete", "success"],
+      ["## Validation verdict\nUNCERTAIN", "complete", "success"],
+      ["## 통합 개선문\nNo verdict or markers", "complete", "error"],
+      [corrected.replace("수정된 주장", "핵심 주장"), "complete", "error"],
+      [corrected, "aborted", "error"],
+      [corrected, "error", "error"],
+    ] as const) {
+      const calls: (string | null)[] = [];
+      expect(applySelectionReviewResult(request, response, status, (_id, text) => {
+        calls.push(text); return null;
+      }).kind).toBe(kind);
+      expect(calls).toEqual([null]);
+    }
+    expect(applySelectionReviewResult(request, corrected, "complete").kind).toBe("error");
+    expect(applySelectionReviewResult(request, corrected, "complete", () => "Stale selection"))
+      .toEqual({ kind: "error", message: "Stale selection" });
   });
 });
 
