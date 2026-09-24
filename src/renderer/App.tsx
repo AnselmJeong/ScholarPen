@@ -1,10 +1,9 @@
 import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { BookMarked, BookOpen, PenLine, Play, Plus } from "lucide-react";
+import { BookMarked, BookOpen, PenLine, Play, Plus, Settings } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { LeftSidebar } from "./components/sidebar/LeftSidebar";
-import { IconRail } from "./components/sidebar/IconRail";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog } from "./components/editor/ExportDialog";
@@ -608,6 +607,11 @@ export function App() {
           <span className="text-sm font-bold tracking-tight text-foreground">ScholarPen</span>
         </div>
         <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setCurrentView("settings")}
+            title="Settings" aria-label="Settings"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
+            <Settings className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+          </button>
           <TooltipProvider delayDuration={400}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -725,13 +729,6 @@ export function App() {
       {/* 3-pane layout */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Icon Rail — leftmost narrow column */}
-        <IconRail
-          filesOpen={leftSidebarOpen}
-          onToggleFiles={() => setLeftSidebarOpen(open => !open)}
-          onOpenSettings={() => setCurrentView("settings")}
-        />
-
         {/* Left: Files panel */}
         {/* Keep the explorer mounted to preserve folder, selection, and scroll state. */}
         <div id="files-panel" hidden={!leftSidebarOpen} style={{ width: leftSidebarWidth }} className="flex-shrink-0 h-full">
@@ -763,6 +760,8 @@ export function App() {
         <div className="relative flex flex-1 overflow-hidden">
           {/* Editor */}
           <EditorPaneGroup
+            filesOpen={leftSidebarOpen}
+            onToggleFiles={() => setLeftSidebarOpen(open => !open)}
             ref={editorGroupRef}
             project={activeProject}
             ollamaStatus={ollamaStatus}

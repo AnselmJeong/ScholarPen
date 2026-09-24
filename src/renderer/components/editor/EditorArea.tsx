@@ -1,6 +1,6 @@
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
 import { NoteToolbarButton } from "../../blocks/note-toolbar-button";
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildDoiResolverUrl,
   buildDoiCitationInsertionPlan,
@@ -25,7 +25,7 @@ import {
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { ListTree, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
 import { FigureDocumentContext } from "../../blocks/figure-image";
@@ -107,6 +107,8 @@ function buildCitationHoverMetadata(bibtex: string): Map<string, CitationHoverMe
 }
 
 interface EditorAreaProps {
+  outlineId: string;
+  onOutlineClosed: () => void;
   project: ProjectInfo | null;
   documentFilename: string | null;
   ollamaStatus: OllamaStatus;
@@ -134,6 +136,8 @@ function normalizeDocumentContent(content: unknown) {
 }
 
 export function EditorArea({
+  outlineId,
+  onOutlineClosed,
   project,
   documentFilename,
   ollamaStatus,
@@ -153,8 +157,6 @@ export function EditorArea({
 }: EditorAreaProps) {
   const isDark = useIsDark();
   const outlineVisible = useOutlineVisibility();
-  const outlineId = useId();
-  const outlineToggleRef = useRef<HTMLButtonElement>(null);
   const editor = useCreateBlockNote({
     schema: scholarSchema,
     dictionary: {
@@ -653,11 +655,6 @@ export function EditorArea({
             <span className="min-w-0 truncate">{documentFilename.replace(".scholarpen.json", "")}</span>
           </>
         )}
-        <button ref={outlineToggleRef} type="button" className="editor-outline-toggle" aria-controls={outlineId}
-          aria-expanded={outlineVisible} title={outlineVisible ? "Hide outline" : "Show outline"}
-          onClick={() => setOutlineVisible(!outlineVisible)}>
-          <ListTree size={15} aria-hidden="true" /> Outline
-        </button>
       </div>
       {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={`${project.path}/${documentFilename}/${propertiesBlockId}`}
         editor={editor} blockId={propertiesBlockId} onClose={() => setPropertiesBlockId(null)} />}
@@ -772,7 +769,7 @@ export function EditorArea({
 
       <EditorOutline key={`${project.path}/${documentFilename}`} id={outlineId} editor={editor}
         scrollContainerRef={scrollContainerRef} ready={documentReady} visible={outlineVisible}
-        onClose={() => { setOutlineVisible(false); outlineToggleRef.current?.focus(); }} />
+        onClose={() => { setOutlineVisible(false); onOutlineClosed(); }} />
       </div>
 
       {/* Find / Replace panel — absolutely positioned in top-right of editor */}

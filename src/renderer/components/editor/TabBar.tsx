@@ -11,6 +11,8 @@ interface TabBarProps {
   /** Called when the user starts a mouse-drag on a tab (left button, after threshold). */
   onTabMouseDown: (tabId: string, e: React.MouseEvent) => void;
   onPaneFocus: () => void;
+  leadingControls?: React.ReactNode;
+  trailingControls?: React.ReactNode;
 }
 
 export function TabBar({
@@ -21,8 +23,9 @@ export function TabBar({
   onTabClose,
   onTabMouseDown,
   onPaneFocus,
+  leadingControls,
+  trailingControls,
 }: TabBarProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const activeTabRef = useRef<HTMLDivElement>(null);
 
   // Scroll active tab into view whenever it changes
@@ -32,16 +35,16 @@ export function TabBar({
 
   return (
     <div
-      ref={scrollRef}
       className={`
-        flex items-end h-9 bg-muted/40 overflow-x-auto flex-shrink-0
+        flex items-center h-9 bg-muted/40 min-w-0 flex-shrink-0
         border-b transition-colors
-        [&::-webkit-scrollbar]:hidden
         ${isFocused ? "border-blue-400" : "border-border"}
       `}
-      style={{ scrollbarWidth: "none", msOverflowStyle: "none" } as React.CSSProperties}
       onClick={onPaneFocus}
     >
+      {leadingControls && <div className="flex flex-shrink-0 px-1">{leadingControls}</div>}
+      <div className="flex flex-1 min-w-0 h-full items-end overflow-x-auto [&::-webkit-scrollbar]:hidden"
+        style={{ scrollbarWidth: "none" }}>
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         const label = tab.file.name.replace(/\.scholarpen\.json$/, "");
@@ -90,6 +93,8 @@ export function TabBar({
 
       {/* Remaining space also triggers pane focus */}
       <div className="flex-1 h-full" />
+      </div>
+      {trailingControls && <div className="flex flex-shrink-0 px-1">{trailingControls}</div>}
     </div>
   );
 }

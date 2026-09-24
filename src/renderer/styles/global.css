@@ -327,13 +327,12 @@ mark[data-find][data-current] {
 /* The outline belongs to each manuscript pane, including split editors. */
 .scholar-editor-pane { container-type: inline-size; container-name: scholar-editor; }
 .scholar-editor-body { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
-.editor-outline-toggle {
-  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
-  margin-left: auto; padding: 5px 8px; border-radius: 5px;
-  color: hsl(var(--muted-foreground)); font-size: 12px; cursor: pointer;
+.editor-pane-toggle {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 5px;
+  color: hsl(var(--muted-foreground)); cursor: pointer;
 }
-.editor-outline-toggle[aria-expanded="true"] { background: hsl(var(--accent)); color: hsl(var(--accent-foreground)); }
-.editor-outline-toggle:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+.editor-pane-toggle:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
 .editor-mini-outline {
   display: flex; flex-direction: column; flex: 0 0 160px; min-height: 0; min-width: 0;
   border-left: 1px solid hsl(var(--border)); background: hsl(var(--background));
@@ -368,7 +367,7 @@ mark[data-find][data-current] {
 }
 .editor-outline-title[aria-current="location"] { font-weight: 600; }
 .editor-outline-empty { padding: 8px 4px; font-size: 10px; line-height: 1.5; color: hsl(var(--muted-foreground)); }
-.editor-outline-toggle:focus-visible, .editor-mini-outline button:focus-visible {
+.editor-pane-toggle:focus-visible, .editor-mini-outline button:focus-visible {
   outline: 2px solid hsl(var(--ring)); outline-offset: -2px;
 }
 @container scholar-editor (max-width: 760px) {

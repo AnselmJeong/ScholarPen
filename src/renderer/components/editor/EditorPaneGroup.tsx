@@ -13,6 +13,8 @@ import React, {
 import { EditorArea } from "./EditorArea";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
+import { PaneToggle } from "./PaneToggle";
+import { setOutlineVisible, useOutlineVisibility } from "./outline-visibility";
 import type { FileNode, ProjectInfo, OllamaStatus } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
@@ -43,6 +45,8 @@ export interface EditorPaneGroupHandle {
 }
 
 interface EditorPaneGroupProps {
+  filesOpen: boolean;
+  onToggleFiles: () => void;
   project: ProjectInfo | null;
   ollamaStatus: OllamaStatus;
   reloadTrigger: number;
@@ -74,6 +78,8 @@ interface DragTrack {
 export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroupProps>(
   function EditorPaneGroup(
     {
+      filesOpen,
+      onToggleFiles,
       project,
       ollamaStatus,
       reloadTrigger,
@@ -93,6 +99,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const [focusedPane, setFocusedPane] = useState<PaneId>("left");
     const [findRequests, setFindRequests] = useState<Record<string, DocumentFindRequest>>({});
     const [splitRatio, setSplitRatio] = useState(50);
+    const outlineVisible = useOutlineVisibility();
+    const outlineToggleRefs = useRef<Record<PaneId, HTMLButtonElement | null>>({ left: null, right: null });
 
     // Drag-to-split state
     const [isDragging, setIsDragging] = useState(false);
@@ -501,6 +509,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
 
     const renderPane = (pane: PaneState, paneId: PaneId) => {
       const isFocused = focusedPane === paneId;
+      const activeTab = pane.tabs.find(tab => tab.id === pane.activeTabId);
+      const outlineIdFor = (tabId: string) => `editor-outline-${paneId}-${encodeURIComponent(tabId)}`;
       const isCurrentActiveTab = (tabId: string) => {
         const currentPane = paneId === "left" ? leftPaneRef.current : rightPaneRef.current;
         return focusedPaneRef.current === paneId && currentPane?.activeTabId === tabId;
@@ -519,6 +529,15 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
             onTabClose={(tabId) => closeTab(paneId, tabId)}
             onTabMouseDown={(tabId, e) => handleTabMouseDown(tabId, paneId, e)}
             onPaneFocus={() => setFocusedPane(paneId)}
+            leadingControls={paneId === "left" && (
+              <PaneToggle side="left" open={filesOpen} label={filesOpen ? "Hide files" : "Show files"}
+                controls="files-panel" onToggle={onToggleFiles} />
+            )}
+            trailingControls={activeTab?.file.kind === "document" && (
+              <PaneToggle side="right" open={outlineVisible} label={outlineVisible ? "Hide outline" : "Show outline"}
+                controls={outlineIdFor(activeTab.id)} onToggle={() => setOutlineVisible(!outlineVisible)}
+                buttonRef={button => { outlineToggleRefs.current[paneId] = button; }} />
+            )}
           />
 
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -536,6 +555,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                   >
                     {tab.file.kind === "document" ? (
                       <EditorArea
+                        outlineId={outlineIdFor(tab.id)}
+                        onOutlineClosed={() => outlineToggleRefs.current[paneId]?.focus()}
                         project={project}
                         documentFilename={project ? documentRelativeFilename(project.path, tab.file.path) : tab.file.name}
                         ollamaStatus={ollamaStatus}
