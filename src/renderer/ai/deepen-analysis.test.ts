@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Schema } from "prosemirror-model";
+import { extractValidationResult } from "./validate-analysis";
 import {
   buildDeepenAnalysisMessage,
   createDeepenAnalysisRequest,
@@ -25,6 +26,59 @@ const schema = new Schema({
     },
   },
   marks: { bold: {} },
+});
+
+describe("Validate selection review", () => {
+  test("routes a concise validation request through the protected review pipeline", () => {
+    const request = createDeepenAnalysisRequest("선택된 핵심 주장", {
+      beforeSelection: "앞부분", afterSelection: "뒷부분",
+    }, makeProtection(), "validate");
+    expect(request.mode).toBe("validate");
+    const message = buildDeepenAnalysisMessage(request);
+    expect(message).toStartWith("[ScholarPen Validate]");
+    expect(message).toContain("검색된 자료");
+    expect(message).toContain("오류가 있을 때만 최소한으로 수정");
+    expect(isDeepenAnalysisMessage(message)).toBe(false);
+  });
+
+  test("restores a supported correction while preserving citations and bold marks", () => {
+    const protection = makeProtection();
+    const revision = protection.protectedText.replace("핵심 주장", "수정된 주장");
+    const result = extractValidationResult(
+      `## 검증 결과\n오류의 근거 [W1]\n\n## Validation verdict\nCORRECTED\n\n## 통합 개선문\n${revision}`,
+      protection,
+    );
+    expect(result.verdict).toBe("CORRECTED");
+    const restored = restoreProtectedSelection(schema, protection, result.revision!);
+    expect(restored.content.toJSON()).toEqual([
+      { type: "text", marks: [{ type: "bold" }], text: "선택된 " },
+      { type: "citation", attrs: { citekey: "kim2025", locator: "p. 7" } },
+      { type: "text", text: " 수정된 주장" },
+    ]);
+  });
+
+  for (const verdict of ["UNCHANGED", "UNCERTAIN"] as const) {
+    test(`${verdict} never applies even an unexpected replacement section`, () => {
+      const protection = makeProtection();
+      expect(extractValidationResult(
+        `## Validation verdict\n${verdict}\n\n## 통합 개선문\n${protection.protectedText}`,
+        protection,
+      )).toEqual({ verdict, revision: null });
+    });
+  }
+
+  test("rejects missing or conflicting verdicts, absent evidence, and incomplete revisions", () => {
+    const protection = makeProtection();
+    const verdict = "## Validation verdict\nCORRECTED";
+    for (const response of [
+      "Partial response [W1]",
+      `Evidence [W1]\n${verdict}\n\n## Validation verdict\nUNCERTAIN`,
+      `${verdict}\n\n## 통합 개선문\n${protection.protectedText}`,
+      `Evidence [W1]\n${verdict}\n\n## 통합 개선문\n${protection.markers[0].token}Partial`,
+    ]) {
+      expect(() => extractValidationResult(response, protection)).toThrow();
+    }
+  });
 });
 
 function makeProtection() {

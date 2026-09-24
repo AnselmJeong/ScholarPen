@@ -74,6 +74,56 @@ describe("per-question search", () => {
   });
 });
 
+describe("Validate evidence requirements", () => {
+  const validationParams: AgentStreamParams = {
+    ...params, analysisMode: "validate", searchEnabled: false,
+    deepenContext: {
+      selectedText: "A disputed claim", protectedText: "protected selection",
+      beforeSelection: "before", afterSelection: "after",
+    },
+  };
+
+  test("refuses validation when global search is disabled without network calls", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; throw new Error("Unexpected fetch"); }) as unknown as typeof fetch;
+    await expect(buildAgentMessages(validationParams, { ...settings, webSearchEnabled: false }))
+      .rejects.toThrow("Validate에는 검색이 필요");
+    expect(calls).toBe(0);
+  });
+
+  for (const evidence of ["abstract", "metadata-only", "empty"] as const) {
+    test(`forces search with the ordinary toggle off; ${evidence}`, async () => {
+      const urls: string[] = [];
+      globalThis.fetch = (async (url: unknown) => {
+        urls.push(String(url));
+        if (String(url).includes("chat/completions")) {
+          return Response.json({ choices: [{ message: { content: "academic evidence disputed claim" } }] });
+        }
+        if (String(url).includes("openalex")) return Response.json({ results: evidence === "empty" ? [] : [{
+          id: "https://openalex.org/W123", title: "Relevant evidence",
+          abstract_inverted_index: evidence === "abstract" ? { Observational: [0], evidence: [1] } : null,
+        }] });
+        if (String(url).includes("esearch")) return Response.json({ esearchresult: { idlist: [] } });
+        throw new Error(`Unexpected URL: ${url}`);
+      }) as typeof fetch;
+      if (evidence === "abstract") {
+        const result = await buildAgentMessages(validationParams, settings);
+        const system = result.messages[0].content;
+        expect(system).toContain("<validate_review_mode>");
+        expect(system).not.toContain("<deepen_review_mode>");
+        expect(system).toContain("protected selection");
+        expect(system).toContain("CORRECTED or UNCHANGED or UNCERTAIN");
+        expect(system).toContain("Observational evidence");
+        expect(result.references).toContain("https://openalex.org/W123");
+      } else {
+        await expect(buildAgentMessages(validationParams, settings)).rejects.toThrow("검색 자료를 확보하지 못해");
+      }
+      expect(urls.some(url => url.includes("openalex"))).toBeTrue();
+      expect(urls.some(url => url.includes("esearch"))).toBeTrue();
+    });
+  }
+});
+
 describe("provider thinking payloads and activity", () => {
   for (const level of ["none", "low", "medium", "high"] as const) {
     test(`Ollama sends ${level} through the OpenAI-compatible API`, async () => {

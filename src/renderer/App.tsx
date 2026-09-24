@@ -60,6 +60,7 @@ export function App() {
   const [activeDocumentFilename, setActiveDocumentFilename] = useState<string | null>(null);
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
+  const [leftSidebarOpen, setLeftSidebarOpen]         = useState(true);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
   const [pendingFindCitationRequest, setPendingFindCitationRequest] = useState<FindCitationRequest | null>(null);
   const [wordCount, setWordCount]                     = useState(0);
@@ -726,11 +727,14 @@ export function App() {
 
         {/* Icon Rail — leftmost narrow column */}
         <IconRail
+          filesOpen={leftSidebarOpen}
+          onToggleFiles={() => setLeftSidebarOpen(open => !open)}
           onOpenSettings={() => setCurrentView("settings")}
         />
 
         {/* Left: Files panel */}
-        <div style={{ width: leftSidebarWidth }} className="flex-shrink-0 h-full">
+        {/* Keep the explorer mounted to preserve folder, selection, and scroll state. */}
+        <div id="files-panel" hidden={!leftSidebarOpen} style={{ width: leftSidebarWidth }} className="flex-shrink-0 h-full">
           <LeftSidebar
             projects={projects}
             activeProject={activeProject}
@@ -750,6 +754,7 @@ export function App() {
         </div>
         {/* Resize handle */}
         <div
+          hidden={!leftSidebarOpen}
           className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
           onMouseDown={handleLeftResizeMouseDown}
         />

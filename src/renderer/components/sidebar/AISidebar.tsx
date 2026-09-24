@@ -43,6 +43,7 @@ import {
   replaceActiveFileMention,
 } from "@shared/file-mentions";
 import { createScholarAgentAdapter } from "../../ai/scholar-agent-adapter";
+import { extractValidationResult } from "../../ai/validate-analysis";
 import {
   buildDeepenAnalysisMessage,
   extractDeepenProtectedRevision,
@@ -1048,6 +1049,8 @@ export function AISidebar({
           deepen !== null &&
           message === buildDeepenAnalysisMessage(deepen);
         if (isDeepen) deepenRequestRef.current = null;
+        const isValidate = isDeepen && deepen?.mode === "validate";
+        const reviewLabel = isValidate ? "Validate" : "Deepen";
         const findCitation = findCitationRequestRef.current;
         const isFindCitation =
           findCitation !== null &&
@@ -1056,13 +1059,13 @@ export function AISidebar({
         const isPreparedRequest = isDeepen || isFindCitation;
         // Snapshot before any awaits; the next question returns to fast defaults.
         const requestOptions = {
-          searchEnabled: isFindCitation || (searchEnabled && searchAvailable),
+          searchEnabled: isValidate || isFindCitation || (searchEnabled && searchAvailable),
           thinkingLevel,
         };
         setSearchEnabled(false);
         setThinkingLevel("none");
         const analysisMode = isDeepen
-          ? "deepen" as const
+          ? deepen?.mode ?? "deepen"
           : isFindCitation
             ? "find-citation" as const
             : undefined;
@@ -1094,7 +1097,7 @@ export function AISidebar({
         if (projectPath) {
           if (!runThread) {
             const threadTitle = isDeepen && deepen
-              ? `Deepen: ${deepen.selectedText.replace(/\s+/g, " ").trim().slice(0, 72)}`
+              ? `${reviewLabel}: ${deepen.selectedText.replace(/\s+/g, " ").trim().slice(0, 72)}`
               : isFindCitation && findCitation
                 ? `Find Citation: ${findCitation.selectedText.replace(/\s+/g, " ").trim().slice(0, 64)}`
                 : message;
@@ -1151,17 +1154,30 @@ export function AISidebar({
             if (isDeepen && deepen) {
               if (status === "complete") {
                 try {
-                  const revision = extractDeepenProtectedRevision(
-                    assistantMessage,
-                    deepen.protection,
-                  );
-                  const applyError = onDeepenResult
-                    ? onDeepenResult(deepen.id, revision)
-                    : "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
+                  const validation = isValidate
+                    ? extractValidationResult(assistantMessage, deepen.protection)
+                    : null;
+                  const revision = validation
+                    ? validation.revision
+                    : extractDeepenProtectedRevision(assistantMessage, deepen.protection);
+                  let applyError: string | null = null;
+                  if (revision === null) {
+                    onDeepenResult?.(deepen.id, null);
+                  } else {
+                    applyError = onDeepenResult
+                      ? onDeepenResult(deepen.id, revision)
+                      : "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
+                  }
                   setDeepenApplyNotice(
                     applyError
                       ? { kind: "error", message: applyError }
-                      : { kind: "success", message: "통합 개선문을 선택 영역에 반영했습니다." },
+                      : { kind: "success", message: validation?.verdict === "UNCERTAIN"
+                          ? "검증 근거가 부족하거나 상충하여 원문을 유지했습니다."
+                          : validation?.verdict === "UNCHANGED"
+                            ? "검색 근거 내에서 오류를 발견하지 못해 원문을 유지했습니다."
+                            : isValidate
+                              ? "검색 근거에 따른 수정안을 선택 영역에 반영했습니다."
+                              : "통합 개선문을 선택 영역에 반영했습니다." },
                   );
                 } catch (error) {
                   onDeepenResult?.(deepen.id, null);
@@ -1169,14 +1185,14 @@ export function AISidebar({
                     kind: "error",
                     message: error instanceof Error
                       ? error.message
-                      : "Deepen 결과를 안전하게 적용하지 못해 문서를 변경하지 않았습니다.",
+                      : `${reviewLabel} 결과를 안전하게 적용하지 못해 문서를 변경하지 않았습니다.`,
                   });
                 }
               } else {
                 onDeepenResult?.(deepen.id, null);
                 setDeepenApplyNotice({
                   kind: "error",
-                  message: "Deepen 생성이 완료되지 않아 문서를 변경하지 않았습니다.",
+                  message: `${reviewLabel} 생성이 완료되지 않아 문서를 변경하지 않았습니다.`,
                 });
               }
             }

@@ -33,6 +33,7 @@ interface AIInlineEditPanelProps {
   model: string;
   onAccept: (snapshot: SelectionSnapshot, newText: string) => string | null;
   onDeepen: (snapshot: SelectionSnapshot) => void;
+  onValidate: (snapshot: SelectionSnapshot) => void;
   onFindCitation: (snapshot: SelectionSnapshot) => void;
   onClose: () => void;
 }
@@ -71,6 +72,7 @@ export function AIInlineEditPanel({
   model,
   onAccept,
   onDeepen,
+  onValidate,
   onFindCitation,
   onClose,
 }: AIInlineEditPanelProps) {
@@ -315,13 +317,22 @@ export function AIInlineEditPanel({
                   {a.label}
                 </button>
                 {index === 0 && (
-                  <button
-                    onClick={() => onDeepen(snapshot)}
-                    className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-                    title="Deeply review the selection and apply the integrated revision safely"
-                  >
-                    Deepen
-                  </button>
+                  <>
+                    <button
+                      onClick={() => onValidate(snapshot)}
+                      className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                      title="Check facts and logic against searched sources and correct supported errors"
+                    >
+                      Validate
+                    </button>
+                    <button
+                      onClick={() => onDeepen(snapshot)}
+                      className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                      title="Deeply review the selection and apply the integrated revision safely"
+                    >
+                      Deepen
+                    </button>
+                  </>
                 )}
               </React.Fragment>
             ))}

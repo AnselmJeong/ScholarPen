@@ -807,6 +807,18 @@ export function EditorArea({
           snapshot={aiEditSnapshot}
           model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b"}
           onAccept={handleAIEditAccept}
+          onValidate={(snapshot) => {
+            onDeepenAnalysis(
+              createDeepenAnalysisRequest(
+                snapshot.selectedText,
+                snapshot.documentContext,
+                snapshot.protection,
+                "validate",
+              ),
+              (protectedRevision) => handleAIEditAccept(snapshot, protectedRevision),
+            );
+            setAiEditSnapshot(null);
+          }}
           onDeepen={(snapshot) => {
             onDeepenAnalysis(
               createDeepenAnalysisRequest(

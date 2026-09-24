@@ -261,7 +261,7 @@ export interface AgentStreamParams {
   projectSourcesEnabled?: boolean;
   searchEnabled?: boolean;
   thinkingLevel?: AgentThinkingLevel;
-  analysisMode?: "deepen" | "find-citation";
+  analysisMode?: "deepen" | "validate" | "find-citation";
   deepenContext?: {
     selectedText: string;
     protectedText: string;

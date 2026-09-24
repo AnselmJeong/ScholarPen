@@ -3,6 +3,8 @@ import { Files, HelpCircle, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface IconRailProps {
+  filesOpen: boolean;
+  onToggleFiles: () => void;
   onOpenSettings: () => void;
 }
 
@@ -11,18 +13,27 @@ function RailIcon({
   active = false,
   onClick,
   title,
+  expanded,
+  controls,
 }: {
   icon: React.ReactNode;
   active?: boolean;
   onClick: () => void;
   title: string;
+  expanded?: boolean;
+  controls?: string;
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       title={title}
+      aria-label={title}
+      aria-expanded={expanded}
+      aria-controls={controls}
       className={cn(
         "w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-150",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         active ? "text-white" : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
       )}
       style={active ? {
@@ -35,7 +46,7 @@ function RailIcon({
   );
 }
 
-export function IconRail({ onOpenSettings }: IconRailProps) {
+export function IconRail({ filesOpen, onToggleFiles, onOpenSettings }: IconRailProps) {
   return (
     <div
       className="flex-shrink-0 flex flex-col items-center gap-2"
@@ -43,9 +54,11 @@ export function IconRail({ onOpenSettings }: IconRailProps) {
     >
       <RailIcon
         icon={<Files style={{ width: 18, height: 18 }} />}
-        active
-        onClick={() => {}}
-        title="Files"
+        active={filesOpen}
+        onClick={onToggleFiles}
+        title={filesOpen ? "Hide files" : "Show files"}
+        expanded={filesOpen}
+        controls="files-panel"
       />
       <div className="flex-1" />
       <RailIcon

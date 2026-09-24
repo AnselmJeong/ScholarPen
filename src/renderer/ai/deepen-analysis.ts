@@ -6,6 +6,7 @@ import type {
 export const DEEPEN_ANALYSIS_MARKER = "[ScholarPen Deepen]";
 
 export interface DeepenAnalysisRequest {
+  mode?: "deepen" | "validate";
   id: string;
   selectedText: string;
   documentContext: InlineEditDocumentContext;
@@ -16,8 +17,10 @@ export function createDeepenAnalysisRequest(
   selectedText: string,
   documentContext: InlineEditDocumentContext,
   protection: ProtectedSelection,
+  mode: "deepen" | "validate" = "deepen",
 ): DeepenAnalysisRequest {
   return {
+    mode,
     id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
     selectedText,
     documentContext,
@@ -26,6 +29,16 @@ export function createDeepenAnalysisRequest(
 }
 
 export function buildDeepenAnalysisMessage(request: DeepenAnalysisRequest): string {
+  if (request.mode === "validate") {
+    return `[ScholarPen Validate]
+
+선택문을 검색된 자료에 근거하여 간략히 검증해 주세요. 사실, 논리, 개념, 인과관계 및 범위의 오류만 점검하고, 근거로 확인된 오류가 있을 때만 최소한으로 수정해 주세요. 문체 개선, 내용 확장, 장문의 비평이나 체크리스트는 필요하지 않습니다.
+검증 결과와 근거를 짧게 설명하고, 오류가 없으면 원문을 유지하며 근거가 부족하면 확인 불가로 보고하세요. 검색 결과가 있다는 이유만으로 검증된 것으로 간주하지 마세요.
+시스템의 판정 형식과 보호 마커 규칙을 따르세요. 수정안은 원문의 언어와 기존 인용·서식을 보존하며 검증 후 선택 영역에 자동 반영됩니다.
+
+선택문:
+${request.selectedText}`;
+  }
   return `${DEEPEN_ANALYSIS_MARKER}
 
 다음 선택문을 심층적으로 검토하고, 마지막 통합 개선문을 원문의 선택 영역에 안전하게 자동 반영할 수 있도록 작성해 주세요.
@@ -55,13 +68,14 @@ export function isDeepenAnalysisMessage(message: string): boolean {
 export function extractDeepenProtectedRevision(
   response: string,
   protection: ProtectedSelection,
+  label = "Deepen",
 ): string {
   const headingMatches = Array.from(
     response.matchAll(/^#{1,3}[ \t]+(?:\*\*)?(?:통합 개선문|Integrated Revision)(?:\*\*)?[ \t]*:?[ \t]*$/gim),
   );
   const heading = headingMatches.at(-1);
   if (!heading || heading.index === undefined) {
-    throw new Error("Deepen 응답에 통합 개선문이 없어 문서를 변경하지 않았습니다.");
+    throw new Error(`${label} 응답에 통합 개선문이 없어 문서를 변경하지 않았습니다.`);
   }
 
   const firstMarker = protection.markers[0];
@@ -74,7 +88,7 @@ export function extractDeepenProtectedRevision(
   const start = section.indexOf(firstMarker.token);
   const lastStart = section.lastIndexOf(lastMarker.token);
   if (start < 0 || lastStart < start) {
-    throw new Error("Deepen 통합 개선문의 보호 마커가 불완전하여 문서를 변경하지 않았습니다.");
+    throw new Error(`${label} 통합 개선문의 보호 마커가 불완전하여 문서를 변경하지 않았습니다.`);
   }
 
   return section.slice(start, lastStart + lastMarker.token.length);
