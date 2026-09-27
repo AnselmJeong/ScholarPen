@@ -1,4 +1,4 @@
-import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils } from "electrobun/bun";
+import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils, Updater } from "electrobun/bun";
 import { watch, type FSWatcher } from "fs";
 import { join } from "path";
 import packageJson from "../../package.json";
@@ -9,6 +9,7 @@ import { listAgentSkills } from "./agent/skill-registry";
 import { listAgentMentionableFiles } from "./agent/mention-resolver";
 import { streamScholarAgent } from "./agent/service";
 import { listProviderModels } from "./agent/providers";
+import { codexClient } from "./codex/client";
 import { getAgentThreadStore } from "./agent/thread-store";
 import { getProjectSourceIndex, isProjectSourceDigestPath } from "./project-sources";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
@@ -35,6 +36,7 @@ function buildSubprocessEnv(): Record<string, string> {
 }
 
 async function getMainViewUrl(): Promise<string> {
+  if (await Updater.localInfo.channel() !== "dev") return "views://mainview/index.html";
   // In development, try to use Vite HMR server
   try {
     const res = await fetch("http://localhost:5173", {
@@ -498,6 +500,10 @@ async function main() {
           activeAgentAbortController?.abort();
         },
 
+        getCodexStatus: () => codexClient.status(),
+        loginCodex: async () => { openValidatedExternalUrl(await codexClient.login()); },
+        cancelCodexLogin: () => codexClient.cancelLogin(),
+        logoutCodex: () => codexClient.logout(),
         openExternal: ({ url }) => { openValidatedExternalUrl(url); },
 
         // Proxy Ollama chat to the renderer via aiChunk messages.
@@ -631,5 +637,7 @@ async function main() {
 
   console.log("[ScholarPen] App started");
 }
+
+Electrobun.events.on("before-quit", () => codexClient.close());
 
 main().catch(console.error);

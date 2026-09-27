@@ -2,6 +2,22 @@ import { describe, expect, test } from "bun:test";
 import { normalizeSettings } from "./manager";
 
 describe("settings migration", () => {
+  test("adds Codex without changing an existing provider, model, or API key", () => {
+    const settings = normalizeSettings({ sidebarAgentProvider: "openai", sidebarAgentModel: "saved-model", openaiApiKey: "existing-key" });
+    expect(settings.sidebarAgentProvider).toBe("openai");
+    expect(settings.sidebarAgentModel).toBe("saved-model");
+    expect(settings.openaiApiKey).toBe("existing-key");
+    expect(settings.modelProviders.codex).toEqual({ provider: "codex", model: "", enabled: true });
+  });
+
+  test("persists Codex selection including account-default model without falling back to Ollama", () => {
+    const defaults = normalizeSettings({ sidebarAgentProvider: "codex" });
+    expect(defaults.sidebarAgentModel).toBe("");
+    const saved = normalizeSettings({ ...defaults, sidebarAgentModel: "codex-model", modelProviders: { ...defaults.modelProviders, codex: { provider: "codex", model: "codex-model", enabled: true } } });
+    expect(normalizeSettings(JSON.parse(JSON.stringify(saved))).sidebarAgentModel).toBe("codex-model");
+    expect(normalizeSettings({ ...saved, sidebarAgentModel: "" }).sidebarAgentModel).toBe("");
+  });
+
   test("migrates the legacy Ollama search toggle to provider-neutral web search", () => {
     const normalized = normalizeSettings({ ollamaWebSearchEnabled: false });
 

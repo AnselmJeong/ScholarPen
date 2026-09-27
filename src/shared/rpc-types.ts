@@ -186,7 +186,7 @@ export interface OllamaStatus {
   activeModel: string | null;
 }
 
-export type LLMProvider = "ollama" | "anthropic" | "deepseek" | "openai";
+export type LLMProvider = "ollama" | "anthropic" | "deepseek" | "openai" | "codex";
 
 export interface ModelProviderSettings {
   provider: LLMProvider;

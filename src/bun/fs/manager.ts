@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sidebarAgentProvider: "ollama",
   sidebarAgentModel: "qwen3.5:397b",
   modelProviders: {
+    codex: { provider: "codex", model: "", enabled: true },
     ollama: {
       provider: "ollama",
       model: "qwen3.5:397b",
@@ -94,11 +95,6 @@ export function normalizeSettings(parsed: PersistedAppSettings): AppSettings {
     parsed.claudeModel && parsed.claudeModel !== "sonnet"
       ? parsed.claudeModel
       : DEFAULT_SETTINGS.anthropicDefaultModel;
-  const sidebarAgentModel =
-    parsed.sidebarAgentModel ??
-    (sidebarAgentProvider === "anthropic"
-      ? legacyClaudeModel
-      : parsed.ollamaDefaultModel ?? DEFAULT_SETTINGS.ollamaDefaultModel);
 
   const modelProviders = {
     ...DEFAULT_SETTINGS.modelProviders,
@@ -128,6 +124,8 @@ export function normalizeSettings(parsed: PersistedAppSettings): AppSettings {
     baseUrl: parsed.openaiBaseUrl ?? modelProviders.openai.baseUrl,
     enabled: Boolean(parsed.openaiApiKey) || modelProviders.openai.enabled,
   };
+
+  const sidebarAgentModel = parsed.sidebarAgentModel ?? modelProviders[sidebarAgentProvider].model;
 
   return {
     ...DEFAULT_SETTINGS,

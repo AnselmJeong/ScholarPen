@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { LLMProvider, OllamaStatus, AppSettings } from "@shared/rpc-types";
+import { CodexConnection } from "./CodexConnection";
 import { DEFAULT_OLLAMA_BASE_URL } from "@shared/ollama-connection";
 
 interface SettingsPageProps {
@@ -29,9 +30,10 @@ const PROVIDERS: Array<{ value: LLMProvider; label: string }> = [
   { value: "anthropic", label: "Claude" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "openai", label: "OpenAI" },
+  { value: "codex", label: "Codex" },
 ];
 
-const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama">, string[]> = {
+const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama" | "codex">, string[]> = {
   anthropic: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
   openai: ["gpt-5.2", "gpt-5.1", "gpt-4.1"],
@@ -39,6 +41,7 @@ const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama">, string[]> = {
 
 const DEFAULT_PROVIDER_MODELS: Record<LLMProvider, string[]> = {
   ollama: [],
+  codex: [],
   ...MODEL_PRESETS,
 };
 
@@ -163,7 +166,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
       if (models.length > 0 && providerToFetch === currentSettings.sidebarAgentProvider) {
         const activeModel = currentSettings.sidebarAgentModel;
         if (!activeModel || !models.includes(activeModel)) {
-          updateProviderModelForSettings(providerToFetch, models[0], currentSettings);
+          updateProviderModelForSettings(providerToFetch, models[0]);
         }
       }
     } catch (err) {
@@ -224,24 +227,20 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
   const provider = settings.sidebarAgentProvider ?? "ollama";
 
-  const updateProviderModelForSettings = (targetProvider: LLMProvider, model: string, currentSettings = settings) => {
-    const nextProviders = {
-      ...currentSettings.modelProviders,
-      [targetProvider]: {
-        ...currentSettings.modelProviders[targetProvider],
-        model,
-      },
-    };
+  const updateProviderModelForSettings = (targetProvider: LLMProvider, model: string) => {
     setSettings((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        sidebarAgentModel: model,
+        sidebarAgentModel: prev.sidebarAgentProvider === targetProvider ? model : prev.sidebarAgentModel,
         ollamaDefaultModel: targetProvider === "ollama" ? model : prev.ollamaDefaultModel,
         anthropicDefaultModel: targetProvider === "anthropic" ? model : prev.anthropicDefaultModel,
         deepseekDefaultModel: targetProvider === "deepseek" ? model : prev.deepseekDefaultModel,
         openaiDefaultModel: targetProvider === "openai" ? model : prev.openaiDefaultModel,
-        modelProviders: nextProviders,
+        modelProviders: {
+          ...prev.modelProviders,
+          [targetProvider]: { ...prev.modelProviders[targetProvider], model },
+        },
       };
     });
     setSaved(false);
@@ -273,14 +272,14 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
             {/* Provider toggle */}
             <SettingRow label="Sidebar Provider" description="AISidebar에서 사용할 LLM provider">
-              <div className="grid grid-cols-4 rounded-md border border-border bg-muted/30 p-0.5">
+              <div className="grid grid-cols-3 gap-0.5 rounded-md border border-border bg-muted/30 p-0.5">
                 {PROVIDERS.map((p) => (
                   <button
                     key={p.value}
                     onClick={() => {
                       const model = settings.modelProviders[p.value]?.model;
                       updateSetting("sidebarAgentProvider", p.value);
-                      if (model) updateSetting("sidebarAgentModel", model);
+                      updateSetting("sidebarAgentModel", model ?? "");
                     }}
                     className={cn(
                       "rounded-[5px] px-2 py-1.5 text-[11px] font-medium transition-colors",
@@ -294,6 +293,8 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                 ))}
               </div>
             </SettingRow>
+
+            {provider === "codex" && <CodexConnection model={settings.sidebarAgentModel} onModelChange={updateProviderModel} />}
 
             {/* Ollama model */}
             {provider === "ollama" && (
@@ -331,7 +332,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
               </>
             )}
 
-            {provider !== "ollama" && (
+            {provider !== "ollama" && provider !== "codex" && (
               <>
                 <SettingRow
                   label={`${PROVIDERS.find((p) => p.value === provider)?.label} API Key`}

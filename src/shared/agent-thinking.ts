@@ -8,6 +8,10 @@ export function agentThinkingConfig(provider: LLMProvider, model: string, level:
   notice?: string;
   supported?: boolean;
 } {
+  if (provider === "codex") return {
+    fields: {},
+    notice: "선택한 Codex 모델이 지원하는 thinking 단계를 적용합니다. 지원하지 않는 단계는 해당 모델의 기본값을 사용합니다.",
+  };
   const id = model.toLowerCase();
   const enabled = level !== "none";
   if (provider === "ollama") {

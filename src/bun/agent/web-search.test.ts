@@ -14,6 +14,7 @@ const settings = {
   sidebarAgentProvider: "ollama",
   sidebarAgentModel: "qwen3.5:397b",
   modelProviders: {
+    codex: { provider: "codex", model: "", enabled: true },
     ollama: {
       provider: "ollama",
       model: "qwen3.5:397b",

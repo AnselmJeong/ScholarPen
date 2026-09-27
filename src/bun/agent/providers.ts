@@ -1,3 +1,4 @@
+import { codexClient } from "../codex/client";
 import { openAIImageMessages, validateAgentImages } from "../../shared/agent-images";
 import type { AgentThinkingLevel, AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
 import { agentThinkingConfig } from "../../shared/agent-thinking";
@@ -84,6 +85,11 @@ export async function completeAgentModel(
   request: AgentCompletionRequest,
   settings: AppSettings,
 ): Promise<string> {
+  if (request.provider === "codex") {
+    let text = "";
+    for await (const chunk of codexClient.stream(request)) text += chunk;
+    return text;
+  }
   const maxTokens = request.maxTokens ?? 256;
   const temperature = request.temperature ?? 0;
 
@@ -170,6 +176,10 @@ export async function* streamAgentModel(
   request: AgentStreamRequest,
   settings: AppSettings,
 ): AsyncGenerator<string> {
+  if (request.provider === "codex") {
+    yield* codexClient.stream(request);
+    return;
+  }
   const model = request.model || ({
     ollama: settings.ollamaDefaultModel,
     anthropic: settings.anthropicDefaultModel,
@@ -264,6 +274,7 @@ function normalizeModelIds(json: any): string[] {
 }
 
 export async function listProviderModels(provider: LLMProvider, settings: AppSettings): Promise<string[]> {
+  if (provider === "codex") return (await codexClient.models()).map(model => model.id);
   if (provider === "ollama") {
     const apiKey = ensureApiKey("Ollama", settings.ollamaApiKey);
     const connection = resolveOllamaConnection(settings.ollamaBaseUrl, apiKey);

@@ -127,6 +127,7 @@ function assistantLabel(provider: AppSettings["sidebarAgentProvider"]): string {
   if (provider === "anthropic") return "Claude";
   if (provider === "deepseek") return "DeepSeek";
   if (provider === "openai") return "OpenAI";
+  if (provider === "codex") return "Codex · ChatGPT 구독";
   return "Ollama";
 }
 
@@ -259,7 +260,7 @@ function AssistantHeader({
         <div>
           <p className="text-sm font-semibold text-foreground">Scholar Assistant</p>
           <p className="text-xs text-muted-foreground">
-            {assistantLabel(provider)} · {model}
+            {assistantLabel(provider)} · {model || "기본 모델"}
           </p>
         </div>
       </div>
@@ -921,12 +922,9 @@ export function AISidebar({
   const findCitationRequestRef = useRef<FindCitationRequest | null>(null);
 
   const activeProvider = appSettings?.sidebarAgentProvider ?? settings?.sidebarAgentProvider ?? "ollama";
-  const activeModel =
-    appSettings?.sidebarAgentModel ||
-    settings?.sidebarAgentModel ||
-    settings?.modelProviders?.[activeProvider]?.model ||
-    settings?.ollamaDefaultModel ||
-    "qwen3.5:397b";
+  const activeModel = appSettings?.sidebarAgentProvider
+    ? appSettings.sidebarAgentModel
+    : settings?.sidebarAgentModel ?? settings?.modelProviders?.[activeProvider]?.model ?? "";
   const modelKey = `${activeProvider}:${activeModel}`;
   const searchAvailable = appSettings?.webSearchEnabled ?? settings?.webSearchEnabled ?? false;
 

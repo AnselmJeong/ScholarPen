@@ -1,3 +1,4 @@
+import type { CodexStatus } from "./codex";
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
 import type { ReferenceDocument } from "./project-references";
 import type {
@@ -145,6 +146,10 @@ type BunRequests = RPCSchema<{
     abortAgentStream: { params: void; response: void };
     getOllamaModels: { params: void; response: string[] };
     listProviderModels: { params: { provider: AppSettings["sidebarAgentProvider"]; settings?: AppSettingsUpdate }; response: string[] };
+    getCodexStatus: { params: void; response: CodexStatus };
+    loginCodex: { params: void; response: void };
+    cancelCodexLogin: { params: void; response: void };
+    logoutCodex: { params: void; response: void };
     openExternal: { params: { url: string }; response: void };
   };
   messages: {

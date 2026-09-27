@@ -1,3 +1,4 @@
+import type { CodexStatus } from "../shared/codex";
 // RPC client for calling Main process handlers from the Renderer
 // Uses Electrobun's webview RPC bridge
 
@@ -39,6 +40,7 @@ type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 type BibliographyValidationProgressHandler = (progress: BibliographyValidationProgress) => void;
 
 const strictRpcMethods = new Set([
+  "getCodexStatus", "loginCodex", "cancelCodexLogin", "logoutCodex", "listProviderModels",
   "selectFigure",
   "readFigure",
   "createProject",
@@ -255,6 +257,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       sidebarAgentProvider: "ollama",
       sidebarAgentModel: "qwen3.5:397b",
       modelProviders: {
+        codex: { provider: "codex", model: "", enabled: true },
         ollama: { provider: "ollama", model: "qwen3.5:397b", baseUrl: DEFAULT_OLLAMA_BASE_URL, enabled: true },
         anthropic: { provider: "anthropic", model: "claude-sonnet-4-5", enabled: false },
         deepseek: { provider: "deepseek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", enabled: false },
@@ -401,6 +404,10 @@ export const rpc = {
   getOllamaModels: () => call<string[]>("getOllamaModels"),
   listProviderModels: (provider: AppSettings["sidebarAgentProvider"], settings?: AppSettingsUpdate) =>
     call<string[]>("listProviderModels", { provider, settings }),
+  getCodexStatus: () => call<CodexStatus>("getCodexStatus"),
+  loginCodex: () => call<void>("loginCodex"),
+  cancelCodexLogin: () => call<void>("cancelCodexLogin"),
+  logoutCodex: () => call<void>("logoutCodex"),
   openExternal: (url: string) => call<void>("openExternal", { url }),
   // ── Scholar Agent streaming ───────────────────────────
   listAgentSkills: (projectPath?: string) =>
