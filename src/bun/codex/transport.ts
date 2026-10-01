@@ -17,6 +17,8 @@ export async function findCodexCommand(): Promise<string[]> {
     "/opt/homebrew/bin/codex", "/usr/local/bin/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
     "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
     ...(process.env.PATH ?? "").split(":").filter(Boolean).map(dir => join(dir, "codex")),
   ];
   for (const path of new Set(candidates)) {
@@ -60,6 +62,7 @@ export class CodexTransport {
   private listeners = new Set<(method: string, params: JsonObject) => void>();
   private failures = new Set<(error: Error) => void>();
   readonly cwd: string;
+  runtime: { cliPath?: string; cliVersion?: string } = {};
 
   constructor(private readonly options: { command?: string[]; home?: string; timeoutMs?: number } = {}) {
     this.cwd = join(options.home ?? CODEX_HOME_DIR, "workspace");
@@ -94,7 +97,10 @@ export class CodexTransport {
     child.on("error", () => this.close(new Error("Codex CLI를 실행할 수 없습니다. 설치 상태를 확인해 주세요.")));
     child.on("exit", () => this.close(new Error("Codex 프로세스가 종료되었습니다. 다시 시도해 주세요.")));
     try {
-      await this.request("initialize", { clientInfo: { name: "scholarpen", title: "ScholarPen", version: packageJson.version }, capabilities: {} });
+      const initialized = object(await this.request("initialize", { clientInfo: { name: "scholarpen", title: "ScholarPen", version: packageJson.version }, capabilities: {} }));
+      // The handshake reports the running server version, even after a CLI update.
+      const cliVersion = string(initialized.userAgent).match(/^[^/]+\/(\d+\.\d+\.\d+(?:[-+][^\s]+)?)/)?.[1];
+      this.runtime = { cliPath: command[0], ...(cliVersion ? { cliVersion } : {}) };
       this.send({ method: "initialized" });
     } catch (error) { this.close(); throw error; }
   }

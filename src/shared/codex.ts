@@ -14,6 +14,8 @@ export interface CodexQuota {
 
 export interface CodexStatus {
   state: "unavailable" | "signedOut" | "signingIn" | "connected" | "error";
+  cliPath?: string;
+  cliVersion?: string;
   email?: string;
   plan?: string;
   error?: string;

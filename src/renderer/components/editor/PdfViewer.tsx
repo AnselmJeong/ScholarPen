@@ -26,10 +26,11 @@ const ZOOM_MAX = 3.0;
 const LARGE_PDF_BYTES = 80 * 1024 * 1024;
 
 interface PdfViewerProps {
+  isActive?: boolean;
   file: FileNode;
 }
 
-export function PdfViewer({ file }: PdfViewerProps) {
+export function PdfViewer({ file, isActive = true }: PdfViewerProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [pageNumber, setPageNumber] = useState(1);
@@ -42,7 +43,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
   const [baseWidth, setBaseWidth] = useState(600);
   // refreshKey changes on page render to re-run find over the new text layer
   const [textLayerKey, setTextLayerKey] = useState(0);
-  const find = useTextFind(containerRef, textLayerKey);
+  const find = useTextFind(containerRef, textLayerKey, isActive && findOpen);
 
   // Load PDF binary via RPC → Blob URL
   useEffect(() => {
@@ -105,7 +106,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
   // Keyboard navigation: ← / → (or ↑ / ↓) for page, +/- for zoom
   // Only fires when the active element is not an editor/input
   useEffect(() => {
-    if (!blobUrl) return;
+    if (!blobUrl || !isActive) return;
     const handleKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       const isEditable =
@@ -152,7 +153,7 @@ export function PdfViewer({ file }: PdfViewerProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [blobUrl, numPages]);
+  }, [isActive, blobUrl, numPages]);
 
   const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
     setNumPages(numPages);

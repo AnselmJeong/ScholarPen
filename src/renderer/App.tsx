@@ -96,7 +96,7 @@ export function App() {
   const editorGroupRef = useRef<EditorPaneGroupHandle | null>(null);
   const pendingProjectFindReplaceRef = useRef(false);
   const deepenRevisionAppliersRef = useRef(
-    new Map<string, (protectedRevision: string) => string | null>(),
+    new Map<string, (protectedRevision: string | null) => string | null>(),
   );
   const quartoChapterFilenames = useMemo(
     () => collectQuartoChapterFilenames(fileTree),
@@ -107,7 +107,7 @@ export function App() {
     (requestId: string, protectedRevision: string | null) => {
       const applyRevision = deepenRevisionAppliersRef.current.get(requestId);
       deepenRevisionAppliersRef.current.delete(requestId);
-      if (!protectedRevision) return null;
+      if (!protectedRevision) return applyRevision?.(null) ?? null;
       if (!applyRevision) {
         return "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
       }
@@ -409,23 +409,27 @@ export function App() {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".md,.qmd,.txt,.markdown";
+    input.multiple = true;
     input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      const content = await file.text();
-      const suggestedFilename = file.name.replace(/\.[^.]+$/, "") + ".scholarpen.json";
-      try {
-        const blocks = await markdownToScholarBlocks(content);
-        const created = await rpc.createDocument(activeProject!.path, suggestedFilename, blocks);
-        await refreshFileTree();
-        setActiveDocumentFilename(created);
-        setCurrentView("editor");
-      } catch (err) {
-        console.error("Import failed:", err);
+      const files = Array.from((e.target as HTMLInputElement).files ?? []);
+      const failures: string[] = [];
+      let lastCreated: string | undefined;
+      for (const file of files) {
+        try {
+          const blocks = await markdownToScholarBlocks(await file.text());
+          const suggestedFilename = file.name.replace(/\.[^.]+$/, "") + ".scholarpen.json";
+          lastCreated = await rpc.createDocument(activeProject.path, suggestedFilename, blocks);
+        } catch (error) {
+          failures.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
+      await refreshFileTree();
+      if (lastCreated) handleFileSelect({ name: lastCreated, path: `${activeProject.path}/documents/${lastCreated}`,
+        kind: "document", isDirectory: false, lastModified: Date.now() });
+      if (failures.length) window.alert(`Imported ${files.length - failures.length}/${files.length} files.\n${failures.join("\n")}`);
     };
     input.click();
-  }, [activeProject, refreshFileTree]);
+  }, [activeProject, refreshFileTree, handleFileSelect]);
 
   const openExportDialog = useCallback((documents: FileNode[]) => {
     if (documents.length === 0) return;
@@ -520,28 +524,31 @@ export function App() {
     });
   }, [activeProject, handleFileSelect]);
 
-  const handleImportFromFile = useCallback(async (filePath: string) => {
-    if (!activeProject) return;
-    try {
-      const content  = await rpc.readTextFile(filePath);
-      const blocks   = await markdownToScholarBlocks(content);
-      const baseName = filePath.replace(/.*\//, "").replace(/\.[^.]+$/, "");
-      const created  = await rpc.createDocument(activeProject.path, `${baseName}.scholarpen.json`, blocks);
+  const handleImportFromFile = useCallback(async (filePath: string, openDocument = true) => {
+    if (!activeProject) throw new Error("Open a project first.");
+    const content = await rpc.readTextFile(filePath);
+    const blocks = await markdownToScholarBlocks(content);
+    const baseName = filePath.replace(/.*\//, "").replace(/\.[^.]+$/, "");
+    const created = await rpc.createDocument(activeProject.path, `${baseName}.scholarpen.json`, blocks);
+    if (openDocument) {
       await refreshFileTree();
-      setActiveDocumentFilename(created);
-      setActiveFile(null);
-      setCurrentView("editor");
-    } catch (err) {
-      console.error("Import from file failed:", err);
+      handleFileSelect({ name: created, path: `${activeProject.path}/documents/${created}`,
+        kind: "document", isDirectory: false, lastModified: Date.now() });
     }
-  }, [activeProject, refreshFileTree]);
+  }, [activeProject, refreshFileTree, handleFileSelect]);
 
   const handleFileRenamed = useCallback((_newPath: string, _newName: string) => {}, []);
 
-  const handleFileDeleted = useCallback(async (filePath: string) => {
-    editorGroupRef.current?.closeFileByPath(filePath);
-    await refreshFileTree();
-  }, [refreshFileTree]);
+  const handleDeleteFile = useCallback(async (filePath: string) => {
+    const resume = await editorGroupRef.current?.prepareFileDeletion(filePath);
+    try {
+      await rpc.deleteFile(filePath);
+      editorGroupRef.current?.closeFileByPath(filePath);
+    } catch (error) {
+      resume?.();
+      throw error;
+    }
+  }, []);
 
   useEffect(() => {
     return onProjectUpdated((updatedPath, filePath) => {
@@ -748,7 +755,7 @@ export function App() {
             onFindReplaceDocuments={handleOpenProjectFindReplace}
             onImportFile={handleImportFromFile}
             onFileRenamed={handleFileRenamed}
-            onFileDeleted={handleFileDeleted}
+            onDeleteFile={handleDeleteFile}
           />
         </div>
         {/* Resize handle */}

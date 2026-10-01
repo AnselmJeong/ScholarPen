@@ -45,10 +45,9 @@ import { createOllamaTransport, createNoOpTransport } from "../../ai/ollama-tran
 import { AIInlineEditPanel, type SelectionSnapshot } from "./AIInlineEditPanel";
 import {
   buildInlineEditDocumentContext,
-  isSameProtectedSlice,
   protectSelectionSlice,
-  restoreProtectedSelection,
 } from "./ai-inline-edit-protection";
+import { AISelectionTargetExtension, applyAISelection, trackAISelection, releaseAISelection } from "./ai-selection-target";
 import { DOIInputDialog } from "./DOIInputDialog";
 import { FindReplacePanel } from "./FindReplacePanel";
 import { setCitationHoverMetadata, type CitationHoverMetadata } from "../../blocks/citation-inline";
@@ -119,7 +118,7 @@ interface EditorAreaProps {
   onSaveStatusChange: (status: SaveStatus) => void;
   onDeepenAnalysis: (
     request: DeepenAnalysisRequest,
-    applyRevision: (protectedRevision: string) => string | null,
+    applyRevision: (protectedRevision: string | null) => string | null,
   ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
   getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
@@ -164,6 +163,7 @@ export function EditorArea({
       ai: aiEn,
     },
     extensions: [
+      AISelectionTargetExtension(),
       AIExtension({
         transport: ollamaStatus.connected
           ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b")
@@ -171,6 +171,7 @@ export function EditorArea({
       }),
     ],
   });
+  const deletingRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveStatusRef = useRef<SaveStatus>("saved");
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -372,12 +373,12 @@ export function EditorArea({
     const run = saveChainRef.current
       .catch(() => undefined)
       .then(() => {
-        if (revision < dirtyRevisionRef.current) {
+        if (deletingRef.current || revision < dirtyRevisionRef.current) {
           return "skipped-stale" as const;
         }
         return getContent()
           .then((content) => {
-            if (revision < dirtyRevisionRef.current) {
+            if (deletingRef.current || revision < dirtyRevisionRef.current) {
               return "skipped-stale" as const;
             }
             return rpc.saveDocument(project.path, filename, content).then(() => "saved" as const);
@@ -420,7 +421,7 @@ export function EditorArea({
 
   // Immediate save (for Cmd+S / menu action)
   const saveNow = useCallback(() => {
-    if (!project) return Promise.resolve();
+    if (!project || deletingRef.current) return Promise.resolve();
     if (saveStatusRef.current === "saved" && !saveTimerRef.current) return Promise.resolve();
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -429,6 +430,26 @@ export function EditorArea({
     const filename = documentFilename || "manuscript.scholarpen.json";
     return enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
   }, [project, documentFilename, enqueueSave, readSettledDocumentSnapshot]);
+
+  useEffect(() => {
+    (editor as any).__scholarpenPrepareDelete = async () => {
+      deletingRef.current = true;
+      const wasEditable = editor.isEditable;
+      editor.isEditable = false;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      await saveChainRef.current;
+      return () => {
+        deletingRef.current = false;
+        editor.isEditable = wasEditable;
+        updateSaveStatus("unsaved");
+        void saveNow();
+      };
+    };
+    return () => { delete (editor as any).__scholarpenPrepareDelete; };
+  }, [editor, saveNow, updateSaveStatus]);
 
   // Expose saveNow for external callers (e.g., menu actions)
   useEffect(() => {
@@ -503,6 +524,7 @@ export function EditorArea({
     if (!selectedText.trim()) return;
     const protection = protectSelectionSlice(view.state.doc.slice(from, to), selectedText);
     const documentContext = buildInlineEditDocumentContext(view.state.doc, from, to);
+    trackAISelection(view, from, to, protection);
 
     // Get screen coordinates of the selection start
     const coords = view.coordsAtPos(from);
@@ -524,28 +546,15 @@ export function EditorArea({
   // structure remain byte-for-byte structural equivalents; only text changes.
   const handleAIEditAccept = useCallback(
     (snapshot: SelectionSnapshot, newText: string) => {
-      const view = (editor as any).prosemirrorView;
-      if (!view) return "The editor is unavailable. The document was not modified.";
-      const { state } = view;
-
-      if (!isSameProtectedSlice(state.doc.slice(snapshot.from, snapshot.to), snapshot.protection)) {
-        return "The selected document content changed while AI was writing. Retry from a fresh selection; the document was not modified.";
-      }
-
-      try {
-        const replacement = restoreProtectedSelection(state.schema, snapshot.protection, newText);
-        view.dispatch(state.tr.replace(snapshot.from, snapshot.to, replacement).scrollIntoView());
-        view.focus();
-        setAiEditSnapshot(null);
-        return null;
-      } catch (error) {
-        return error instanceof Error ? error.message : "The AI response could not be applied safely.";
-      }
+      const error = applyAISelection(editor.prosemirrorView, snapshot.protection, newText);
+      if (!error) setAiEditSnapshot(null);
+      return error;
     },
     [editor]
   );
 
   const handleChange = useCallback(() => {
+    if (deletingRef.current) return;
     if (Date.now() < suppressSaveUntilRef.current) return;
     scheduleWordCount();
     if (!project) return;
@@ -812,7 +821,11 @@ export function EditorArea({
                 snapshot.protection,
                 "validate",
               ),
-              (protectedRevision) => handleAIEditAccept(snapshot, protectedRevision),
+              (protectedRevision) => {
+                const error = protectedRevision === null ? null : handleAIEditAccept(snapshot, protectedRevision);
+                releaseAISelection(editor.prosemirrorView, snapshot.protection);
+                return error;
+              },
             );
             setAiEditSnapshot(null);
           }}
@@ -823,15 +836,23 @@ export function EditorArea({
                 snapshot.documentContext,
                 snapshot.protection,
               ),
-              (protectedRevision) => handleAIEditAccept(snapshot, protectedRevision),
+              (protectedRevision) => {
+                const error = protectedRevision === null ? null : handleAIEditAccept(snapshot, protectedRevision);
+                releaseAISelection(editor.prosemirrorView, snapshot.protection);
+                return error;
+              },
             );
             setAiEditSnapshot(null);
           }}
           onFindCitation={(snapshot) => {
+            releaseAISelection(editor.prosemirrorView, snapshot.protection);
             onFindCitation(createFindCitationRequest(snapshot.selectedText));
             setAiEditSnapshot(null);
           }}
-          onClose={() => setAiEditSnapshot(null)}
+          onClose={() => {
+            releaseAISelection(editor.prosemirrorView, aiEditSnapshot.protection);
+            setAiEditSnapshot(null);
+          }}
         />
       )}
     </div>

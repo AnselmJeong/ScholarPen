@@ -38,6 +38,7 @@ interface PaneState {
 export interface EditorPaneGroupHandle {
   openFile: (file: FileNode) => void;
   saveActiveEditor: () => void;
+  prepareFileDeletion: (filePath: string) => Promise<() => void>;
   closeFileByPath: (filePath: string) => void;
   getDocumentSnapshot: (filePath: string) => unknown[] | null;
   getActiveDocumentContext: () => ActiveDocumentContext | undefined;
@@ -58,7 +59,7 @@ interface EditorPaneGroupProps {
   onBibtexSaved: () => void;
   onDeepenAnalysis: (
     request: DeepenAnalysisRequest,
-    applyRevision: (protectedRevision: string) => string | null,
+    applyRevision: (protectedRevision: string | null) => string | null,
   ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
 }
@@ -273,6 +274,15 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         if (!editor) return false;
         (editor as any).__scholarpenOpenProjectFindReplace?.();
         return true;
+      },
+
+      async prepareFileDeletion(filePath: string) {
+        const tabs = [...leftPaneRef.current.tabs, ...(rightPaneRef.current?.tabs ?? [])];
+        const resumes = await Promise.all(tabs.filter(tab => tab.file.path === filePath).map(async tab => {
+          const editor = editorMapRef.current.get(tab.id);
+          return (editor as any)?.__scholarpenPrepareDelete?.() as Promise<(() => void) | undefined>;
+        }));
+        return () => resumes.forEach(resume => resume?.());
       },
 
       closeFileByPath(filePath: string) {
@@ -589,6 +599,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                       />
                     ) : (
                       <FileViewer
+                        isActive={isActiveTab && isFocused}
                         file={tab.file}
                         projectPath={project?.path ?? ""}
                         reloadTrigger={tab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}

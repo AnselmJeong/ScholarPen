@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback, useRef } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
@@ -17,6 +17,7 @@ import { TextFindPanel } from "./TextFindPanel";
 import { useTextFind } from "../../hooks/useTextFind";
 
 interface FileViewerProps {
+  isActive?: boolean;
   file: FileNode;
   projectPath: string;
   reloadTrigger?: number;
@@ -47,6 +48,7 @@ const FONT_SIZES = [13, 15, 17, 19, 22] as const;
 const FONT_SIZE_KEY = "fileviewer-font-size";
 
 export function FileViewer({
+  isActive = true,
   file,
   projectPath,
   reloadTrigger = 0,
@@ -59,7 +61,7 @@ export function FileViewer({
   const [error, setError] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const find = useTextFind(contentRef, file.path);
+  const find = useTextFind(contentRef, `${file.path}:${loading}:${content}`, isActive && findOpen);
   const [fontSizeIdx, setFontSizeIdx] = useState<number>(() => {
     const saved = localStorage.getItem(FONT_SIZE_KEY);
     return saved ? Math.min(Math.max(Number(saved), 0), FONT_SIZES.length - 1) : 1;
@@ -71,14 +73,15 @@ export function FileViewer({
   // Cmd+F to open find panel
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      if (!isActive || /\.(pdf|bib)$/i.test(file.name)) return;
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && ["f", "h"].includes(e.key.toLowerCase())) {
         e.preventDefault();
         setFindOpen(true);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [isActive, file.name]);
 
   // Clear find state when file changes
   useEffect(() => {
@@ -119,6 +122,9 @@ export function FileViewer({
     () => isMarkdown && content ? parseFrontmatter(content) : { frontmatter: null, body: content ?? "" },
     [content, isMarkdown]
   );
+  const markdownComponents = useMemo<Components>(() => ({
+    img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} documentPath={file.path} />,
+  }), [file.path]);
   const preparedNotes = useMemo(() => prepareMarkdownNotes(markdownBody), [markdownBody]);
   const preparedMath = useMemo(() => prepareMarkdownMath(preparedNotes.markdown), [preparedNotes]);
 
@@ -126,7 +132,7 @@ export function FileViewer({
   if (file.kind === "pdf" || ext === ".pdf") {
     return (
       <Suspense fallback={<div className="flex-1 flex items-center justify-center bg-background text-sm text-muted-foreground">Loading PDF viewer...</div>}>
-        <PdfViewer file={file} />
+        <PdfViewer file={file} isActive={isActive} />
       </Suspense>
     );
   }
@@ -184,6 +190,7 @@ export function FileViewer({
     <div className="flex-1 flex flex-col overflow-hidden bg-background relative">
       {findOpen && (
         <TextFindPanel
+          readOnlyNotice={isMarkdown ? "MD/QMD preview is read-only. Import as a document to replace text." : undefined}
           query={find.query}
           onQueryChange={find.setQuery}
           matchCount={find.matchCount}
@@ -230,7 +237,7 @@ export function FileViewer({
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, [remarkRestoreScholarMath, preparedMath], [remarkScholarNotes, preparedNotes]]}
                 rehypePlugins={[rehypeKatex]}
-                components={{ img: ({ src, alt, title }) => <MarkdownImage src={src} alt={alt} title={title} documentPath={file.path} /> }}
+                components={markdownComponents}
               >
                 {preparedMath.markdown}
               </ReactMarkdown>

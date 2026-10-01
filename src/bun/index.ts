@@ -500,7 +500,7 @@ async function main() {
           activeAgentAbortController?.abort();
         },
 
-        getCodexStatus: () => codexClient.status(),
+        getCodexStatus: (params) => params?.reconnect ? codexClient.refresh() : codexClient.status(),
         loginCodex: async () => { openValidatedExternalUrl(await codexClient.login()); },
         cancelCodexLogin: () => codexClient.cancelLogin(),
         logoutCodex: () => codexClient.logout(),
@@ -626,7 +626,7 @@ async function main() {
     const action = e.data.action;
     if (action === "aboutScholarPen") {
       win.webview.rpc?.send.menuAction({ action });
-    } else if (action === "save" || action === "newDocument" || action === "exportMarkdown" || action === "importMarkdown") {
+    } else if (action === "save" || action === "newDocument" || action === "exportMarkdown" || action === "importMarkdown" || action === "findReplaceDocuments") {
       win.webview.rpc?.send.menuAction({ action });
     } else if (action === "quit") {
       // Save first, then quit after a brief flush window

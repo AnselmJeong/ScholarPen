@@ -274,22 +274,11 @@ body {
 .scholar-markdown h4 { font-size: 1.125em;  line-height: 1.5; }
 .scholar-markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.25em 0; }
 
-/* ── Text-find highlights (DOM <mark> injection) ─────────────────── */
-mark[data-find] {
-  background-color: rgba(253, 224, 71, 0.55);
-  color: inherit;
-  border-radius: 2px;
-  padding: 0;
-}
-mark[data-find][data-current] {
-  background-color: rgba(251, 146, 60, 0.80);
-}
-.dark mark[data-find] {
-  background-color: rgba(253, 224, 71, 0.30);
-}
-.dark mark[data-find][data-current] {
-  background-color: rgba(251, 146, 60, 0.55);
-}
+/* Paint search results without mutating React-owned preview content. */
+::highlight(scholar-find) { background-color: rgba(253, 224, 71, 0.55); color: inherit; }
+::highlight(scholar-find-current) { background-color: rgba(251, 146, 60, 0.80); color: inherit; }
+.dark ::highlight(scholar-find) { background-color: rgba(253, 224, 71, 0.30); }
+.dark ::highlight(scholar-find-current) { background-color: rgba(251, 146, 60, 0.55); }
 
 /* Include nested paragraphs/lists in the same Note surface. */
 .bn-editor .bn-block:has(> .bn-block-content[data-content-type="note"], > .bn-react-node-view-renderer > .bn-block-content[data-content-type="note"]) {

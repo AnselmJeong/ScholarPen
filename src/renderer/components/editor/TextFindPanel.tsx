@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { X, ChevronUp, ChevronDown, Search } from "lucide-react";
 
 interface TextFindPanelProps {
+  readOnlyNotice?: string;
   query: string;
   onQueryChange: (q: string) => void;
   matchCount: number;
@@ -12,6 +13,7 @@ interface TextFindPanelProps {
 }
 
 export function TextFindPanel({
+  readOnlyNotice,
   query,
   onQueryChange,
   matchCount,
@@ -37,6 +39,7 @@ export function TextFindPanel({
         if (e.key === "Enter") { e.preventDefault(); e.shiftKey ? onPrev() : onNext(); }
       }}
     >
+      {readOnlyNotice && <p className="absolute top-full right-0 mt-1 w-72 rounded border border-border bg-background p-2 text-xs text-muted-foreground shadow">{readOnlyNotice}</p>}
       <Search className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
 
       <input

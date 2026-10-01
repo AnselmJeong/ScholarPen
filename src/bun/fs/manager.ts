@@ -495,10 +495,18 @@ class FileSystemManager {
     const safeFilename = filename.endsWith(".scholarpen.json")
       ? this.safeFilename(filename, ".scholarpen.json")
       : this.safeFilename(`${filename}.scholarpen.json`, ".scholarpen.json");
-    const filePath = join(docsDir, safeFilename);
-    const data = content ?? [];
-    await writeFile(filePath, JSON.stringify(data, null, 2));
-    return safeFilename;
+    const base = safeFilename.slice(0, -".scholarpen.json".length);
+    const serialized = JSON.stringify(content ?? [], null, 2);
+    for (let suffix = 0; ; suffix++) {
+      const candidate = suffix === 0 ? safeFilename : `${base}-${suffix + 1}.scholarpen.json`;
+      try {
+        // Exclusive creation also protects concurrent imports with the same basename.
+        await writeFile(join(docsDir, candidate), serialized, { flag: "wx" });
+        return candidate;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
   }
 
   // ── Legacy (backward compat) ────────────────────────────────

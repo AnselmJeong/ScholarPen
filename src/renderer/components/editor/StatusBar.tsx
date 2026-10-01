@@ -1,5 +1,6 @@
 import React from "react";
 import type { LLMProvider, OllamaStatus } from "../../../shared/rpc-types";
+import { useCodexStatus } from "../../hooks/useCodexStatus";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -13,28 +14,31 @@ interface StatusBarProps {
 }
 
 export function StatusBar({ ollamaStatus, sidebarAgentProvider = "ollama", sidebarAgentModel, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
-  const connected = sidebarAgentProvider === "ollama" ? ollamaStatus.connected : true;
-  const label = sidebarAgentProvider === "anthropic"
-    ? "Claude"
-    : sidebarAgentProvider === "deepseek"
-      ? "DeepSeek"
-      : sidebarAgentProvider === "openai"
-        ? "OpenAI"
-        : "Ollama";
-  const modelLabel = sidebarAgentModel || (sidebarAgentProvider === "ollama" ? ollamaStatus.activeModel : null);
+  const codexStatus = useCodexStatus(sidebarAgentProvider === "codex");
+  const labels: Record<LLMProvider, string> = { ollama: "Ollama", anthropic: "Claude", deepseek: "DeepSeek", openai: "OpenAI", codex: "Codex (ChatGPT)" };
+  const label = labels[sidebarAgentProvider];
+  const connected = sidebarAgentProvider === "codex" ? codexStatus?.state === "connected"
+    : sidebarAgentProvider === "ollama" ? ollamaStatus.connected : true;
+  const checking = sidebarAgentProvider === "codex" && (!codexStatus || codexStatus.state === "signingIn");
+  const connectionLabel = sidebarAgentProvider === "codex"
+    ? !codexStatus ? "checking…" : codexStatus.state === "signingIn" ? "signing in…"
+      : codexStatus.state === "unavailable" ? "unavailable" : codexStatus.state === "error" ? "error"
+      : connected ? "connected" : "disconnected"
+    : connected ? "connected" : "disconnected";
+  const modelLabel = sidebarAgentModel || (sidebarAgentProvider === "ollama" ? ollamaStatus.activeModel : sidebarAgentProvider === "codex" ? "Codex default" : null);
 
   return (
     <div className="flex items-center justify-between px-4 py-1 bg-gray-800 text-gray-300 text-xs border-t border-gray-700 select-none">
       <div className="flex items-center gap-4">
         {/* AI backend status */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title={sidebarAgentProvider === "codex" ? codexStatus?.error : undefined}>
           <span
             className={`w-2 h-2 rounded-full ${
-              connected ? "bg-green-400" : "bg-red-400"
+              checking ? "bg-yellow-400" : connected ? "bg-green-400" : "bg-red-400"
             }`}
           />
           <span>
-            {label} {connected ? "connected" : "disconnected"}
+            {label} {connectionLabel}
           </span>
         </div>
 

@@ -1,5 +1,5 @@
 // A deterministic stdio peer: exercises the production transport without network or credentials.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const scenario = process.argv[2];
@@ -13,7 +13,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   if (!request.method || request.id === undefined) continue;
   const reply = (result: unknown) => send({ id: request.id, result });
   switch (request.method) {
-    case "initialize": reply({ userAgent: "fixture" }); break;
+    case "initialize": reply({ userAgent: "scholarpen/0.160.0 (fixture)" }); break;
     case "account/read":
       reply({ account: !signedIn ? null : scenario === "api-key" ? { type: "apiKey" } : { type: "chatgpt", email: "test@example.com", planType: "plus" } }); break;
     case "account/rateLimits/read":
@@ -26,7 +26,11 @@ for await (const line of createInterface({ input: process.stdin })) {
       break;
     case "account/login/cancel": signedIn = false; reply({ status: "canceled" }); break;
     case "account/logout": signedIn = false; reply({}); break;
-    case "model/list": reply({ data: [{ id: "model-alias", model: "test-model", isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low" }], defaultReasoningEffort: "low" }], nextCursor: null }); break;
+    case "model/list": {
+      const starts = readFileSync(logFile, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(r => r.method === "initialize").length;
+      const model = scenario === "refresh-models" ? starts > 1 ? "gpt-6.1-sol" : "gpt-5.6-sol" : "test-model";
+      reply({ data: [{ id: "model-alias", model, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low" }], defaultReasoningEffort: "low" }], nextCursor: null }); break;
+    }
     case "thread/start": reply({ thread: { id: "thread-1" } }); break;
     case "turn/start": {
       if (scenario === "crash") process.exit(7);

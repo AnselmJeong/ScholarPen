@@ -404,7 +404,7 @@ export const rpc = {
   getOllamaModels: () => call<string[]>("getOllamaModels"),
   listProviderModels: (provider: AppSettings["sidebarAgentProvider"], settings?: AppSettingsUpdate) =>
     call<string[]>("listProviderModels", { provider, settings }),
-  getCodexStatus: () => call<CodexStatus>("getCodexStatus"),
+  getCodexStatus: (reconnect = false) => call<CodexStatus>("getCodexStatus", reconnect ? { reconnect: true } : undefined),
   loginCodex: () => call<void>("loginCodex"),
   cancelCodexLogin: () => call<void>("cancelCodexLogin"),
   logoutCodex: () => call<void>("logoutCodex"),

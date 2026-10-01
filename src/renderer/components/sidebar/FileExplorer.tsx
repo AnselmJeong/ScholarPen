@@ -51,11 +51,10 @@ import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { ProjectInfo, FileNode } from "@shared/rpc-types";
 import {
-  collectDocumentNodes,
-  documentPathsWithin,
-  selectedDocumentNodes,
-  toggleDocumentSelection,
-} from "./export-selection";
+  collectSelectableFiles, isImportableFile, isSelectableFile,
+  selectablePathsWithin, toggleFileSelection, runFileBatch,
+  type FileBatchResult,
+} from "./file-selection";
 
 // ── Context Menu ──────────────────────────────────────────────
 interface ContextMenuState {
@@ -77,9 +76,9 @@ interface FileExplorerProps {
   onRefreshTree: () => Promise<void>;
   onExportDocuments: (documents: FileNode[]) => void;
   onFindReplaceDocuments: () => void;
-  onImportFile: (filePath: string) => Promise<void>;
+  onImportFile: (filePath: string, openDocument?: boolean) => Promise<void>;
   onFileRenamed: (newPath: string, newName: string) => void;
-  onFileDeleted: (filePath: string) => void;
+  onDeleteFile: (filePath: string) => Promise<void>;
 }
 
 // ── Icons ──────────────────────────────────────────────────────
@@ -207,7 +206,7 @@ function TreeNode({
       (c) => hasMatchingDescendant(c, query)
     );
     if (query && !hasVisibleChildren) return null;
-    const descendantPaths = documentPathsWithin(node);
+    const descendantPaths = selectablePathsWithin(node);
     const selectedDescendantCount = descendantPaths.filter((path) => selectedPaths.has(path)).length;
     const directoryChecked = descendantPaths.length > 0 && selectedDescendantCount === descendantPaths.length;
     const directoryMixed = selectedDescendantCount > 0 && !directoryChecked;
@@ -223,7 +222,7 @@ function TreeNode({
             <SelectionCheckbox
               checked={directoryChecked}
               mixed={directoryMixed}
-              label={`${directoryChecked ? "Clear" : "Select"} documents in ${name}`}
+              label={`${directoryChecked ? "Clear" : "Select"} files in ${name}`}
               onClick={(event) => {
                 event.stopPropagation();
                 onToggleSelection(node);
@@ -316,7 +315,7 @@ function TreeNode({
         })
       }}
     >
-      {selectionMode && node.kind === "document" && (
+      {selectionMode && isSelectableFile(node) && (
         <SelectionCheckbox
           checked={selectedPaths.has(node.path)}
           label={`${selectedPaths.has(node.path) ? "Clear" : "Select"} ${name}`}
@@ -329,14 +328,14 @@ function TreeNode({
       <button
         type="button"
         onClick={() => {
-          if (selectionMode && node.kind === "document") {
+          if (selectionMode && isSelectableFile(node)) {
             onToggleSelection(node);
             return;
           }
           onFileSelect(node);
         }}
         className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        aria-pressed={selectionMode && node.kind === "document" ? selectedPaths.has(node.path) : undefined}
+        aria-pressed={selectionMode && isSelectableFile(node) ? selectedPaths.has(node.path) : undefined}
       >
         <FileIcon kind={node.kind} isDirectory={false} />
         <span className="truncate">{name}</span>
@@ -360,7 +359,7 @@ export function FileExplorer({
   onFindReplaceDocuments,
   onImportFile,
   onFileRenamed,
-  onFileDeleted,
+  onDeleteFile,
 }: FileExplorerProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
@@ -371,17 +370,19 @@ export function FileExplorer({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renamingNode, setRenamingNode] = useState<FileNode | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<FileNode | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<FileNode[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [batchResult, setBatchResult] = useState<{ action: string; result: FileBatchResult } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
   const newProjectInputRef = useRef<HTMLInputElement>(null);
   const newDocInputRef = useRef<HTMLInputElement>(null);
-  const exportableDocuments = useMemo(() => collectDocumentNodes(fileTree), [fileTree]);
-  const selectedDocuments = useMemo(
-    () => selectedDocumentNodes(fileTree, selectedPaths),
-    [fileTree, selectedPaths],
-  );
+  const selectableFiles = useMemo(() => collectSelectableFiles(fileTree), [fileTree]);
+  const selectedFiles = useMemo(() => selectableFiles.filter(file => selectedPaths.has(file.path)), [selectableFiles, selectedPaths]);
+  const selectedDocuments = selectedFiles.filter(file => file.kind === "document");
+  const selectedImports = selectedFiles.filter(isImportableFile);
 
   // Focus inputs when dialogs open
   useEffect(() => {
@@ -402,27 +403,29 @@ export function FileExplorer({
   useEffect(() => {
     setSelectionMode(false);
     setSelectedPaths(new Set());
+    setBatchResult(null);
+    setDeleteConfirmOpen(false);
   }, [activeProject?.path]);
 
   useEffect(() => {
-    const availablePaths = new Set(exportableDocuments.map((document) => document.path));
+    const availablePaths = new Set(selectableFiles.map((document) => document.path));
     setSelectedPaths((current) => {
       const next = new Set([...current].filter((path) => availablePaths.has(path)));
       if (next.size === current.size && [...next].every((path) => current.has(path))) return current;
       return next;
     });
-  }, [exportableDocuments]);
+  }, [selectableFiles]);
 
   useEffect(() => {
     if (!selectionMode) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || busyRef.current || deleteConfirmOpen) return;
       setSelectionMode(false);
       setSelectedPaths(new Set());
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [selectionMode]);
+  }, [selectionMode, deleteConfirmOpen]);
 
   const handleCreateProject = useCallback(async () => {
     if (!newProjectName.trim() || creating) return;
@@ -443,12 +446,12 @@ export function FileExplorer({
       const filename = newDocName.trim().endsWith(".scholarpen.json")
         ? newDocName.trim()
         : `${newDocName.trim()}.scholarpen.json`;
-      await rpc.createDocument(activeProject.path, filename);
+      const created = await rpc.createDocument(activeProject.path, filename);
       await onRefreshTree();
       // Select the new document
       const tree = await rpc.listProjectFiles(activeProject.path);
       const docsDir = tree.find((n) => n.name === "documents" && n.isDirectory);
-      const newDoc = docsDir?.children?.find((c) => c.name === filename);
+      const newDoc = docsDir?.children?.find((c) => c.name === created);
       if (newDoc) onFileSelect(newDoc);
       setNewDocName("");
       setNewDocDialogOpen(false);
@@ -495,31 +498,41 @@ export function FileExplorer({
 
   const handleDelete = useCallback((node: FileNode) => {
     setContextMenu(null);
-    setDeleteTarget(node);
+    setDeleteTargets([node]);
     setDeleteConfirmOpen(true);
   }, []);
 
-  const confirmDelete = useCallback(async () => {
-    if (!deleteTarget) return;
-    setDeleteConfirmOpen(false);
+  const performBatch = useCallback(async (files: FileNode[], action: "Imported" | "Deleted", openDocument = false) => {
+    if (busyRef.current || files.length === 0) return;
+    busyRef.current = true;
+    setBatchBusy(true);
+    setBatchResult(null);
     try {
-      await rpc.deleteFile(deleteTarget.path);
+      const result = await runFileBatch(files, file => action === "Deleted"
+        ? onDeleteFile(file.path) : onImportFile(file.path, openDocument));
+      setSelectedPaths(current => {
+        const next = new Set(current);
+        result.succeeded.forEach(file => next.delete(file.path));
+        return next;
+      });
+      setBatchResult({ action, result });
       await onRefreshTree();
-      onFileDeleted(deleteTarget.path);
-    } catch (err) {
-      console.error("Delete failed:", err);
+    } finally {
+      busyRef.current = false;
+      setBatchBusy(false);
     }
-    setDeleteTarget(null);
-  }, [deleteTarget, onRefreshTree, onFileDeleted]);
+  }, [onDeleteFile, onImportFile, onRefreshTree]);
+
+  const confirmDelete = useCallback(async () => {
+    setDeleteConfirmOpen(false);
+    await performBatch(deleteTargets, "Deleted");
+    setDeleteTargets([]);
+  }, [deleteTargets, performBatch]);
 
   const handleImport = useCallback(async (node: FileNode) => {
     setContextMenu(null);
-    try {
-      await onImportFile(node.path);
-    } catch (err) {
-      console.error("Import failed:", err);
-    }
-  }, [onImportFile]);
+    await performBatch([node], "Imported", true);
+  }, [performBatch]);
 
   const handleExport = useCallback((node: FileNode) => {
     setContextMenu(null);
@@ -527,7 +540,7 @@ export function FileExplorer({
   }, [onExportDocuments]);
 
   const handleToggleSelection = useCallback((node: FileNode) => {
-    setSelectedPaths((current) => toggleDocumentSelection(current, node));
+    setSelectedPaths((current) => toggleFileSelection(current, node));
   }, []);
 
   const exitSelectionMode = useCallback(() => {
@@ -543,11 +556,11 @@ export function FileExplorer({
 
   const handleSelectAll = useCallback(() => {
     setSelectedPaths((current) => (
-      current.size === exportableDocuments.length
+      current.size === selectableFiles.length
         ? new Set()
-        : new Set(exportableDocuments.map((document) => document.path))
+        : new Set(selectableFiles.map((document) => document.path))
     ));
-  }, [exportableDocuments]);
+  }, [selectableFiles]);
 
   const handleRefreshExplorer = useCallback(async () => {
     if (refreshing) return;
@@ -577,7 +590,7 @@ export function FileExplorer({
     if (node.kind === "document") {
       items.push({ label: "Export...", icon: <Download className="h-3.5 w-3.5" />, action: () => handleExport(node) });
       items.push({
-        label: "Select for export",
+        label: "Select files...",
         icon: <ListChecks className="h-3.5 w-3.5" />,
         action: () => {
           setContextMenu(null);
@@ -591,10 +604,14 @@ export function FileExplorer({
       });
       items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
       items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
-    } else if (node.kind === "note") {
+    } else if (isImportableFile(node)) {
       const ext = node.name.slice(node.name.lastIndexOf(".")).toLowerCase();
       if ([".md", ".qmd", ".markdown"].includes(ext)) {
         items.push({ label: "Import as Document", icon: <Upload className="h-3.5 w-3.5" />, action: () => handleImport(node) });
+        items.push({ label: "Select files...", icon: <ListChecks className="h-3.5 w-3.5" />, action: () => {
+          setContextMenu(null); setSelectionMode(true);
+          setSelectedPaths(current => new Set([...current, node.path]));
+        } });
       }
       items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
       items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
@@ -608,7 +625,7 @@ export function FileExplorer({
 
   return (
     <TooltipProvider delayDuration={500}>
-      <div className="w-56 flex-shrink-0 bg-sidebar flex flex-col h-full select-none">
+      <div inert={batchBusy} className="w-56 flex-shrink-0 bg-sidebar flex flex-col h-full select-none">
         {/* Project header */}
         <div className="px-3 pt-4 pb-2">
           <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--scholar-muted)" }}>
@@ -667,7 +684,7 @@ export function FileExplorer({
               <div className="flex min-w-0 items-center gap-1.5">
                 <ListChecks className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
                 <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-primary">
-                  {selectedDocuments.length} selected
+                  {selectedFiles.length} selected
                 </p>
               </div>
             ) : (
@@ -677,7 +694,7 @@ export function FileExplorer({
             )}
             {activeProject && (
               <div className="flex items-center gap-1">
-                {exportableDocuments.length > 0 && (
+                {selectableFiles.length > 0 && (
                   <button
                     onClick={() => {
                       if (selectionMode) exitSelectionMode();
@@ -689,8 +706,8 @@ export function FileExplorer({
                         ? "text-primary hover:text-primary/70"
                         : "text-muted-foreground hover:text-foreground",
                     )}
-                    title={selectionMode ? "Cancel selection" : "Select documents to export"}
-                    aria-label={selectionMode ? "Cancel export selection" : "Select documents to export"}
+                    title={selectionMode ? "Cancel selection" : "Select documents or Markdown files"}
+                    aria-label={selectionMode ? "Cancel file selection" : "Select documents or Markdown files"}
                   >
                     {selectionMode ? <X className="h-3.5 w-3.5" /> : <ListChecks className="h-3.5 w-3.5" />}
                   </button>
@@ -760,7 +777,7 @@ export function FileExplorer({
             )}
           </ScrollArea>
 
-          {selectionMode && exportableDocuments.length > 0 && (
+          {selectionMode && selectableFiles.length > 0 && (
             <div
               className="mx-2 mb-2 flex-shrink-0 rounded-xl border p-2 shadow-sm"
               style={{
@@ -773,13 +790,13 @@ export function FileExplorer({
                   onClick={handleSelectAll}
                   className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
                 >
-                  {selectedDocuments.length === exportableDocuments.length
+                  {selectedFiles.length === selectableFiles.length
                     ? <Check className="h-3 w-3 text-primary" />
                     : <Square className="h-3 w-3" />}
-                  {selectedDocuments.length === exportableDocuments.length ? "Clear all" : "Select all"}
+                  {selectedFiles.length === selectableFiles.length ? "Clear all" : "Select all"}
                 </button>
                 <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {selectedDocuments.length}/{exportableDocuments.length}
+                  {selectedFiles.length}/{selectableFiles.length}
                 </span>
               </div>
               <Button
@@ -791,10 +808,23 @@ export function FileExplorer({
                 <Download className="h-3 w-3" />
                 Export {selectedDocuments.length || ""} {selectedDocuments.length === 1 ? "section" : "sections"}
               </Button>
+              <Button size="sm" variant="outline" className="mt-1 h-7 w-full rounded-lg text-[11px]"
+                disabled={selectedImports.length === 0} onClick={() => performBatch(selectedImports, "Imported")}>
+                <Upload className="h-3 w-3" /> Import {selectedImports.length || ""} MD/QMD
+              </Button>
+              <Button size="sm" variant="destructive" className="mt-1 h-7 w-full rounded-lg text-[11px]"
+                disabled={selectedFiles.length === 0} onClick={() => { setDeleteTargets(selectedFiles); setDeleteConfirmOpen(true); }}>
+                <Trash2 className="h-3 w-3" /> Delete {selectedFiles.length || ""} files
+              </Button>
             </div>
           )}
         </div>
 
+        {batchBusy && <p role="status" className="px-3 pb-2 text-xs text-muted-foreground">Processing files…</p>}
+        {batchResult && <div role="status" className="px-3 pb-2 text-xs">
+          <p>{batchResult.action} {batchResult.result.succeeded.length} file(s).</p>
+          {batchResult.result.failed.map(({ file, error }) => <p key={file.path} className="mt-1 text-destructive break-words">{file.name}: {error}</p>)}
+        </div>}
         {/* bottom padding */}
         <div className="py-2" />
       </div>
@@ -895,12 +925,14 @@ export function FileExplorer({
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Delete File</DialogTitle>
+            <DialogTitle>Delete {deleteTargets.length} file(s)</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
-            Are you sure you want to delete <span className="font-semibold text-foreground">{deleteTarget?.name}</span>?
-            This cannot be undone.
+            Delete these files? This cannot be undone.
           </p>
+          <ul className="max-h-48 overflow-y-auto text-xs break-all space-y-1">
+            {deleteTargets.map(file => <li key={file.path}>{file.path.replace(`${activeProject?.path}/`, "")}</li>)}
+          </ul>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
               Cancel

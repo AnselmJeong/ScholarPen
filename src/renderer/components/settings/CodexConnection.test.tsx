@@ -81,3 +81,17 @@ test("shows actionable missing-CLI and connection failures", async () => {
   await act(async () => button("새로고침").click());
   expect(container.textContent).toContain("connection lost");
 });
+
+test("manual refresh reconnects and loads new models, showing the running CLI version", async () => {
+  status.mockResolvedValue({ ...connected, cliPath: "/test/codex", cliVersion: "0.154.0" });
+  models.mockResolvedValue(["gpt-5.6-sol"]);
+  await render();
+  status.mockResolvedValue({ ...connected, cliPath: "/test/codex", cliVersion: "0.160.0" });
+  models.mockResolvedValue(["gpt-6.1-sol", "gpt-5.6-sol"]);
+  await act(async () => button("새로고침").click());
+  expect(status).toHaveBeenLastCalledWith(true);
+  expect(container.textContent).toContain("Codex CLI 0.160.0");
+  expect(container.querySelector('option[value="gpt-6.1-sol"]')).not.toBeNull();
+  expect(changed).not.toHaveBeenCalled();
+  expect(logout).not.toHaveBeenCalled();
+});

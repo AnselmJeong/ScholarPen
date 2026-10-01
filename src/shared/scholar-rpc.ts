@@ -146,7 +146,7 @@ type BunRequests = RPCSchema<{
     abortAgentStream: { params: void; response: void };
     getOllamaModels: { params: void; response: string[] };
     listProviderModels: { params: { provider: AppSettings["sidebarAgentProvider"]; settings?: AppSettingsUpdate }; response: string[] };
-    getCodexStatus: { params: void; response: CodexStatus };
+    getCodexStatus: { params: { reconnect?: boolean } | void; response: CodexStatus };
     loginCodex: { params: void; response: void };
     cancelCodexLogin: { params: void; response: void };
     logoutCodex: { params: void; response: void };

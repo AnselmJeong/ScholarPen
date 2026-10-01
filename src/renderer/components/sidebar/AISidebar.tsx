@@ -961,12 +961,14 @@ export function AISidebar({
     setSelectedSkillIds([]);
     setSelectedFilePaths([]);
     setProjectSourcesEnabled(true);
+    setDeepenApplyNotice(null);
   }, []);
 
   const loadThread = useCallback(
     async (threadId: string) => {
       if (!project?.path) return;
       const data = await rpc.getAgentThread(project.path, threadId);
+      setDeepenApplyNotice(null);
       setActiveThread(data.thread);
       setLoadedMessages(savedMessagesToThreadMessages(data.messages));
       setThreadResetKey(`thread-${threadId}-${data.thread.updatedAt}`);
@@ -1052,6 +1054,7 @@ export function AISidebar({
           message === buildFindCitationMessage(findCitation);
         if (isFindCitation) findCitationRequestRef.current = null;
         const isPreparedRequest = isDeepen || isFindCitation;
+        if (!isDeepen) setDeepenApplyNotice(null);
         // Snapshot the user's persistent choices before any awaits. Mandatory
         // search for a review affects this request, never the saved preference.
         const requestOptions = {
@@ -1302,6 +1305,12 @@ export function AISidebar({
         </div>}
 
         <AssistantThread slashCommands={slashCommands} onOpenProjectSource={onOpenProjectSource} />
+
+        {/^(Validate|Deepen):/.test(activeThread?.title ?? "") && (
+          <p className="px-3 pt-2 text-xs text-muted-foreground">
+            후속 채팅의 개선문은 자동 적용되지 않습니다. 자동 교체하려면 원문을 선택하고 Validate 또는 Deepen을 실행하세요.
+          </p>
+        )}
 
         <AssistantComposer
           searchEnabled={searchEnabled}

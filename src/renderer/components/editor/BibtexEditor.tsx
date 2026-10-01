@@ -134,7 +134,7 @@ export function BibtexEditor({
   const contentRef = useRef<HTMLDivElement>(null);
   const repairEditorRef = useRef<HTMLTextAreaElement>(null);
   const bibtexImportRef = useRef<HTMLInputElement>(null);
-  const find = useTextFind(contentRef, file.path);
+  const find = useTextFind(contentRef, `${file.path}:${content}:${entryFilter}:${view}`, findOpen);
   const dirty = content !== savedContent;
   const savedContentRef = useRef(savedContent);
   savedContentRef.current = savedContent;

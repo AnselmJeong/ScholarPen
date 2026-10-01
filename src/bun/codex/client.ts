@@ -48,6 +48,7 @@ export class CodexClient {
   private connecting: Promise<CodexTransport> | null = null;
   private loginId: string | null = null;
   private loginError: string | null = null;
+  private activeGenerations = 0;
 
   constructor(private readonly createTransport = () => new CodexTransport()) {}
 
@@ -63,8 +64,7 @@ export class CodexClient {
           this.loginError = params.success === true ? null : string(params.error) || "ChatGPT 로그인을 완료하지 못했습니다.";
         }
       }, () => {
-        if (this.transport === transport) this.transport = null;
-        this.loginId = null;
+        if (this.transport === transport) { this.transport = null; this.loginId = null; }
       });
       this.transport = transport;
       return transport;
@@ -74,10 +74,11 @@ export class CodexClient {
   }
 
   async status(): Promise<CodexStatus> {
-    const empty = { ordinaryUsageAllowed: null, quotas: [] };
+    let empty: Pick<CodexStatus, "ordinaryUsageAllowed" | "quotas" | "cliPath" | "cliVersion"> = { ordinaryUsageAllowed: null, quotas: [] };
     let transport: CodexTransport;
     try { transport = await this.connect(); }
     catch (error) { return { ...empty, state: "unavailable", error: (error as Error).message }; }
+    empty = { ...empty, ...transport.runtime };
     try {
       const result = object(await transport.request("account/read", { refreshToken: false }));
       const account = object(result.account);
@@ -93,6 +94,15 @@ export class CodexClient {
         return { ...connected, error: "구독 사용 한도를 확인하지 못했습니다. 새로고침 후 다시 시도해 주세요." };
       }
     } catch (error) { return { ...empty, state: "error", error: (error as Error).message }; }
+  }
+
+  async refresh(): Promise<CodexStatus> {
+    if (this.activeGenerations) throw new Error("Codex가 응답을 생성 중입니다. 완료하거나 취소한 뒤 새로고침해 주세요.");
+    if (this.connecting) await this.connecting;
+    // A generation may have begun while waiting for startup.
+    if (this.activeGenerations) throw new Error("Codex가 응답을 생성 중입니다. 완료하거나 취소한 뒤 새로고침해 주세요.");
+    if (!this.loginId) this.close();
+    return this.status();
   }
 
   async login(): Promise<string> {
@@ -143,6 +153,12 @@ export class CodexClient {
   }
 
   async *stream(request: { model: string; messages: OllamaMessage[]; thinkingLevel?: AgentThinkingLevel; signal?: AbortSignal }): AsyncGenerator<string> {
+    this.activeGenerations++;
+    try { yield* this.streamTurn(request); }
+    finally { this.activeGenerations--; }
+  }
+
+  private async *streamTurn(request: { model: string; messages: OllamaMessage[]; thinkingLevel?: AgentThinkingLevel; signal?: AbortSignal }): AsyncGenerator<string> {
     const { signal } = request;
     signal?.throwIfAborted();
     const status = await this.status();

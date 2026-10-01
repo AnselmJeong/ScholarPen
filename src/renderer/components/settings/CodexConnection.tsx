@@ -12,11 +12,11 @@ export function CodexConnection({ model, onModelChange }: { model: string; onMod
   const refreshing = useRef(false);
   const stateRef = useRef<CodexStatus["state"] | null>(null);
 
-  const refresh = useCallback(async (reloadModels = false) => {
+  const refresh = useCallback(async (reloadModels = false, reconnect = false) => {
     if (refreshing.current) return;
     refreshing.current = true;
     try {
-      const next = await rpc.getCodexStatus();
+      const next = await rpc.getCodexStatus(reconnect);
       if (!mounted.current) return;
       setStatus(next);
       if (next.state === "connected" && (reloadModels || stateRef.current !== "connected")) {
@@ -49,6 +49,12 @@ export function CodexConnection({ model, onModelChange }: { model: string; onMod
     finally { if (mounted.current) setBusy(false); }
   }
 
+  async function refreshConnection() {
+    setBusy(true);
+    try { await refresh(true, true); }
+    finally { if (mounted.current) setBusy(false); }
+  }
+
   const quotaError = status?.state === "connected" ? codexQuotaError(status, model) : null;
   return (
     <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-4" aria-label="Codex subscription connection">
@@ -58,6 +64,9 @@ export function CodexConnection({ model, onModelChange }: { model: string; onMod
           ChatGPT 계정의 Codex 사용 한도를 함께 사용합니다. 한도 소진 시 요청을 중단하며 유료 API로 자동 전환하지 않습니다.
         </p>
       </div>
+      {status?.cliPath && <p className="text-[11px] text-muted-foreground" title={status.cliPath}>
+        Codex CLI {status.cliVersion || "버전 확인 불가"}
+      </p>}
       <div className="text-xs" role="status" aria-live="polite">
         {!status ? "연결 상태 확인 중…" : status.state === "connected"
           ? `연결됨 · ${status.email || "ChatGPT"}${status.plan ? ` · ${status.plan}` : ""}`
@@ -75,9 +84,10 @@ export function CodexConnection({ model, onModelChange }: { model: string; onMod
         ) : (
           <Button size="sm" disabled={busy || !status || status.state === "unavailable"} onClick={() => action(rpc.loginCodex)}>ChatGPT로 로그인</Button>
         )}
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => refresh(true)}>새로고침</Button>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={refreshConnection}>새로고침</Button>
         {status?.state === "unavailable" && <Button size="sm" variant="link" onClick={() => rpc.openExternal("https://developers.openai.com/codex/cli")}>CLI 설치 안내</Button>}
       </div>
+      <p className="text-[11px] text-muted-foreground">CLI 업데이트 후 새로고침하면 최신 실행 파일로 다시 연결하고 모델 목록을 불러옵니다.</p>
       <label className="block space-y-1.5 text-xs">
         <span className="font-medium">Sidebar Agent Model</span>
         <select aria-label="Codex model" value={model} disabled={status?.state !== "connected" || busy}

@@ -13,7 +13,7 @@ export function referenceSuggestions(editor: BlockNoteEditor<any, any, any>, cit
   return [
     ...references.map((target) => ({
       title: target.label, group: project ? "Project references" : "Document references",
-      subtext: [target.filename, target.title, counts.get(target.label)! > 1 ? "Duplicate identifier" : ""].filter(Boolean).join(" · "),
+      subtext: [target.filename, counts.get(target.label)! > 1 ? "Duplicate identifier" : ""].filter(Boolean).join(" · "),
       // Brackets keep a Korean particle or adjacent text from becoming part of
       // the target key when the structured reference is exported to QMD.
       onItemClick: () => editor.insertInlineContent([{ type: "crossReference", props: { label: target.label, locator: "", bracketed: true } }]),

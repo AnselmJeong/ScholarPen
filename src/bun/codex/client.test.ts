@@ -82,6 +82,36 @@ test("supports login cancellation", async () => {
   expect((await requests()).find(r => r.method === "account/login/cancel").params).toEqual({ loginId: "login-1" });
 });
 
+test("refresh restarts the app server and reloads the catalog without losing subscription auth", async () => {
+  const { client, requests } = await fixture("refresh-models");
+  expect((await client.models()).map(m => m.id)).toEqual(["gpt-5.6-sol"]);
+  expect(await client.refresh()).toMatchObject({ state: "connected", cliVersion: "0.160.0", cliPath: process.execPath });
+  expect((await client.models()).map(m => m.id)).toEqual(["gpt-6.1-sol"]);
+  expect((await requests()).filter(r => r.method === "initialize")).toHaveLength(2);
+  expect((await requests()).some(r => r.method === "account/logout" || r.method === "account/login/start")).toBeFalse();
+});
+
+test("refresh preserves a pending browser login", async () => {
+  const { client, requests } = await fixture("login");
+  await client.login();
+  expect((await client.refresh()).state).toBe("signingIn");
+  expect((await requests()).filter(r => r.method === "initialize")).toHaveLength(1);
+  await new Promise(resolve => setTimeout(resolve, 90));
+  expect((await client.status()).state).toBe("connected");
+});
+
+test("refresh cannot interrupt an active turn and works again after cancellation", async () => {
+  const { client, requests } = await fixture("hang");
+  const controller = new AbortController();
+  const run = collect(client.stream({ ...request, signal: controller.signal }));
+  await new Promise(resolve => setTimeout(resolve, 120));
+  await expect(client.refresh()).rejects.toThrow("응답을 생성 중");
+  expect((await requests()).filter(r => r.method === "initialize")).toHaveLength(1);
+  controller.abort();
+  await expect(run).rejects.toMatchObject({ name: "AbortError" });
+  expect((await client.refresh()).state).toBe("connected");
+});
+
 test("preserves document context, history, and validated image input", () => {
   const result = codexInput([{ role: "system", content: "instructions" }, { role: "assistant", content: "history" }, { role: "user", content: "document", images: [{ name: "plot.png", dataUrl: "data:image/png;base64,aGVsbG8=" }] }]);
   expect(result[0]).toMatchObject({ type: "text", text: "[assistant]\nhistory" });

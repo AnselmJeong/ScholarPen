@@ -14,9 +14,9 @@ interface LeftSidebarProps {
   onRefreshTree: () => Promise<void>;
   onExportDocuments: (documents: FileNode[]) => void;
   onFindReplaceDocuments: () => void;
-  onImportFile: (filePath: string) => Promise<void>;
+  onImportFile: (filePath: string, openDocument?: boolean) => Promise<void>;
   onFileRenamed: (newPath: string, newName: string) => void;
-  onFileDeleted: (filePath: string) => void;
+  onDeleteFile: (filePath: string) => Promise<void>;
 }
 
 export function LeftSidebar(props: LeftSidebarProps) {
