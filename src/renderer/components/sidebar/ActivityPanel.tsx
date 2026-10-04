@@ -61,11 +61,9 @@ function useThreadPositions(editor: BlockNoteEditor<any, any, any> | null) {
 interface ActivityPanelProps {
   editor: BlockNoteEditor<any, any, any> | null;
   documentName: string | null;
-  /** Rendered above the thread list (AI work queue, pending suggestions). */
-  children?: React.ReactNode;
 }
 
-export function ActivityPanel({ editor, documentName, children }: ActivityPanelProps) {
+export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   const threads = useThreads(editor);
   const positions = useThreadPositions(editor);
   const [filter, setFilter] = useState<Filter>("open");
@@ -117,7 +115,6 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
     <div className="flex min-h-0 flex-1 flex-col">
       <AIActivitySection editor={editor} />
       <ZonesSection editor={editor} />
-      {children}
       <div className="flex items-center gap-1 border-b border-border px-3 py-2">
         <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="mr-auto truncate text-xs font-medium text-foreground">

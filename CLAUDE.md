@@ -69,6 +69,16 @@ Slash menu items (`/math`, `/figure`, `/abstract`, `/ai`) are in `slash-menu-ite
 
 Transport hot-swapping on Ollama reconnect is handled via TanStack Store closure updates without remounting the editor.
 
+## Collaborative Editing (AI as a peer)
+
+Every open document is a shared Y.Doc; editors and the AI agent are peers of it.
+
+- **Bun** (`src/bun/collab/`): `CollabRegistry` holds one Y.Doc per open document, relays Yjs and awareness updates between editor peers over RPC (`collabOpen/Push/Awareness/Close`, base64 updates), and persists it to `.scholarpen/collab/<document>.ydoc`. The webview ships its ProseMirror schema (`shared/collab/schema-spec.ts`) so Bun can read and edit the Y.Doc without BlockNote or React.
+- **Agents** (`src/bun/collab/agent/`): `CollabAgent` answers comment threads addressed to an AI persona (`@ai`, `@stats`, `@reviewer2`, or "Ask…"); `Reviewer` leaves review comments on sections; `zones.ts` maps per-section trust (Observe / Suggest / AI drafts / Auto) to how edits land and drafts sections from notes. Edits go through `shared/ai-text-protection.ts` markers, a stale check with three-way merge (`text-diff.ts`), and land as tracked suggestions (`@handlewithcare/prosemirror-suggest-changes`) or direct edits undoable via a Y.UndoManager on origin `ai-agent`.
+- **Renderer** (`src/renderer/collab/`): `openCollabPeer` opens the peer before the editor mounts (first peer seeds from JSON; external JSON changes are reconciled block by block). Comments use BlockNote's `YjsThreadStore` in the same Y.Doc. The Activity tab (`components/sidebar/ActivityPanel.tsx`) shows threads, AI jobs, pending suggestions and work zones.
+- The `.scholarpen.json` file is still written by the editor as a snapshot, using `acceptedDocument()` so pending suggestions never reach export or search.
+- `SCHOLARPEN_HOME` points a development build at a scratch settings/projects root.
+
 ## File System & Project Layout
 
 Projects live under the configured projects root. The default root is `~/ScholarPen`, where `settings.json` is stored beside project folders:

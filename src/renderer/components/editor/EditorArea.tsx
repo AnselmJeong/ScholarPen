@@ -167,7 +167,9 @@ export function EditorArea(props: EditorAreaProps) {
       });
     return () => {
       cancelled = true;
-      opened?.destroy();
+      // Let the editor view unbind from the Y.Doc before the peer is destroyed.
+      const peerToClose = opened;
+      setTimeout(() => peerToClose?.destroy(), 0);
     };
   }, [project?.path, filename]);
 
