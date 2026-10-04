@@ -1,7 +1,7 @@
 import { realpath, chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type {
   ProjectInfo,
   ProjectFile,
@@ -27,7 +27,12 @@ import { ProjectReferenceIndex } from "./project-references";
 import { linkSelectedFigure, readLinkedFigure } from "./figure-files";
 import { bundleExportImages } from "./export-image-bundle";
 
-const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
+// SCHOLARPEN_HOME points a development build at a scratch settings/projects root.
+const SCHOLARPEN_BASE = process.env.SCHOLARPEN_HOME || join(homedir(), "ScholarPen");
+
+export function documentHash(serialized: string) {
+  return createHash("sha1").update(serialized).digest("hex");
+}
 const SETTINGS_FILE = join(SCHOLARPEN_BASE, "settings.json");
 const LEGACY_PROJECTS_ROOT = join(SCHOLARPEN_BASE, "projects");
 const APP_SUPPORT_DIRS = new Set(["commands", "skills"]);
@@ -417,12 +422,55 @@ class FileSystemManager {
 
   // ── Document CRUD ───────────────────────────────────────────
 
-  async saveDocument(projectPath: string, filename: string, content: unknown): Promise<void> {
+  /** Writes the JSON snapshot and returns the hash of the bytes written. */
+  async saveDocument(projectPath: string, filename: string, content: unknown): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     const docsDir = join(projectPath, "documents");
     await mkdir(docsDir, { recursive: true });
     const filePath = await this.documentFilePath(projectPath, filename);
-    await writeFile(filePath, JSON.stringify(content, null, 2));
+    const serialized = JSON.stringify(content, null, 2);
+    await writeFile(filePath, serialized);
+    return documentHash(serialized);
+  }
+
+  async documentJsonHash(projectPath: string, filename: string): Promise<string | null> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    try {
+      return documentHash(await readFile(await this.documentFilePath(projectPath, filename), "utf-8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    }
+  }
+
+  /** Location of a document's shared Y.Doc state (comments, AI edits, history). */
+  async collabStatePath(projectPath: string, filename: string): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    await this.documentFilePath(projectPath, filename);
+    return join(projectPath, ".scholarpen", "collab", `${filename}.ydoc`);
+  }
+
+  /** Moves (or deletes, when newPath is null) the Y.Doc state that belongs to a document file. */
+  private async moveCollabState(oldPath: string, newPath: string | null) {
+    const marker = "/documents/";
+    const at = oldPath.lastIndexOf(marker);
+    if (at < 0 || !oldPath.endsWith(".scholarpen.json")) return;
+    const projectPath = oldPath.slice(0, at);
+    const collabDir = join(projectPath, ".scholarpen", "collab");
+    const from = join(collabDir, `${oldPath.slice(at + marker.length)}.ydoc`);
+    for (const suffix of ["", ".meta.json"]) {
+      try {
+        if (newPath && newPath.startsWith(projectPath + marker)) {
+          const to = join(collabDir, `${newPath.slice(at + marker.length)}.ydoc`);
+          await mkdir(dirname(to), { recursive: true });
+          await rename(from + suffix, to + suffix);
+        } else {
+          await unlink(from + suffix);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[collab] state move failed", error);
+      }
+    }
   }
 
   async saveDocuments(
@@ -877,12 +925,14 @@ class FileSystemManager {
     finalName = this.safeFilename(finalName);
     const newPath = await this.assertProjectFilePath(join(dir, finalName));
     await rename(filePath, newPath);
+    await this.moveCollabState(filePath, newPath);
     return newPath;
   }
 
   async deleteFile(filePath: string): Promise<void> {
     filePath = await this.assertProjectFilePath(filePath);
     await unlink(filePath);
+    await this.moveCollabState(filePath, null);
   }
 
   // ── File Tree ───────────────────────────────────────────────

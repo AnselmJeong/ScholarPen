@@ -62,7 +62,9 @@ import { EditorSideMenu } from "./EditorSideMenu";
 import { EditorOutline } from "./EditorOutline";
 import { setOutlineVisible, useOutlineVisibility } from "./outline-visibility";
 import { QuartoBlockControls } from "./QuartoBlockControls";
-import { normalizeQuartoBlocks } from "../../../shared/quarto-references";
+import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../../collab/collab-peer";
+import { reconcileBlocks } from "../../collab/reconcile";
+import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -129,12 +131,61 @@ interface EditorAreaProps {
   bibReloadTrigger?: number;
 }
 
-function normalizeDocumentContent(content: unknown) {
-  if (Array.isArray(content) && content.length > 0) return normalizeQuartoBlocks(content);
-  return [{ type: "paragraph", content: "" }];
+const LOCAL_USER = { name: "You", color: "#2563eb" };
+
+/**
+ * Opens this tab's peer of the shared Y.Doc, then mounts the editor on it.
+ * A new peer (and editor) is created whenever the tab shows another document.
+ */
+export function EditorArea(props: EditorAreaProps) {
+  const { project, documentFilename } = props;
+  const filename = documentFilename || "manuscript.scholarpen.json";
+  const [peer, setPeer] = useState<CollabPeer | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    let opened: CollabPeer | null = null;
+    setPeer(null);
+    setOpenError(null);
+    openCollabPeer(project.path, filename)
+      .then((next) => {
+        if (cancelled) next.destroy();
+        else { opened = next; setPeer(next); }
+      })
+      .catch((error) => {
+        console.error("[collab] could not open document", error);
+        if (!cancelled) setOpenError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+      opened?.destroy();
+    };
+  }, [project?.path, filename]);
+
+  if (!project) {
+    return (
+      <div className="flex-1 flex items-center justify-center" style={{ background: "hsl(var(--background))" }}>
+        <div className="text-center" style={{ color: "var(--scholar-muted)" }}>
+          <p className="text-lg mb-2" style={{ fontFamily: "Newsreader, Georgia, serif" }}>No project open</p>
+          <p className="text-sm">Create or open a project from the sidebar</p>
+        </div>
+      </div>
+    );
+  }
+  if (!peer) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-sm" style={{ background: "hsl(var(--background))", color: "var(--scholar-muted)" }}>
+        {openError ? `Could not open this document: ${openError}` : "Opening document…"}
+      </div>
+    );
+  }
+  return <CollabEditorArea key={peer.peerId} {...props} project={project} peer={peer} />;
 }
 
-export function EditorArea({
+function CollabEditorArea({
+  peer,
   outlineId,
   onOutlineClosed,
   project,
@@ -153,11 +204,17 @@ export function EditorArea({
   onNavigateToDocument,
   reloadTrigger,
   bibReloadTrigger,
-}: EditorAreaProps) {
+}: EditorAreaProps & { project: ProjectInfo; peer: CollabPeer }) {
   const isDark = useIsDark();
   const outlineVisible = useOutlineVisibility();
   const editor = useCreateBlockNote({
     schema: scholarSchema,
+    collaboration: {
+      fragment: peer.ydoc.getXmlFragment(COLLAB_FRAGMENT),
+      user: LOCAL_USER,
+      provider: { awareness: peer.awareness },
+      showCursorLabels: "always",
+    },
     dictionary: {
       ...en,
       ai: aiEn,
@@ -228,11 +285,6 @@ export function EditorArea({
       });
     });
   }, []);
-
-  const replaceDocumentWithoutSaving = useCallback((content: Parameters<typeof editor.replaceBlocks>[1]) => {
-    suppressSaveUntilRef.current = Date.now() + 500;
-    editor.replaceBlocks(editor.document, content);
-  }, [editor]);
 
   const readSettledDocumentSnapshot = useCallback(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -313,43 +365,59 @@ export function EditorArea({
     onSaveStatusChangeRef.current(status);
   }, []);
 
-  // Load document when project or file switches
+  const finishDocumentLoad = useCallback((loadSeq: number) => {
+    requestAnimationFrame(() => {
+      const text = editor.prosemirrorView?.state.doc.textContent ?? "";
+      const count = text.trim() ? text.trim().split(/\s+/).length : 0;
+      onWordCountChangeRef.current(count);
+    });
+    restoreScrollPosition();
+    // Scroll restoration uses two frames; navigation must run afterwards.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (loadSeq === loadRequestSeqRef.current) setDocumentReady(true);
+    }));
+  }, [editor, restoreScrollPosition]);
+
+  // The editor mounts on the shared Y.Doc. The JSON file is only consulted when
+  // Bun reports that it changed outside the editor.
+  const mountedRef = useRef(false);
   useEffect(() => {
-    hasRestoredScrollRef.current = false;
-    if (!project) return;
-    setDocumentReady(false);
+    if (mountedRef.current) return;
+    mountedRef.current = true;
     const loadSeq = ++loadRequestSeqRef.current;
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
+    if (peer.bootstrap !== "reconcile") {
+      updateSaveStatus("saved");
+      finishDocumentLoad(loadSeq);
+      return;
     }
-    dirtyRevisionRef.current = 0;
-    savedRevisionRef.current = 0;
     const filename = documentFilename || "manuscript.scholarpen.json";
-    rpc
-      .loadDocument(project.path, filename)
+    rpc.loadDocument(project.path, filename)
       .then((content) => {
-        if (loadSeq !== loadRequestSeqRef.current || dirtyRevisionRef.current !== 0) return;
-        const normalized = normalizeDocumentContent(content);
-        if (JSON.stringify(normalized) !== JSON.stringify(editor.document)) {
-          replaceDocumentWithoutSaving(normalized as Parameters<typeof editor.replaceBlocks>[1]);
-        }
-        dirtyRevisionRef.current = 0;
-        savedRevisionRef.current = 0;
-        updateSaveStatus("saved");
-        requestAnimationFrame(() => {
-          const text = editor.prosemirrorView?.state.doc.textContent ?? "";
-          const count = text.trim() ? text.trim().split(/\s+/).length : 0;
-          onWordCountChangeRef.current(count);
-        });
-        restoreScrollPosition();
-        // Scroll restoration uses two frames; navigation must run afterwards.
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (loadSeq === loadRequestSeqRef.current) setDocumentReady(true);
-        }));
+        if (loadSeq !== loadRequestSeqRef.current) return;
+        reconcileBlocks(editor, normalizeDocumentContent(content) as any);
+        // Record the reconciled snapshot so Bun stops flagging the file as external.
+        dirtyRevisionRef.current += 1;
+        void enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
+      })
+      .catch(console.error)
+      .finally(() => finishDocumentLoad(loadSeq));
+  }, [peer, project.path, documentFilename, editor, finishDocumentLoad, updateSaveStatus]);
+
+  // External rewrites of the JSON (project find & replace) arrive as reload triggers.
+  const initialReloadTriggerRef = useRef(reloadTrigger);
+  useEffect(() => {
+    if (reloadTrigger === initialReloadTriggerRef.current) return;
+    initialReloadTriggerRef.current = reloadTrigger;
+    // Unsaved editor or AI changes are newer than the file on disk.
+    if (saveStatusRef.current !== "saved" || saveTimerRef.current) return;
+    const filename = documentFilename || "manuscript.scholarpen.json";
+    rpc.loadDocument(project.path, filename)
+      .then((content) => {
+        if (saveStatusRef.current !== "saved" || saveTimerRef.current) return;
+        reconcileBlocks(editor, normalizeDocumentContent(content) as any);
       })
       .catch(console.error);
-  }, [project?.path, documentFilename, editor, reloadTrigger, replaceDocumentWithoutSaving, restoreScrollPosition, updateSaveStatus]);
+  }, [reloadTrigger, project.path, documentFilename, editor]);
 
   useEffect(() => {
     restoreScrollPosition();
@@ -381,7 +449,7 @@ export function EditorArea({
             if (deletingRef.current || revision < dirtyRevisionRef.current) {
               return "skipped-stale" as const;
             }
-            return rpc.saveDocument(project.path, filename, content).then(() => "saved" as const);
+            return rpc.saveDocument(project.path, filename, content, true).then(() => "saved" as const);
           });
       })
       .then(() => {
@@ -619,17 +687,6 @@ export function EditorArea({
     const aiItems = ollamaStatus.connected ? getAISlashMenuItemsFixed(editor) : [];
     return [...scholar, ...headings, ...defaults, ...aiItems];
   }, [editor, ollamaStatus.connected]);
-
-  if (!project) {
-    return (
-      <div className="flex-1 flex items-center justify-center" style={{ background: "hsl(var(--background))" }}>
-        <div className="text-center" style={{ color: "var(--scholar-muted)" }}>
-          <p className="text-lg mb-2" style={{ fontFamily: "Newsreader, Georgia, serif" }}>No project open</p>
-          <p className="text-sm">Create or open a project from the sidebar</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <FigureDocumentContext.Provider value={{ projectPath: project.path,

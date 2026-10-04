@@ -2,7 +2,8 @@ import { copyFile, mkdir, readdir, stat, writeFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 
-const SCHOLARPEN_BASE = join(homedir(), "ScholarPen");
+// SCHOLARPEN_HOME points a development build at a scratch settings/projects root.
+const SCHOLARPEN_BASE = process.env.SCHOLARPEN_HOME || join(homedir(), "ScholarPen");
 export const APP_SKILLS_DIR = join(SCHOLARPEN_BASE, "skills");
 export const APP_COMMANDS_DIR = join(SCHOLARPEN_BASE, "commands");
 const CLAUDE_COMMANDS_DIR = join(homedir(), ".claude", "commands");

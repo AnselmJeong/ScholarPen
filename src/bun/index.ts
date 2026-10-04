@@ -23,6 +23,9 @@ import {
 import type { BibliographyValidationProgress } from "../shared/rpc-types";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 import { figureMimeType } from "../shared/figure-files";
+import type { CollabUpdateMessage } from "../shared/collab/protocol";
+import { CollabRegistry } from "./collab/registry";
+import { createFileCollabStorage } from "./collab/storage";
 
 
 function buildSubprocessEnv(): Record<string, string> {
@@ -58,6 +61,14 @@ let sendAiChunk: ((payload: { content: string; done: boolean }) => void) | null 
 let sendAgentChunk: ((payload: { content: string; done: boolean }) => void) | null = null;
 let sendOllamaProxyChunk: ((payload: { requestId: string; content: string; done: boolean; error?: string }) => void) | null = null;
 let sendBibliographyValidationProgress: ((payload: BibliographyValidationProgress) => void) | null = null;
+let sendCollabUpdate: ((payload: CollabUpdateMessage) => void) | null = null;
+let sendCollabAwareness: ((payload: CollabUpdateMessage) => void) | null = null;
+
+// Shared Y.Doc per open document. Editors and the AI agent are peers of it.
+const collabRegistry = new CollabRegistry(createFileCollabStorage(fileSystem), {
+  update: (message) => sendCollabUpdate?.(message),
+  awareness: (message) => sendCollabAwareness?.(message),
+});
 
 // Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
 let activeAiAbortController: AbortController | null = null;
@@ -207,7 +218,7 @@ async function main() {
         },
 
         // ── Document CRUD ─────────────────────────────────
-        saveDocument: async ({ projectPath, filename, content }) => {
+        saveDocument: async ({ projectPath, filename, content, collab }) => {
           // Suppress file watcher for 3s to avoid reload loop from our own save
           const rel = `documents/${filename}`;
           recentlySavedFiles.add(rel);
@@ -216,7 +227,8 @@ async function main() {
             recentlySavedFiles.delete(rel);
             recentlySavedFiles.delete(filename);
           }, 3000);
-          return fileSystem.saveDocument(projectPath, filename, content);
+          const hash = await fileSystem.saveDocument(projectPath, filename, content);
+          if (collab) await collabRegistry.noteJsonSaved(projectPath, filename, hash);
         },
 
         saveDocuments: async ({ projectPath, documents }) => {
@@ -506,6 +518,11 @@ async function main() {
         logoutCodex: () => codexClient.logout(),
         openExternal: ({ url }) => { openValidatedExternalUrl(url); },
 
+        collabOpen: (params) => collabRegistry.open(params),
+        collabPush: ({ docKey, peerId, update }) => collabRegistry.push(docKey, peerId, update),
+        collabAwareness: ({ docKey, peerId, update }) => collabRegistry.pushAwareness(docKey, peerId, update),
+        collabClose: ({ docKey, peerId }) => collabRegistry.close(docKey, peerId),
+
         // Proxy Ollama chat to the renderer via aiChunk messages.
         // Fire-and-forget: return immediately so Electrobun can flush outbound
         // aiChunk messages while the stream runs in the background.
@@ -617,6 +634,8 @@ async function main() {
   sendProjectUpdated = (payload) => win.webview.rpc?.send.projectUpdated(payload);
   sendAiChunk = (payload) => win.webview.rpc?.send.aiChunk(payload);
   sendAgentChunk = (payload) => win.webview.rpc?.send.agentChunk(payload);
+  sendCollabUpdate = (payload) => win.webview.rpc?.send.collabUpdate(payload);
+  sendCollabAwareness = (payload) => win.webview.rpc?.send.collabAwareness(payload);
   sendOllamaProxyChunk = (payload) => win.webview.rpc?.send.ollamaProxyChunk(payload);
   sendBibliographyValidationProgress = (payload) =>
     win.webview.rpc?.send.bibliographyValidationProgress(payload);
@@ -631,13 +650,18 @@ async function main() {
     } else if (action === "quit") {
       // Save first, then quit after a brief flush window
       win.webview.rpc?.send.menuAction({ action: "save" });
-      setTimeout(() => Utils.quit(), 400);
+      setTimeout(() => {
+        void collabRegistry.flush().finally(() => Utils.quit());
+      }, 400);
     }
   });
 
   console.log("[ScholarPen] App started");
 }
 
-Electrobun.events.on("before-quit", () => codexClient.close());
+Electrobun.events.on("before-quit", () => {
+  codexClient.close();
+  void collabRegistry.flush();
+});
 
 main().catch(console.error);

@@ -1,6 +1,7 @@
 import type { CodexStatus } from "./codex";
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
 import type { ReferenceDocument } from "./project-references";
+import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "./collab/protocol";
 import type {
   OllamaStatus,
   ProjectInfo,
@@ -44,7 +45,8 @@ type BunRequests = RPCSchema<{
     openProjectByPath: { params: { projectPath: string }; response: ProjectInfo };
     createProject: { params: { name: string }; response: ProjectInfo };
     // Multi-document support
-    saveDocument: { params: { projectPath: string; filename: string; content: unknown }; response: void };
+    /** `collab` marks a snapshot written by a Y.Doc-backed editor peer. */
+    saveDocument: { params: { projectPath: string; filename: string; content: unknown; collab?: boolean }; response: void };
     saveDocuments: {
       params: { projectPath: string; documents: Array<{ filename: string; content: unknown }> };
       response: void;
@@ -151,6 +153,11 @@ type BunRequests = RPCSchema<{
     cancelCodexLogin: { params: void; response: void };
     logoutCodex: { params: void; response: void };
     openExternal: { params: { url: string }; response: void };
+    // Collaborative editing (shared Y.Doc relayed through Bun)
+    collabOpen: { params: CollabOpenParams; response: CollabOpenResult };
+    collabPush: { params: { docKey: string; peerId: string; update: string }; response: void };
+    collabAwareness: { params: { docKey: string; peerId: string; update: string }; response: void };
+    collabClose: { params: { docKey: string; peerId: string }; response: void };
   };
   messages: {
     aiChunk: { content: string };
@@ -170,6 +177,8 @@ type WebviewRequests = RPCSchema<{
     menuAction: { action: string };
     importMarkdownContent: { content: string; suggestedFilename: string };
     bibliographyValidationProgress: BibliographyValidationProgress;
+    collabUpdate: CollabUpdateMessage;
+    collabAwareness: CollabUpdateMessage;
   };
 }>;
 

@@ -30,6 +30,7 @@ import type {
   QuartoExtensionDiscovery,
 } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
+import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "../shared/collab/protocol";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
@@ -38,6 +39,7 @@ type AgentChunkHandler = (content: string, done: boolean) => void;
 type OllamaProxyChunkHandler = (payload: { requestId: string; content: string; done: boolean; error?: string }) => void;
 type ProjectUpdatedHandler = (projectPath: string, filePath?: string) => void;
 type BibliographyValidationProgressHandler = (progress: BibliographyValidationProgress) => void;
+type CollabMessageHandler = (message: CollabUpdateMessage) => void;
 
 const strictRpcMethods = new Set([
   "getCodexStatus", "loginCodex", "cancelCodexLogin", "logoutCodex", "listProviderModels",
@@ -104,6 +106,12 @@ const electrobun = new Electroview({
         bibliographyValidationProgress: (progress) => {
           bibliographyValidationProgressListeners.forEach((handler) => handler(progress));
         },
+        collabUpdate: (message) => {
+          collabUpdateListeners.forEach((handler) => handler(message));
+        },
+        collabAwareness: (message) => {
+          collabAwarenessListeners.forEach((handler) => handler(message));
+        },
       },
     },
   }),
@@ -117,6 +125,18 @@ const agentChunkListeners: AgentChunkHandler[] = [];
 const ollamaProxyChunkListeners: OllamaProxyChunkHandler[] = [];
 const projectUpdatedListeners: ProjectUpdatedHandler[] = [];
 const bibliographyValidationProgressListeners: BibliographyValidationProgressHandler[] = [];
+const collabUpdateListeners = new Set<CollabMessageHandler>();
+const collabAwarenessListeners = new Set<CollabMessageHandler>();
+
+export function onCollabUpdate(handler: CollabMessageHandler) {
+  collabUpdateListeners.add(handler);
+  return () => { collabUpdateListeners.delete(handler); };
+}
+
+export function onCollabAwareness(handler: CollabMessageHandler) {
+  collabAwarenessListeners.add(handler);
+  return () => { collabAwarenessListeners.delete(handler); };
+}
 
 export function onMenuAction(handler: MenuActionHandler) {
   menuActionListeners.push(handler);
@@ -279,6 +299,11 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     listAgentMentionableFiles: [],
     listAgentThreads: [],
   };
+  if (method === "collabOpen") {
+    // Browser-only development: no Bun peer, so every editor seeds itself from JSON.
+    const params = _args[0] as { projectPath: string; filename: string };
+    return { docKey: `${params.projectPath}::${params.filename}`, state: "AAA=", awareness: null, bootstrap: "seed" };
+  }
   return mocks[method] ?? null;
 }
 
@@ -311,8 +336,8 @@ export const rpc = {
   openProject: (name: string) => call<ProjectInfo>("openProject", { name }),
   createProject: (name: string) => call<ProjectInfo>("createProject", { name }),
   // ── Document CRUD ─────────────────────────────────────
-  saveDocument: (projectPath: string, filename: string, content: unknown) =>
-    call<void>("saveDocument", { projectPath, filename, content }),
+  saveDocument: (projectPath: string, filename: string, content: unknown, collab?: boolean) =>
+    call<void>("saveDocument", { projectPath, filename, content, collab }),
   saveDocuments: (
     projectPath: string,
     documents: Array<{ filename: string; content: unknown }>,
@@ -453,4 +478,11 @@ export const rpc = {
     call<OllamaProxyResponse>("startOllamaOpenAIProxy", { requestId, body }),
   abortOllamaOpenAIProxy: (requestId: string) =>
     call<void>("abortOllamaOpenAIProxy", { requestId }),
+  // ── Collaborative editing ─────────────────────────────
+  collabOpen: (params: CollabOpenParams) => call<CollabOpenResult>("collabOpen", params),
+  collabPush: (docKey: string, peerId: string, update: string) =>
+    call<void>("collabPush", { docKey, peerId, update }),
+  collabAwareness: (docKey: string, peerId: string, update: string) =>
+    call<void>("collabAwareness", { docKey, peerId, update }),
+  collabClose: (docKey: string, peerId: string) => call<void>("collabClose", { docKey, peerId }),
 };
