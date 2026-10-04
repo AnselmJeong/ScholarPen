@@ -21,7 +21,10 @@ import {
   NestBlockButton,
   UnnestBlockButton,
   CreateLinkButton,
+  AddCommentButton,
 } from "@blocknote/react";
+import { CommentsExtension } from "@blocknote/core/comments";
+import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
@@ -64,6 +67,7 @@ import { setOutlineVisible, useOutlineVisibility } from "./outline-visibility";
 import { QuartoBlockControls } from "./QuartoBlockControls";
 import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../../collab/collab-peer";
 import { reconcileBlocks } from "../../collab/reconcile";
+import { setEditorCollab } from "../../collab/editor-collab";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -131,7 +135,7 @@ interface EditorAreaProps {
   bibReloadTrigger?: number;
 }
 
-const LOCAL_USER = { name: "You", color: "#2563eb" };
+const LOCAL_USER = { name: "You", color: LOCAL_COLOR };
 
 /**
  * Opens this tab's peer of the shared Y.Doc, then mounts the editor on it.
@@ -220,6 +224,7 @@ function CollabEditorArea({
       ai: aiEn,
     },
     extensions: [
+      CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers }),
       AISelectionTargetExtension(),
       AIExtension({
         transport: ollamaStatus.connected
@@ -295,6 +300,11 @@ function CollabEditorArea({
     setCitekeys(parseCitekeys(bibtex));
     setCitationHoverMetadata(buildCitationHoverMetadata(bibtex));
   }, []);
+
+  useEffect(() => {
+    setEditorCollab(editor, peer);
+    return () => setEditorCollab(editor, null);
+  }, [editor, peer]);
 
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
@@ -812,6 +822,7 @@ function CollabEditorArea({
                     </button>
                   )}
 
+                  <AddCommentButton key="addCommentButton" />
                   <NoteToolbarButton editor={editor} key="noteToolbarButton" />
                   <BasicTextStyleButton basicTextStyle="bold" key="boldStyleButton" />
                   <BasicTextStyleButton basicTextStyle="italic" key="italicStyleButton" />

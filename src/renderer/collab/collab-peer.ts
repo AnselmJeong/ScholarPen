@@ -8,9 +8,11 @@ import {
 import { fromBase64, toBase64 } from "lib0/buffer";
 import { BlockNoteEditor } from "@blocknote/core";
 import { blocksToYXmlFragment } from "@blocknote/core/yjs";
+import { DefaultThreadStoreAuth, YjsThreadStore } from "@blocknote/core/comments";
 import { rpc, onCollabAwareness, onCollabUpdate } from "../rpc";
 import { scholarSchema } from "../blocks/schema";
-import { COLLAB_FRAGMENT, type CollabOpenResult } from "../../shared/collab/protocol";
+import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP, type CollabOpenResult } from "../../shared/collab/protocol";
+import { LOCAL_USER_ID } from "../../shared/collab/threads";
 import { schemaToSpecJSON, type SchemaSpecJSON } from "../../shared/collab/schema-spec";
 import { normalizeQuartoBlocks } from "../../shared/quarto-references";
 
@@ -22,6 +24,7 @@ export interface CollabPeer {
   peerId: string;
   ydoc: Y.Doc;
   awareness: Awareness;
+  threadStore: YjsThreadStore;
   bootstrap: CollabOpenResult["bootstrap"];
   destroy(): void;
 }
@@ -116,12 +119,19 @@ export async function openCollabPeer(projectPath: string, filename: string): Pro
     flush();
   }
 
+  const threadStore = new YjsThreadStore(
+    LOCAL_USER_ID,
+    ydoc.getMap(COLLAB_THREADS_MAP),
+    new DefaultThreadStoreAuth(LOCAL_USER_ID, "editor"),
+  );
+
   let destroyed = false;
   return {
     docKey,
     peerId,
     ydoc,
     awareness,
+    threadStore,
     bootstrap: opened.bootstrap,
     destroy() {
       if (destroyed) return;

@@ -71,6 +71,12 @@ const { openCollabPeer } = await import("./collab-peer");
 const { reconcileBlocks } = await import("./reconcile");
 const { COLLAB_FRAGMENT } = await import("../../shared/collab/protocol");
 const { yXmlFragmentToProseMirrorRootNode, updateYFragment } = await import("y-prosemirror");
+const { CommentsExtension } = await import("@blocknote/core/comments");
+const { TextSelection } = await import("prosemirror-state");
+const { resolveCollabUsers } = await import("./users");
+const { setEditorCollab } = await import("./editor-collab");
+const { ActivityPanel } = await import("../components/sidebar/ActivityPanel");
+const { readThreads, threadWantsAI } = await import("../../shared/collab/threads");
 
 async function settle() {
   for (let i = 0; i < 5; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -85,7 +91,9 @@ async function mountPeer(name: string) {
       user: { name, color: "#000" },
       provider: { awareness: peer.awareness },
     },
+    extensions: [CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
   });
+  setEditorCollab(editor, peer);
   let changes = 0;
   editor.onChange(() => { changes++; });
   const container = document.createElement("div");
@@ -96,7 +104,7 @@ async function mountPeer(name: string) {
   return { peer, editor, root, changes: () => changes };
 }
 
-const texts = (editor: InstanceType<typeof BlockNoteEditor>) =>
+const texts = (editor: { document: unknown[] }) =>
   editor.document.map((block: any) => (block.content ?? []).map((part: any) => part.text ?? `[${part.type}]`).join(""));
 
 test("editors seed once, stay in sync through Bun, and see Bun-side edits", async () => {
@@ -142,6 +150,38 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
   await settle();
   expect(texts(b.editor)[2]).toBe("As reported by [citation]");
   expect(texts(b.editor)[0]).toBe("Rewritten by the AI.");
+
+  // Stage 2: a comment made in A is anchored and visible in B, and the Activity panel lists it.
+  const view = a.editor.prosemirrorView!;
+  let from = -1;
+  view.state.doc.descendants((node, pos) => {
+    if (from < 0 && node.isText && node.text?.startsWith("Rewritten")) from = pos;
+  });
+  await act(async () => {
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, from + "Rewritten".length)));
+    await a.editor.getExtension(CommentsExtension)!.createThread({
+      initialComment: { body: [{ type: "paragraph", content: "@AI make this sentence shorter" }] },
+    });
+  });
+  await settle();
+  const threads = readThreads(b.peer.ydoc.getMap("threads"));
+  expect(threads).toHaveLength(1);
+  expect(threads[0].comments[0]).toMatchObject({ userId: "me", text: "@AI make this sentence shorter" });
+  expect(threadWantsAI(threads[0])).toBe(true);
+  expect(b.editor.getExtension(CommentsExtension)!.store.state.threadPositions.has(threads[0].id)).toBe(true);
+
+  const panel = document.createElement("div");
+  document.body.append(panel);
+  const panelRoot = createRoot(panel);
+  await act(async () => { panelRoot.render(<ActivityPanel editor={b.editor} documentName="doc.scholarpen.json" />); });
+  expect(panel.textContent).toContain("@AI make this sentence shorter");
+  expect(panel.textContent).toContain("Rewritten");
+  const resolve = [...panel.querySelectorAll("button")].find((button) => button.textContent?.includes("Resolve"))!;
+  await act(async () => { resolve.click(); });
+  await settle();
+  expect(readThreads(a.peer.ydoc.getMap("threads"))[0]).toMatchObject({ resolved: true, meta: { status: "resolved" } });
+  expect(panel.textContent).toContain("No open threads");
+  await act(async () => { panelRoot.unmount(); });
 
   await act(async () => { a.root.unmount(); b.root.unmount(); });
   a.peer.destroy();

@@ -42,6 +42,7 @@ import type { FindCitationRequest } from "./ai/find-citation";
 import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
+import { ActivityPanel, ActivityPanelHeader } from "./components/sidebar/ActivityPanel";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -61,6 +62,8 @@ export function App() {
   const [activeDocumentFilename, setActiveDocumentFilename] = useState<string | null>(null);
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
+  const [rightPanelTab, setRightPanelTab]             = useState<"activity" | "assistant">("activity");
+  const [activeEditor, setActiveEditor]               = useState<BlockNoteEditor<any, any, any> | null>(null);
   const [leftSidebarOpen, setLeftSidebarOpen]         = useState(true);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
   const [pendingFindCitationRequest, setPendingFindCitationRequest] = useState<FindCitationRequest | null>(null);
@@ -325,6 +328,7 @@ export function App() {
 
   const handleEditorReady = useCallback((editor: BlockNoteEditor<any, any, any> | null) => {
     editorRef.current = editor;
+    setActiveEditor(editor);
     if (editor && pendingProjectFindReplaceRef.current) {
       pendingProjectFindReplaceRef.current = false;
       requestAnimationFrame(() => {
@@ -829,35 +833,46 @@ export function App() {
               className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
               onMouseDown={handleAIResizeMouseDown}
             />
-            <Suspense fallback={<div style={{ width: aiSidebarWidth }} className="h-full border-l border-border flex items-center justify-center text-sm text-muted-foreground">Loading AI...</div>}>
-              <AISidebar
-                responsePreferences={aiResponsePreferences}
-                onSearchEnabledChange={setSearchEnabled}
-                onThinkingLevelChange={setThinkingLevel}
-                project={activeProject}
-                ollamaStatus={ollamaStatus}
-                appSettings={appSettings}
-                editor={editorRef.current}
-                activeDocumentName={activeFile?.kind === "document" ? activeFile.name : null}
-                getActiveDocumentContext={() => editorGroupRef.current?.getActiveDocumentContext()}
-                onClose={() => setAiSidebarOpen(false)}
-                width={aiSidebarWidth}
-                deepenRequest={pendingDeepenRequest}
-                onDeepenRequestConsumed={(requestId) => {
-                  setPendingDeepenRequest((current) =>
-                    current?.id === requestId ? null : current,
-                  );
-                }}
-                onDeepenResult={handleDeepenResult}
-                findCitationRequest={pendingFindCitationRequest}
-                onFindCitationRequestConsumed={(requestId) => {
-                  setPendingFindCitationRequest((current) =>
-                    current?.id === requestId ? null : current,
-                  );
-                }}
-                onOpenProjectSource={handleOpenProjectSource}
-              />
-            </Suspense>
+            <div className="flex h-full flex-shrink-0 flex-col border-l border-border bg-background" style={{ width: aiSidebarWidth }}>
+              <ActivityPanelHeader tab={rightPanelTab} onTab={setRightPanelTab} onClose={() => setAiSidebarOpen(false)} />
+              <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "activity" ? "flex" : "none" }}>
+                <ActivityPanel
+                  editor={activeEditor}
+                  documentName={activeFile?.kind === "document" ? activeFile.name : null}
+                />
+              </div>
+              <div className="flex min-h-0 flex-1 [&>*]:!border-l-0" style={{ display: rightPanelTab === "assistant" ? "flex" : "none" }}>
+              <Suspense fallback={<div style={{ width: aiSidebarWidth }} className="h-full border-l border-border flex items-center justify-center text-sm text-muted-foreground">Loading AI...</div>}>
+                <AISidebar
+                  responsePreferences={aiResponsePreferences}
+                  onSearchEnabledChange={setSearchEnabled}
+                  onThinkingLevelChange={setThinkingLevel}
+                  project={activeProject}
+                  ollamaStatus={ollamaStatus}
+                  appSettings={appSettings}
+                  editor={editorRef.current}
+                  activeDocumentName={activeFile?.kind === "document" ? activeFile.name : null}
+                  getActiveDocumentContext={() => editorGroupRef.current?.getActiveDocumentContext()}
+                  onClose={() => setAiSidebarOpen(false)}
+                  width={aiSidebarWidth}
+                  deepenRequest={pendingDeepenRequest}
+                  onDeepenRequestConsumed={(requestId) => {
+                    setPendingDeepenRequest((current) =>
+                      current?.id === requestId ? null : current,
+                    );
+                  }}
+                  onDeepenResult={handleDeepenResult}
+                  findCitationRequest={pendingFindCitationRequest}
+                  onFindCitationRequestConsumed={(requestId) => {
+                    setPendingFindCitationRequest((current) =>
+                      current?.id === requestId ? null : current,
+                    );
+                  }}
+                  onOpenProjectSource={handleOpenProjectSource}
+                />
+              </Suspense>
+              </div>
+            </div>
           </>
         )}
       </div>
