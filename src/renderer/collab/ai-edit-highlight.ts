@@ -40,3 +40,38 @@ export const AIEditHighlightExtension = createExtension(({ options }: ExtensionO
     })],
   } as const;
 });
+
+const zoneKey = new PluginKey<DecorationSet>("scholarpen-ai-zone-badge");
+const ZONE_BADGE: Record<string, string> = { observe: "AI: observe", suggest: "AI: suggest", edit: "AI drafts" };
+
+/** Labels section headings with the AI's trust level for that work zone. */
+export const AIZoneBadgeExtension = createExtension(({ options }: ExtensionOptions<{ zones: Y.Map<{ trust: string }> }>) => {
+  const build = (doc: Parameters<typeof DecorationSet.create>[0]) => {
+    const decorations: Decoration[] = [];
+    doc.descendants((node, pos) => {
+      if (node.type.name !== "blockContainer") return true;
+      const label = ZONE_BADGE[options.zones.get(node.attrs.id)?.trust ?? ""];
+      if (label && node.firstChild?.type.name === "heading") {
+        decorations.push(Decoration.node(pos, pos + node.nodeSize, { "data-ai-zone": label }));
+      }
+      return false;
+    });
+    return DecorationSet.create(doc, decorations);
+  };
+  return {
+    key: "aiZoneBadge",
+    prosemirrorPlugins: [new Plugin<DecorationSet>({
+      key: zoneKey,
+      state: {
+        init: (_, state) => build(state.doc),
+        apply: (tr, previous) => tr.docChanged || tr.getMeta(zoneKey) ? build(tr.doc) : previous,
+      },
+      props: { decorations: (state) => zoneKey.getState(state) },
+      view: (view) => {
+        const refresh = () => { if (!view.isDestroyed) view.dispatch(view.state.tr.setMeta(zoneKey, true)); };
+        options.zones.observe(refresh);
+        return { destroy: () => options.zones.unobserve(refresh) };
+      },
+    })],
+  } as const;
+});

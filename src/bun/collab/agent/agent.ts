@@ -398,7 +398,9 @@ function summarize(reply: string, outcomes: EditOutcome[]): { text: string; meta
   }
 
   if (conflicts.length > 0) {
-    return { text: lines.join("\n\n"), meta: { assignee: "me", status: "proposed", statusNote: "Proposal only — the passage changed while the AI worked." } };
+    const observed = conflicts.every((conflict) => conflict.reason.includes("Observe"));
+    return { text: lines.join("\n\n"), meta: { assignee: "me", status: "proposed",
+      statusNote: observed ? "Proposal only — this section is set to Observe." : "Proposal only — the passage changed while the AI worked." } };
   }
   if (applied.length > 0) {
     return { text: lines.join("\n\n"), meta: { assignee: "me", status: "proposed", statusNote: undefined } };

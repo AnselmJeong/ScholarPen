@@ -69,7 +69,8 @@ import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../..
 import { reconcileBlocks } from "../../collab/reconcile";
 import { setEditorCollab } from "../../collab/editor-collab";
 import { acceptedDocument } from "../../collab/suggestions";
-import { AIEditHighlightExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
+import { AIEditHighlightExtension, AIZoneBadgeExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
+import { ZONES_MAP } from "../../../shared/collab/zones";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -228,6 +229,7 @@ function CollabEditorArea({
     extensions: [
       CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers }),
       AIEditHighlightExtension({ edits: peer.ydoc.getMap(AI_EDITS_MAP) }),
+      AIZoneBadgeExtension({ zones: peer.ydoc.getMap(ZONES_MAP) }),
       AISelectionTargetExtension(),
       AIExtension({
         transport: ollamaStatus.connected

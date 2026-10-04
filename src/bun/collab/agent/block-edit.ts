@@ -20,8 +20,8 @@ import {
 } from "./doc-model";
 import { diffHunks, isMinorEdit, mergeText, type Hunk } from "./text-diff";
 
-/** How an AI edit lands in the document. */
-export type EditMode = "suggest" | "direct" | "auto";
+/** How an AI edit lands in the document ("observe": not at all, proposals only). */
+export type EditMode = "observe" | "suggest" | "direct" | "auto";
 
 /** A block as the agent read it before calling the model. */
 export interface BlockBase {
@@ -93,6 +93,9 @@ export function applyBlockRewrite(
 ): EditOutcome {
   const preview = protectedRewritePreview(response, base.protection);
   if (!hasProtectedTextChanges(base.protection, response)) return { kind: "unchanged" };
+  if (mode === "observe") {
+    return { kind: "conflict", reason: "This section is set to Observe, so I only propose changes.", preview };
+  }
   const aiTexts = rewrittenTexts(base, response, session.schema);
 
   const doc = readDoc(session);
@@ -125,7 +128,7 @@ export function applyBlockRewrite(
   if (hunksByNode.every((hunks) => hunks.length === 0)) return { kind: "unchanged" };
 
   const minor = hunksByNode.every((hunks, index) => hunks.length === 0 || isMinorEdit(nodes[index].text, hunks));
-  const effective: "suggest" | "direct" = mode === "auto" ? (minor ? "direct" : "suggest") : mode;
+  const effective: "suggest" | "direct" = mode === "auto" ? (minor ? "direct" : "suggest") : mode === "direct" ? "direct" : "suggest";
 
   const state = EditorState.create({ schema: session.schema, doc });
   let tr = state.tr;

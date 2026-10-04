@@ -163,6 +163,7 @@ type BunRequests = RPCSchema<{
     collabUndoAI: { params: { docKey: string }; response: boolean };
     collabSetAgentPaused: { params: { paused: boolean }; response: void };
     collabReviewSection: { params: { docKey: string; blockId: string }; response: void };
+    collabDraftSection: { params: { docKey: string; blockId: string }; response: void };
   };
   messages: {
     aiChunk: { content: string };

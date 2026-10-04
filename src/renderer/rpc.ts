@@ -75,6 +75,7 @@ const strictRpcMethods = new Set([
   "listProviderModels",
   "rebuildProjectSourcesIndex",
   "collabReviewSection",
+  "collabDraftSection",
   "collabUndoAI",
 ]);
 
@@ -501,4 +502,5 @@ export const rpc = {
   collabUndoAI: (docKey: string) => call<boolean>("collabUndoAI", { docKey }),
   collabSetAgentPaused: (paused: boolean) => call<void>("collabSetAgentPaused", { paused }),
   collabReviewSection: (docKey: string, blockId: string) => call<void>("collabReviewSection", { docKey, blockId }),
+  collabDraftSection: (docKey: string, blockId: string) => call<void>("collabDraftSection", { docKey, blockId }),
 };

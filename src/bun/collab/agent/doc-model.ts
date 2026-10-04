@@ -1,5 +1,6 @@
 import * as Y from "yjs";
 import type { Node as PMNode } from "prosemirror-model";
+import { EditorState } from "prosemirror-state";
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from "y-prosemirror";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 import type { CollabSession } from "../registry";
@@ -179,4 +180,16 @@ export function blockCursor(session: CollabSession, blockId: string) {
     anchor: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(texts[0], 0)),
     head: Y.relativePositionToJSON(Y.createRelativePositionFromTypeIndex(last, last.length)),
   };
+}
+
+/** Adds a thread's comment mark over [from, to) inside a block (the whole block text by default). */
+export function anchorThread(session: CollabSession, blockId: string, threadId: string, origin: unknown, from?: number, to?: number) {
+  const doc = readDoc(session);
+  const block = findBlock(doc, blockId);
+  if (!block) return;
+  const content = blockContent(block);
+  const state = EditorState.create({ schema: session.schema, doc });
+  const tr = state.tr.addMark(from ?? content.from, to ?? content.to,
+    session.schema.marks.comment.create({ threadId, orphan: false }));
+  writeBlock(session, tr.doc.nodeAt(block.pos)!, origin);
 }

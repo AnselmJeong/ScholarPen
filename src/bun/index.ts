@@ -28,6 +28,7 @@ import { CollabRegistry } from "./collab/registry";
 import { createFileCollabStorage } from "./collab/storage";
 import { CollabAgent } from "./collab/agent/agent";
 import { Reviewer } from "./collab/agent/reviewer";
+import { enqueueDraft, zoneEditMode } from "./collab/agent/zones";
 import { parseBibtexCitekeys } from "../shared/bibtex-utils";
 import { completeAgentModel } from "./agent/providers";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
@@ -92,6 +93,8 @@ async function completeWithSettings(messages: Parameters<typeof completeAgentMod
 const collabAgent = new CollabAgent(collabRegistry, {
   complete: completeWithSettings,
   onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
+  // Each section's work zone decides whether AI edits are proposals, suggestions or direct.
+  editModeFor: zoneEditMode,
 });
 // …and reviews sections the author has finished, leaving comments.
 const collabReviewer = new Reviewer(collabAgent, {
@@ -571,6 +574,9 @@ async function main() {
         },
         collabReviewSection: ({ docKey, blockId }) => {
           collabReviewer.reviewSection(docKey, blockId);
+        },
+        collabDraftSection: ({ docKey, blockId }) => {
+          enqueueDraft(collabAgent, docKey, blockId, completeWithSettings);
         },
         collabSetAgentPaused: ({ paused }) => {
           collabAgent.setPaused(paused);

@@ -1,4 +1,3 @@
-import { EditorState } from "prosemirror-state";
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import { AI_USER_ID, createThread, readThreads, type ThreadMeta } from "../../../shared/collab/threads";
@@ -12,13 +11,13 @@ import {
 import type { CollabSession } from "../registry";
 import { AI_META_ORIGIN, type Attachment, type CollabAgent } from "./agent";
 import {
+  anchorThread,
   blockContent,
   findBlock,
   hasInlineContent,
   readDoc,
   readableText,
   sectionOf,
-  writeBlock,
   type BlockRef,
 } from "./doc-model";
 import { clip } from "./prompts";
@@ -269,7 +268,7 @@ export class Reviewer {
       };
       session.ydoc.transact(() => {
         const threadId = createThread(threads, AI_USER_ID, finding.comment, meta);
-        anchorThread(session, block, range.from, range.to, threadId);
+        anchorThread(session, block.id, threadId, AI_META_ORIGIN, range.from, range.to);
       }, AI_META_ORIGIN);
       doc = readDoc(session);
       existing.push(...readThreads(threads).filter((thread) => thread.meta.fingerprint === fingerprint));
@@ -283,15 +282,6 @@ export class Reviewer {
       reviewMap.set("sections", sections);
     }, AI_META_ORIGIN);
   }
-}
-
-function anchorThread(session: CollabSession, block: BlockRef, from: number, to: number, threadId: string) {
-  const doc = readDoc(session);
-  const current = findBlock(doc, block.id);
-  if (!current) return;
-  const state = EditorState.create({ schema: session.schema, doc });
-  const tr = state.tr.addMark(from, to, session.schema.marks.comment.create({ threadId, orphan: false }));
-  writeBlock(session, tr.doc.nodeAt(current.pos)!, AI_META_ORIGIN);
 }
 
 function flatten(block: BlockRef): BlockRef[] {

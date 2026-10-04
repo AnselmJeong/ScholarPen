@@ -376,3 +376,19 @@ body {
   box-shadow: inset 2px 0 0 rgba(124, 58, 237, 0.55);
   padding-left: 6px;
 }
+
+/* Section headings carry the AI work-zone agreement as a small badge. */
+.bn-editor .bn-block[data-ai-zone] { position: relative; }
+.bn-editor .bn-block[data-ai-zone]::after {
+  content: attr(data-ai-zone);
+  position: absolute;
+  right: 0;
+  top: 0.4em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #6d28d9;
+  background: rgba(124, 58, 237, 0.1);
+  pointer-events: none;
+}
