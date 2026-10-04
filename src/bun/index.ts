@@ -26,6 +26,9 @@ import { figureMimeType } from "../shared/figure-files";
 import type { CollabUpdateMessage } from "../shared/collab/protocol";
 import { CollabRegistry } from "./collab/registry";
 import { createFileCollabStorage } from "./collab/storage";
+import { CollabAgent } from "./collab/agent/agent";
+import { completeAgentModel } from "./agent/providers";
+import type { AgentActivityMessage } from "../shared/collab/agent-types";
 
 
 function buildSubprocessEnv(): Record<string, string> {
@@ -69,6 +72,32 @@ const collabRegistry = new CollabRegistry(createFileCollabStorage(fileSystem), {
   update: (message) => sendCollabUpdate?.(message),
   awareness: (message) => sendCollabAwareness?.(message),
 });
+let sendCollabActivity: ((payload: AgentActivityMessage) => void) | null = null;
+
+// The AI co-author: a Bun-side peer that answers comment threads with edits.
+const collabAgent = new CollabAgent(collabRegistry, {
+  complete: async (messages, signal) => {
+    const settings = await fileSystem.getSettings();
+    return completeAgentModel({
+      provider: settings.sidebarAgentProvider,
+      model: settings.sidebarAgentModel,
+      messages,
+      maxTokens: 4096,
+      temperature: 0.2,
+      signal,
+    }, settings);
+  },
+  onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
+});
+
+function collabAgentStatus(docKey: string): AgentActivityMessage {
+  return {
+    docKey,
+    jobs: collabAgent.jobs(docKey),
+    paused: collabAgent.isPaused(),
+    canUndo: collabAgent.canUndo(docKey),
+  };
+}
 
 // Tracks the in-flight Ollama stream so `abortAiStream` can cancel it.
 let activeAiAbortController: AbortController | null = null;
@@ -522,6 +551,16 @@ async function main() {
         collabPush: ({ docKey, peerId, update }) => collabRegistry.push(docKey, peerId, update),
         collabAwareness: ({ docKey, peerId, update }) => collabRegistry.pushAwareness(docKey, peerId, update),
         collabClose: ({ docKey, peerId }) => collabRegistry.close(docKey, peerId),
+        collabAgentStatus: ({ docKey }) => collabAgentStatus(docKey),
+        collabUndoAI: ({ docKey }) => {
+          const undone = collabAgent.undoLast(docKey);
+          sendCollabActivity?.(collabAgentStatus(docKey));
+          return undone;
+        },
+        collabSetAgentPaused: ({ paused }) => {
+          collabAgent.setPaused(paused);
+          for (const session of collabRegistry.list()) sendCollabActivity?.(collabAgentStatus(session.docKey));
+        },
 
         // Proxy Ollama chat to the renderer via aiChunk messages.
         // Fire-and-forget: return immediately so Electrobun can flush outbound
@@ -636,6 +675,7 @@ async function main() {
   sendAgentChunk = (payload) => win.webview.rpc?.send.agentChunk(payload);
   sendCollabUpdate = (payload) => win.webview.rpc?.send.collabUpdate(payload);
   sendCollabAwareness = (payload) => win.webview.rpc?.send.collabAwareness(payload);
+  sendCollabActivity = (payload) => win.webview.rpc?.send.collabActivity(payload);
   sendOllamaProxyChunk = (payload) => win.webview.rpc?.send.ollamaProxyChunk(payload);
   sendBibliographyValidationProgress = (payload) =>
     win.webview.rpc?.send.bibliographyValidationProgress(payload);

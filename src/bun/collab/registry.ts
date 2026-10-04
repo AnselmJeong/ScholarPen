@@ -21,6 +21,8 @@ export interface CollabMeta {
   /** Hash of the JSON file the last time an editor peer saved it. */
   jsonHash: string | null;
   updatedAt: number;
+  /** When an editor last wrote the JSON snapshot. */
+  jsonSavedAt?: number;
 }
 
 export interface CollabStorage {
@@ -128,6 +130,7 @@ export class CollabRegistry {
         ? toBase64(encodeAwarenessUpdate(session.awareness, otherClients))
         : null,
       bootstrap,
+      snapshotStale: bootstrap === "none" && session.meta.updatedAt > (session.meta.jsonSavedAt ?? 0) + 2000,
     };
   }
 
@@ -138,6 +141,7 @@ export class CollabRegistry {
     if (session.seeding?.peerId === peerId) {
       // The seeded Y.Doc now mirrors that JSON file.
       session.meta.jsonHash = session.seeding.jsonHash;
+      session.meta.jsonSavedAt = Date.now();
       session.seeding.resolve();
       session.seeding = null;
     }
@@ -168,6 +172,7 @@ export class CollabRegistry {
     const session = this.sessions.get(collabDocKey(projectPath, filename));
     if (session) {
       session.meta.jsonHash = jsonHash;
+      session.meta.jsonSavedAt = Date.now();
       this.schedulePersist(session);
       return;
     }
@@ -176,6 +181,7 @@ export class CollabRegistry {
     await this.storage.write(projectPath, filename, stored.state, {
       updatedAt: stored.meta?.updatedAt ?? Date.now(),
       jsonHash,
+      jsonSavedAt: Date.now(),
     });
   }
 

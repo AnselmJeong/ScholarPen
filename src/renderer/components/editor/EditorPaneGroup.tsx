@@ -11,6 +11,7 @@ import React, {
   useImperativeHandle,
 } from "react";
 import { EditorArea } from "./EditorArea";
+import { acceptedDocument } from "../../collab/suggestions";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import { PaneToggle } from "./PaneToggle";
@@ -168,7 +169,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         if (!editor) continue;
         snapshots.set(
           tab.file.path,
-          JSON.parse(JSON.stringify(editor.document)) as unknown[],
+          JSON.parse(JSON.stringify(acceptedDocument(editor))) as unknown[],
         );
       }
       return snapshots;
@@ -249,7 +250,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
         if (!tab || tab.file.kind !== "document") return undefined;
         const editor = editorMapRef.current.get(tab.id);
-        return editor ? snapshotActiveDocument(tab.file.path, editor.document) : undefined;
+        return editor ? snapshotActiveDocument(tab.file.path, acceptedDocument(editor)) : undefined;
       },
 
       getDocumentSnapshot(filePath: string) {
@@ -261,7 +262,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         if (!tab) return null;
         const editor = editorMapRef.current.get(tab.id);
         if (!editor) return null;
-        return JSON.parse(JSON.stringify(editor.document)) as unknown[];
+        return JSON.parse(JSON.stringify(acceptedDocument(editor))) as unknown[];
       },
 
       openProjectFindReplace() {

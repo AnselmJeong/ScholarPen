@@ -368,3 +368,11 @@ body {
   .editor-breadcrumb > span:first-child { display: none; }
   .editor-breadcrumb > span:nth-child(2) { display: none; }
 }
+
+/* ── AI co-author ───────────────────────────────────────────────────────── */
+/* Blocks the AI changed directly (not as a suggestion) carry a violet gutter. */
+.bn-editor .sp-ai-edited > .bn-block > .bn-block-content,
+.bn-editor .sp-ai-edited > .bn-block-content {
+  box-shadow: inset 2px 0 0 rgba(124, 58, 237, 0.55);
+  padding-left: 6px;
+}

@@ -12,6 +12,7 @@ import {
   type ThreadStatus,
 } from "../../../shared/collab/threads";
 import { getEditorCollab } from "../../collab/editor-collab";
+import { AIActivitySection } from "./AIActivitySection";
 
 type Filter = "open" | "ai" | "mine" | "resolved";
 
@@ -112,6 +113,7 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <AIActivitySection editor={editor} />
       {children}
       <div className="flex items-center gap-1 border-b border-border px-3 py-2">
         <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />

@@ -20,7 +20,9 @@ afterAll(() => {
   dom.happyDOM.abort();
 });
 
-const jsonFiles = new Map<string, unknown>([["/p/doc.scholarpen.json", [
+const jsonFiles = new Map<string, unknown>([["/p/agent.scholarpen.json", [
+  { id: "claim", type: "paragraph", content: "These data prove the hypothesis beyond doubt." },
+]], ["/p/doc.scholarpen.json", [
   { id: "intro", type: "paragraph", content: "Original introduction." },
   { id: "eq", type: "math", props: { formula: "E = mc^2" } },
   { id: "cite", type: "paragraph", content: [
@@ -82,8 +84,8 @@ async function settle() {
   for (let i = 0; i < 5; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
-async function mountPeer(name: string) {
-  const peer = await openCollabPeer("/p", "doc.scholarpen.json");
+async function mountPeer(name: string, filename = "doc.scholarpen.json") {
+  const peer = await openCollabPeer("/p", filename);
   const editor = BlockNoteEditor.create({
     schema: scholarSchema,
     collaboration: {
@@ -188,4 +190,63 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
   b.peer.destroy();
   await settle();
   expect(registry.get("/p::doc.scholarpen.json")).toBeUndefined();
+});
+
+test("a comment for the AI comes back as a suggestion the author can accept", async () => {
+  const { CollabAgent } = await import("../../bun/collab/agent/agent");
+  const { AIActivitySection } = await import("../components/sidebar/AIActivitySection");
+  const { acceptedDocument } = await import("./suggestions");
+  const agent = new CollabAgent(registry, {
+    complete: async (messages) => {
+      const passage = (messages[1].content as string).match(/<passage_to_edit>\n([\s\S]*?)\n<\/passage_to_edit>/)![1];
+      return `<reply>Hedged the claim.</reply><passage>${passage.replace("prove the hypothesis beyond doubt", "support the hypothesis")}</passage>`;
+    },
+    onActivity: () => {},
+    pollMs: 10,
+    waitForAuthorMs: 200,
+  });
+  const a = await mountPeer("A", "agent.scholarpen.json");
+  await settle();
+
+  const view = a.editor.prosemirrorView!;
+  let from = -1;
+  view.state.doc.descendants((node, pos) => { if (from < 0 && node.isText) from = pos; });
+  await act(async () => {
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, from + 10)));
+    await a.editor.getExtension(CommentsExtension)!.createThread({
+      initialComment: { body: [{ type: "paragraph", content: "@AI too strong" }] },
+    });
+  });
+  // The author's cursor stays in the paragraph; the AI waits briefly (waitForAuthorMs), then proceeds.
+
+  for (let i = 0; i < 100; i++) {
+    await settle();
+    if (readThreads(a.peer.ydoc.getMap("threads"))[0]?.comments.length === 2) break;
+  }
+  const thread = readThreads(a.peer.ydoc.getMap("threads"))[0];
+  expect(thread.comments[1].text).toContain("Hedged the claim.");
+  expect(thread.meta.status).toBe("proposed");
+  // The editor shows a tracked change; the saved snapshot still holds the accepted text.
+  expect(view.dom.querySelector("ins")?.textContent).toContain("support");
+  expect(view.dom.querySelector("del")?.textContent).toContain("prove");
+  expect(JSON.stringify(acceptedDocument(a.editor))).toContain("These data prove the hypothesis beyond doubt.");
+
+  const panel = document.createElement("div");
+  document.body.append(panel);
+  const panelRoot = createRoot(panel);
+  await act(async () => { panelRoot.render(<AIActivitySection editor={a.editor} />); });
+  expect(panel.textContent).toContain("suggested change");
+  const acceptAll = [...panel.querySelectorAll("button")].find((button) => button.textContent === "Accept all")!;
+  await act(async () => { acceptAll.click(); });
+  await settle();
+  expect(view.dom.querySelector("ins")).toBeNull();
+  expect(JSON.stringify(acceptedDocument(a.editor))).toContain("These data support the hypothesis.");
+  // Accepting syncs back to Bun like any other edit.
+  const bunDoc = (await import("../../bun/collab/agent/doc-model")).readDoc(registry.get("/p::agent.scholarpen.json")!);
+  expect(bunDoc.textContent).toContain("These data support the hypothesis.");
+
+  await act(async () => { panelRoot.unmount(); a.root.unmount(); });
+  agent.dispose();
+  a.peer.destroy();
+  await settle();
 });

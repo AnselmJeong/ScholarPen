@@ -85,5 +85,8 @@ export function schemaFromSpecJSON(json: SchemaSpecJSON): Schema {
   }
   const marks: Record<string, MarkSpec> = {};
   for (const [name, spec] of json.marks) marks[name] = { ...spec, attrs: attrsFromJSON(spec.attrs) } as MarkSpec;
+  // Marks unknown to the schema are dropped when Bun reads the Y.Doc and would
+  // then be erased by its writes, so comment anchors must always be known.
+  marks.comment ??= { excludes: "", inclusive: false, attrs: { orphan: { default: false }, threadId: { default: "" } } };
   return new Schema({ topNode: json.topNode, nodes, marks });
 }

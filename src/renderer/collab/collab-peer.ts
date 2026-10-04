@@ -8,7 +8,7 @@ import {
 import { fromBase64, toBase64 } from "lib0/buffer";
 import { BlockNoteEditor } from "@blocknote/core";
 import { blocksToYXmlFragment } from "@blocknote/core/yjs";
-import { DefaultThreadStoreAuth, YjsThreadStore } from "@blocknote/core/comments";
+import { CommentsExtension, DefaultThreadStoreAuth, YjsThreadStore } from "@blocknote/core/comments";
 import { rpc, onCollabAwareness, onCollabUpdate } from "../rpc";
 import { scholarSchema } from "../blocks/schema";
 import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP, type CollabOpenResult } from "../../shared/collab/protocol";
@@ -26,12 +26,24 @@ export interface CollabPeer {
   awareness: Awareness;
   threadStore: YjsThreadStore;
   bootstrap: CollabOpenResult["bootstrap"];
+  snapshotStale: boolean;
   destroy(): void;
 }
 
 let headlessEditor: BlockNoteEditor<any, any, any> | null = null;
-function getHeadlessEditor() {
-  headlessEditor ??= BlockNoteEditor.create({ schema: scholarSchema });
+/**
+ * An unmounted editor with the same schema as the real ones, including the
+ * comment mark that only exists when the comments extension is loaded.
+ */
+export function getHeadlessEditor() {
+  headlessEditor ??= BlockNoteEditor.create({
+    schema: scholarSchema,
+    extensions: [CommentsExtension({
+      threadStore: new YjsThreadStore(LOCAL_USER_ID, new Y.Doc().getMap(COLLAB_THREADS_MAP),
+        new DefaultThreadStoreAuth(LOCAL_USER_ID, "editor")),
+      resolveUsers: async () => [],
+    })],
+  });
   return headlessEditor;
 }
 
@@ -133,6 +145,7 @@ export async function openCollabPeer(projectPath: string, filename: string): Pro
     awareness,
     threadStore,
     bootstrap: opened.bootstrap,
+    snapshotStale: opened.snapshotStale,
     destroy() {
       if (destroyed) return;
       destroyed = true;

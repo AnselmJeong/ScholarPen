@@ -30,6 +30,8 @@ export interface CollabOpenResult {
    * "none": the Y.Doc is authoritative.
    */
   bootstrap: "seed" | "reconcile" | "none";
+  /** The Y.Doc changed after the JSON snapshot was last written (e.g. the AI edited a closed document). */
+  snapshotStale: boolean;
 }
 
 export interface CollabUpdateMessage {

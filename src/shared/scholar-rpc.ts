@@ -2,6 +2,7 @@ import type { CodexStatus } from "./codex";
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
 import type { ReferenceDocument } from "./project-references";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "./collab/protocol";
+import type { AgentActivityMessage } from "./collab/agent-types";
 import type {
   OllamaStatus,
   ProjectInfo,
@@ -158,6 +159,9 @@ type BunRequests = RPCSchema<{
     collabPush: { params: { docKey: string; peerId: string; update: string }; response: void };
     collabAwareness: { params: { docKey: string; peerId: string; update: string }; response: void };
     collabClose: { params: { docKey: string; peerId: string }; response: void };
+    collabAgentStatus: { params: { docKey: string }; response: AgentActivityMessage };
+    collabUndoAI: { params: { docKey: string }; response: boolean };
+    collabSetAgentPaused: { params: { paused: boolean }; response: void };
   };
   messages: {
     aiChunk: { content: string };
@@ -179,6 +183,7 @@ type WebviewRequests = RPCSchema<{
     bibliographyValidationProgress: BibliographyValidationProgress;
     collabUpdate: CollabUpdateMessage;
     collabAwareness: CollabUpdateMessage;
+    collabActivity: AgentActivityMessage;
   };
 }>;
 

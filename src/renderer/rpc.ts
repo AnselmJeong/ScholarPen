@@ -31,6 +31,7 @@ import type {
 } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "../shared/collab/protocol";
+import type { AgentActivityMessage } from "../shared/collab/agent-types";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
@@ -112,6 +113,9 @@ const electrobun = new Electroview({
         collabAwareness: (message) => {
           collabAwarenessListeners.forEach((handler) => handler(message));
         },
+        collabActivity: (message) => {
+          collabActivityListeners.forEach((handler) => handler(message));
+        },
       },
     },
   }),
@@ -131,6 +135,12 @@ const collabAwarenessListeners = new Set<CollabMessageHandler>();
 export function onCollabUpdate(handler: CollabMessageHandler) {
   collabUpdateListeners.add(handler);
   return () => { collabUpdateListeners.delete(handler); };
+}
+
+const collabActivityListeners = new Set<(message: AgentActivityMessage) => void>();
+export function onCollabActivity(handler: (message: AgentActivityMessage) => void) {
+  collabActivityListeners.add(handler);
+  return () => { collabActivityListeners.delete(handler); };
 }
 
 export function onCollabAwareness(handler: CollabMessageHandler) {
@@ -302,7 +312,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
   if (method === "collabOpen") {
     // Browser-only development: no Bun peer, so every editor seeds itself from JSON.
     const params = _args[0] as { projectPath: string; filename: string };
-    return { docKey: `${params.projectPath}::${params.filename}`, state: "AAA=", awareness: null, bootstrap: "seed" };
+    return { docKey: `${params.projectPath}::${params.filename}`, state: "AAA=", awareness: null, bootstrap: "seed", snapshotStale: false };
   }
   return mocks[method] ?? null;
 }
@@ -485,4 +495,7 @@ export const rpc = {
   collabAwareness: (docKey: string, peerId: string, update: string) =>
     call<void>("collabAwareness", { docKey, peerId, update }),
   collabClose: (docKey: string, peerId: string) => call<void>("collabClose", { docKey, peerId }),
+  collabAgentStatus: (docKey: string) => call<AgentActivityMessage>("collabAgentStatus", { docKey }),
+  collabUndoAI: (docKey: string) => call<boolean>("collabUndoAI", { docKey }),
+  collabSetAgentPaused: (paused: boolean) => call<void>("collabSetAgentPaused", { paused }),
 };

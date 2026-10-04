@@ -68,6 +68,8 @@ import { QuartoBlockControls } from "./QuartoBlockControls";
 import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../../collab/collab-peer";
 import { reconcileBlocks } from "../../collab/reconcile";
 import { setEditorCollab } from "../../collab/editor-collab";
+import { acceptedDocument } from "../../collab/suggestions";
+import { AIEditHighlightExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -225,6 +227,7 @@ function CollabEditorArea({
     },
     extensions: [
       CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers }),
+      AIEditHighlightExtension({ edits: peer.ydoc.getMap(AI_EDITS_MAP) }),
       AISelectionTargetExtension(),
       AIExtension({
         transport: ollamaStatus.connected
@@ -293,7 +296,8 @@ function CollabEditorArea({
 
   const readSettledDocumentSnapshot = useCallback(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    return JSON.parse(JSON.stringify(editor.document));
+    // Pending AI suggestions are not part of the saved manuscript until accepted.
+    return JSON.parse(JSON.stringify(acceptedDocument(editor)));
   }, [editor]);
 
   const applyBibtexState = useCallback((bibtex: string) => {
@@ -397,6 +401,11 @@ function CollabEditorArea({
     const loadSeq = ++loadRequestSeqRef.current;
     if (peer.bootstrap !== "reconcile") {
       updateSaveStatus("saved");
+      if (peer.snapshotStale) {
+        // The AI changed this document while it was closed; refresh the JSON snapshot.
+        dirtyRevisionRef.current += 1;
+        void enqueueSave(documentFilename || "manuscript.scholarpen.json", readSettledDocumentSnapshot, dirtyRevisionRef.current);
+      }
       finishDocumentLoad(loadSeq);
       return;
     }
