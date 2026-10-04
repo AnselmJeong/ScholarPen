@@ -136,7 +136,7 @@ test("the AI drafts a section it owns from the author's notes", async () => {
   expect(drafted[0].content.map((part: any) => part.type)).toEqual(["text", "citation", "text"]);
   expect(drafted[0].content[1].props.citekey).toBe("kim2021");
   expect(blocks.find((block) => block.id === "m1")).toBeDefined();
-  const thread = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find((t) => t.meta.agent === "drafter")!;
+  const thread = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find((t) => t.meta.category === "draft")!;
   expect(threadRange(readDoc(session), thread.id)).not.toBeNull();
   expect(agent.undoLast(session.docKey)).toBe(true);
   expect((yDocToBlocks(editor, session.ydoc, "document-store") as any[]).length).toBe(BLOCKS.length);

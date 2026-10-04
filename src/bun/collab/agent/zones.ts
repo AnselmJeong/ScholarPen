@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import { AI_USER_ID, createThread } from "../../../shared/collab/threads";
+import { DEFAULT_PERSONA_ID } from "../../../shared/collab/personas";
 import { ZONES_MAP, zoneOf, type Zone } from "../../../shared/collab/zones";
 import type { CollabSession } from "../registry";
 import { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN, type Attachment, type CollabAgent } from "./agent";
@@ -142,7 +143,7 @@ async function runDraft(
     const threadId = createThread(threads, AI_USER_ID,
       `I drafted ${paragraphs.length} paragraph${paragraphs.length === 1 ? "" : "s"} from your notes. ` +
       "Check the facts and any [TODO] placeholders; reply with @AI to have me revise.",
-      { agent: "drafter", assignee: "me", status: "proposed", blockId: ids[0] });
+      { agent: DEFAULT_PERSONA_ID, assignee: "me", status: "proposed", blockId: ids[0], category: "draft" });
     anchorThread(session, ids[0], threadId, AI_META_ORIGIN);
   }, AI_META_ORIGIN);
 }

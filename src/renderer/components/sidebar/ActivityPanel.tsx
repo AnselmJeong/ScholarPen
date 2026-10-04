@@ -5,7 +5,6 @@ import { BellOff, Bot, Check, CircleDot, MessageSquare, RotateCcw, User, X } fro
 import { cn } from "../../lib/utils";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import {
-  AI_USER_ID,
   readThreads,
   updateThreadMeta,
   type ThreadSnapshot,
@@ -13,6 +12,7 @@ import {
 } from "../../../shared/collab/threads";
 import { getEditorCollab } from "../../collab/editor-collab";
 import { REVIEW_CATEGORY_LABEL, REVIEW_MAP } from "../../../shared/collab/review";
+import { PERSONAS, isAIUser, personaById, personaByUser } from "../../../shared/collab/personas";
 import { AIActivitySection } from "./AIActivitySection";
 import { ZonesSection } from "./ZonesSection";
 
@@ -76,7 +76,7 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
       const status = threadStatus(thread);
       if (filter === "resolved") return status === "resolved";
       if (status === "resolved") return false;
-      if (filter === "ai") return thread.meta.assignee === "ai" || thread.comments[0]?.userId === AI_USER_ID;
+      if (filter === "ai") return thread.meta.assignee === "ai" || isAIUser(thread.comments[0]?.userId);
       if (filter === "mine") return thread.meta.assignee === "me";
       return true;
     });
@@ -87,7 +87,7 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
   const counts = useMemo(() => ({
     open: threads.filter((t) => threadStatus(t) !== "resolved").length,
     ai: threads.filter((t) => threadStatus(t) !== "resolved" &&
-      (t.meta.assignee === "ai" || t.comments[0]?.userId === AI_USER_ID)).length,
+      (t.meta.assignee === "ai" || isAIUser(t.comments[0]?.userId))).length,
     mine: threads.filter((t) => threadStatus(t) !== "resolved" && t.meta.assignee === "me").length,
     resolved: threads.filter((t) => threadStatus(t) === "resolved").length,
   }), [threads]);
@@ -141,7 +141,7 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
         {visible.length === 0 && (
           <p className="p-4 text-xs leading-5 text-muted-foreground">
             {filter === "open"
-              ? "No open threads. Select text and use the comment button. Mention @AI or assign a thread to the AI to have it revise that passage."
+              ? `No open threads. Select text and use the comment button. Mention ${PERSONAS.map((p) => `@${p.handle}`).join(", ")} or use Ask to have an AI revise that passage.`
               : "Nothing here."}
           </p>
         )}
@@ -151,8 +151,9 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
             thread={thread}
             reference={referenceText(thread.id)}
             onSelect={() => editor.getExtension(CommentsExtension)?.selectThread(thread.id)}
-            onAssign={(assignee) => setMeta(thread.id, {
-              assignee, status: "open", statusNote: undefined, ...(assignee === "ai" ? { requestedAt: Date.now() } : {}),
+            onAssign={(assignee, agent) => setMeta(thread.id, {
+              assignee, status: "open", statusNote: undefined,
+              ...(assignee === "ai" ? { requestedAt: Date.now(), agent: agent ?? thread.meta.agent } : {}),
             })}
             onResolve={() => setMeta(thread.id, { status: "resolved" })}
             onMute={thread.meta.category ? () => {
@@ -175,7 +176,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
   thread: ThreadSnapshot;
   reference: string | null;
   onSelect: () => void;
-  onAssign: (assignee: "ai" | "me") => void;
+  onAssign: (assignee: "ai" | "me", agent?: string) => void;
   onResolve: () => void;
   onReopen: () => void;
   /** Resolves an AI review finding and stops the reviewer raising its category. */
@@ -183,7 +184,8 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
 }) {
   const status = threadStatus(thread);
   const first = thread.comments.find((comment) => !comment.deleted);
-  const fromAI = first?.userId === AI_USER_ID;
+  const author = personaByUser(first?.userId);
+  const fromAI = author !== null;
   const replies = thread.comments.filter((comment) => !comment.deleted).length - 1;
   const last = [...thread.comments].reverse().find((comment) => !comment.deleted);
 
@@ -196,8 +198,8 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
       className="group cursor-pointer border-b border-border px-3 py-2.5 hover:bg-muted/50"
     >
       <div className="mb-1 flex items-center gap-1.5 text-[11px]">
-        {fromAI ? <Bot className="h-3 w-3 text-violet-600" /> : <User className="h-3 w-3 text-blue-600" />}
-        <span className="font-medium text-foreground">{fromAI ? "ScholarPen AI" : "You"}</span>
+        {author ? <Bot className="h-3 w-3" style={{ color: author.color }} /> : <User className="h-3 w-3 text-blue-600" />}
+        <span className="font-medium text-foreground">{author ? author.name : "You"}</span>
         {thread.meta.severity && (
           <span className={cn("rounded px-1 text-[10px]",
             thread.meta.severity === "high" ? "bg-red-500/10 text-red-600"
@@ -211,7 +213,8 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
               : status === "resolved" ? "bg-muted text-muted-foreground" : "bg-blue-500/10 text-blue-700")}>
           {status === "in-progress" && <CircleDot className="h-2.5 w-2.5 animate-pulse" />}
           {STATUS_LABEL[status]}
-          {thread.meta.assignee && status !== "resolved" && ` · ${thread.meta.assignee === "ai" ? "AI" : "you"}`}
+          {thread.meta.assignee && status !== "resolved" &&
+            ` · ${thread.meta.assignee === "ai" ? personaById(thread.meta.agent).shortName : "you"}`}
         </span>
       </div>
       {reference && (
@@ -220,7 +223,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
       <p className="line-clamp-3 text-xs leading-5 text-foreground">{first?.text || "(empty comment)"}</p>
       {replies > 0 && last && last !== first && (
         <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
-          <span className="font-medium">{last.userId === AI_USER_ID ? "AI" : "You"}:</span> {last.text}
+          <span className="font-medium">{personaByUser(last.userId)?.shortName ?? "You"}:</span> {last.text}
         </p>
       )}
       {thread.meta.statusNote && status !== "resolved" && (
@@ -232,7 +235,19 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
         ) : (
           <>
             {thread.meta.assignee !== "ai" && (
-              <SmallButton icon={<Bot className="h-3 w-3" />} label="Ask AI" onClick={() => onAssign("ai")} />
+              <>
+                <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${personaById(thread.meta.agent).shortName}`}
+                  onClick={() => onAssign("ai", thread.meta.agent)} />
+                <select
+                  aria-label="Ask another AI persona"
+                  value=""
+                  onChange={(event) => { if (event.target.value) onAssign("ai", event.target.value); }}
+                  className="rounded border border-border bg-background px-1 py-0.5 text-[11px] text-muted-foreground"
+                >
+                  <option value="">Ask…</option>
+                  {PERSONAS.map((persona) => <option key={persona.id} value={persona.id}>{persona.name}</option>)}
+                </select>
+              </>
             )}
             {thread.meta.assignee !== "me" && (
               <SmallButton icon={<User className="h-3 w-3" />} label="I'll handle" onClick={() => onAssign("me")} />

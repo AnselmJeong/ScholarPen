@@ -501,6 +501,7 @@ export const rpc = {
   collabAgentStatus: (docKey: string) => call<AgentActivityMessage>("collabAgentStatus", { docKey }),
   collabUndoAI: (docKey: string) => call<boolean>("collabUndoAI", { docKey }),
   collabSetAgentPaused: (paused: boolean) => call<void>("collabSetAgentPaused", { paused }),
-  collabReviewSection: (docKey: string, blockId: string) => call<void>("collabReviewSection", { docKey, blockId }),
+  collabReviewSection: (docKey: string, blockId: string, personaId?: string) =>
+    call<void>("collabReviewSection", { docKey, blockId, personaId }),
   collabDraftSection: (docKey: string, blockId: string) => call<void>("collabDraftSection", { docKey, blockId }),
 };

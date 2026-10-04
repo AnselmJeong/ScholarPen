@@ -1,12 +1,18 @@
 import * as Y from "yjs";
+import {
+  Awareness,
+  applyAwarenessUpdate,
+  encodeAwarenessUpdate,
+  removeAwarenessStates,
+} from "y-protocols/awareness";
 import { BUN_PEER_ID, COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
+import { DEFAULT_PERSONA_ID, PERSONAS, type Persona } from "../../../shared/collab/personas";
 import type { CollabSession } from "../registry";
 import { blockCursor, yBlockIdOf } from "./doc-model";
 
 /** Blocks a person touched within this window are left alone by the AI. */
 export const RECENT_EDIT_MS = 8_000;
 
-export const AI_PRESENCE = { name: "ScholarPen AI", color: "#7c3aed" };
 
 /** Adding or resolving a comment re-marks text; that is not someone writing there. */
 function isCommentMarkOnly(event: Y.YEvent<any>) {
@@ -23,6 +29,8 @@ function isCommentMarkOnly(event: Y.YEvent<any>) {
  */
 export class PresenceTracker {
   private readonly touched = new Map<string, number>();
+  /** Extra awareness clients so each non-default persona shows its own cursor. */
+  private readonly personaAwareness = new Map<string, Awareness>();
   private readonly observer: (events: Array<Y.YEvent<any>>, transaction: Y.Transaction) => void;
 
   constructor(private readonly session: CollabSession, private readonly now: () => number = Date.now) {
@@ -43,13 +51,24 @@ export class PresenceTracker {
   destroy() {
     this.session.ydoc.getXmlFragment(COLLAB_FRAGMENT).unobserveDeep(this.observer);
     this.release();
+    for (const awareness of this.personaAwareness.values()) {
+      removeAwarenessStates(this.session.awareness, [awareness.clientID], "persona");
+      awareness.destroy();
+    }
+    this.personaAwareness.clear();
+  }
+
+  /** Awareness client ids that belong to AI personas rather than people. */
+  private aiClients() {
+    return new Set([this.session.ydoc.clientID, ...[...this.personaAwareness.values()].map((a) => a.clientID)]);
   }
 
   /** Block ids that hold a person's cursor. */
   cursorBlocks() {
     const ids = new Set<string>();
+    const ai = this.aiClients();
     for (const [clientId, state] of this.session.awareness.getStates()) {
-      if (clientId === this.session.ydoc.clientID) continue;
+      if (ai.has(clientId)) continue;
       const cursor = (state as { cursor?: { anchor?: unknown; head?: unknown } }).cursor;
       for (const position of [cursor?.anchor, cursor?.head]) {
         if (!position) continue;
@@ -79,16 +98,36 @@ export class PresenceTracker {
     return this.touched.get(blockId) ?? 0;
   }
 
-  /** Shows "ScholarPen AI" selecting the block it is working on. */
-  claim(blockId: string, label?: string) {
+  private awarenessFor(persona: Persona) {
+    if (persona.id === DEFAULT_PERSONA_ID) return this.session.awareness;
+    let awareness = this.personaAwareness.get(persona.id);
+    if (!awareness) {
+      awareness = new Awareness(new Y.Doc());
+      awareness.setLocalState(null);
+      const own = awareness;
+      // Relay this persona's presence through the session so editors render it.
+      own.on("update", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
+        const changed = [...added, ...updated, ...removed];
+        if (changed.length) applyAwarenessUpdate(this.session.awareness, encodeAwarenessUpdate(own, changed), `persona:${persona.id}`);
+      });
+      this.personaAwareness.set(persona.id, own);
+    }
+    return awareness;
+  }
+
+  /** Shows the persona selecting the block it is working on. */
+  claim(blockId: string, label?: string, persona: Persona = PERSONAS[0]) {
     const cursor = blockCursor(this.session, blockId);
-    this.session.awareness.setLocalState({
-      user: { ...AI_PRESENCE, name: label ? `${AI_PRESENCE.name} · ${label}` : AI_PRESENCE.name },
+    this.awarenessFor(persona).setLocalState({
+      user: { name: label ? `${persona.name} · ${label}` : persona.name, color: persona.color },
       cursor,
     });
   }
 
-  release() {
-    if (this.session.awareness.getLocalState() !== null) this.session.awareness.setLocalState(null);
+  release(persona?: Persona) {
+    const targets = persona ? [this.awarenessFor(persona)] : [this.session.awareness, ...this.personaAwareness.values()];
+    for (const awareness of targets) {
+      if (awareness.getLocalState() !== null) awareness.setLocalState(null);
+    }
   }
 }

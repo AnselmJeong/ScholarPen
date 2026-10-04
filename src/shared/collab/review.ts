@@ -31,6 +31,15 @@ export const REVIEW_CATEGORY_LABEL: Record<string, string> = {
   logic: "Logic",
   consistency: "Consistency",
   definition: "Definition",
+  statistics: "Statistics",
+  inference: "Inference",
+  reporting: "Reporting",
+  novelty: "Novelty",
+  "alternative-explanation": "Alternative explanation",
+  limitation: "Limitation",
+  generalisation: "Generalisation",
+  literature: "Literature",
+  draft: "Draft",
 };
 
 export function reviewSettingsOf(map: Y.Map<any>): ReviewSettings {

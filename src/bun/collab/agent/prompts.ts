@@ -19,7 +19,7 @@ export interface CommentEditPrompt {
   quoted: string;
   before: string;
   after: string;
-  /** Extra persona instructions (stage 6). */
+  /** Extra guidance from the AI persona answering the thread. */
   persona?: string;
 }
 

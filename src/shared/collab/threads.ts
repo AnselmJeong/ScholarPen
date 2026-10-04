@@ -1,11 +1,13 @@
 import * as Y from "yjs";
+import { DEFAULT_PERSONA_ID, PERSONAS, isAIUser, mentionedPersona, personaById, type Persona } from "./personas";
 
 // Comment threads live in the shared Y.Doc in BlockNote's YjsThreadStore format
 // (see @blocknote/core comments/threadstore/yjs/yjsHelpers). These helpers let
 // Bun read and write that format without loading BlockNote.
 
 export const LOCAL_USER_ID = "me";
-export const AI_USER_ID = "scholarpen-ai";
+/** Comment author id of the default AI persona. */
+export const AI_USER_ID = PERSONAS[0].userId;
 
 export type ThreadAssignee = "ai" | "me";
 export type ThreadStatus = "open" | "in-progress" | "proposed" | "resolved";
@@ -16,7 +18,7 @@ export interface ThreadMeta {
   status?: ThreadStatus;
   /** Human-readable note for the current status, e.g. why the AI downgraded an edit. */
   statusNote?: string;
-  /** Id of the agent persona that opened or owns the thread. */
+  /** Id of the AI persona that opened or owns the thread (see personas.ts). */
   agent?: string;
   /** Review finding category and severity for AI-opened threads. */
   category?: string;
@@ -163,15 +165,19 @@ export function updateThreadMeta(threads: Y.Map<any>, threadId: string, patch: P
 }
 
 /**
- * A thread is the AI's to work on when the author assigned it to the AI, or
- * when the latest comment is the author's and mentions @AI.
+ * The AI persona a thread is waiting on: the thread's persona when the author
+ * assigned it to the AI, or the persona the latest author comment @mentions.
  */
-export function threadWantsAI(thread: ThreadSnapshot) {
-  if (thread.resolved || thread.meta.status === "resolved" || thread.meta.status === "in-progress") return false;
-  if (thread.meta.assignee === "ai") return true;
+export function aiTargetOf(thread: ThreadSnapshot): Persona | null {
+  if (thread.resolved || thread.meta.status === "resolved" || thread.meta.status === "in-progress") return null;
+  if (thread.meta.assignee === "ai") return personaById(thread.meta.agent ?? DEFAULT_PERSONA_ID);
   const last = [...thread.comments].reverse().find((comment) => !comment.deleted);
-  if (!last || last.userId === AI_USER_ID) return false;
-  return /(^|\s)@ai\b/i.test(last.text);
+  if (!last || isAIUser(last.userId)) return null;
+  return mentionedPersona(last.text);
+}
+
+export function threadWantsAI(thread: ThreadSnapshot) {
+  return aiTargetOf(thread) !== null;
 }
 
 /** Identifies one request to the AI, so each is processed once. */

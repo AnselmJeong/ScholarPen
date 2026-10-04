@@ -2,16 +2,16 @@ import * as Y from "yjs";
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import {
-  AI_USER_ID,
   addThreadComment,
   aiRequestKey,
+  aiTargetOf,
   readThreads,
-  threadWantsAI,
   updateThreadMeta,
   type ThreadMeta,
   type ThreadSnapshot,
 } from "../../../shared/collab/threads";
 import type { AgentJobView } from "../../../shared/collab/agent-types";
+import { isAIUser, PERSONAS, type Persona } from "../../../shared/collab/personas";
 import type { CollabRegistry, CollabSession } from "../registry";
 import { applyBlockRewrite, captureBlock, type BlockBase, type EditMode, type EditOutcome } from "./block-edit";
 import {
@@ -169,7 +169,8 @@ export class CollabAgent {
   private scanThreads(attachment: Attachment) {
     const threads = readThreads(attachment.session.ydoc.getMap(COLLAB_THREADS_MAP));
     for (const thread of threads) {
-      if (!threadWantsAI(thread)) continue;
+      const persona = aiTargetOf(thread);
+      if (!persona) continue;
       const last = [...thread.comments].reverse().find((comment) => !comment.deleted)!;
       const key = `${attachment.session.docKey}:${aiRequestKey(thread)}`;
       if (this.seen.has(key)) continue;
@@ -177,6 +178,7 @@ export class CollabAgent {
       this.enqueue(attachment, {
         kind: "comment",
         threadId: thread.id,
+        agent: persona.id,
         label: clip(last.text.replace(/\s+/g, " "), 80, "start"),
       }, (job, att, signal) => this.runCommentJob(job, att, thread.id, signal));
     }
@@ -185,7 +187,7 @@ export class CollabAgent {
   /** Adds a job for a document; jobs run one at a time across all documents. */
   enqueue(
     attachment: Attachment,
-    view: Pick<AgentJobView, "kind" | "label" | "threadId" | "blockId">,
+    view: Pick<AgentJobView, "kind" | "label" | "threadId" | "blockId" | "agent">,
     run: Job["run"],
   ) {
     const job: Job = {
@@ -263,10 +265,10 @@ export class CollabAgent {
     this.update(job, { state: "working", detail: undefined });
   }
 
-  private setThread(attachment: Attachment, threadId: string, patch: Partial<ThreadMeta>, reply?: string) {
+  private setThread(attachment: Attachment, threadId: string, patch: Partial<ThreadMeta>, reply?: string, persona: Persona = PERSONAS[0]) {
     const threads = attachment.session.ydoc.getMap(COLLAB_THREADS_MAP);
     attachment.session.ydoc.transact(() => {
-      if (reply) addThreadComment(threads, threadId, AI_USER_ID, reply);
+      if (reply) addThreadComment(threads, threadId, persona.userId, reply);
       updateThreadMeta(threads, threadId, patch);
     }, AI_META_ORIGIN);
   }
@@ -285,37 +287,39 @@ export class CollabAgent {
   private async runCommentJob(job: Job, attachment: Attachment, threadId: string, signal: AbortSignal) {
     const { session } = attachment;
     const thread = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find((item) => item.id === threadId);
-    if (!thread || !threadWantsAI(thread)) return;
-    this.setThread(attachment, threadId, { assignee: "ai", status: "in-progress", statusNote: undefined });
+    const persona = thread ? aiTargetOf(thread) : null;
+    if (!thread || !persona) return;
+    const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text, persona);
+    reply({ assignee: "ai", agent: persona.id, status: "in-progress", statusNote: undefined });
 
     let doc = readDoc(session);
     const range = threadRange(doc, threadId);
     if (!range) {
-      this.setThread(attachment, threadId, { assignee: "me", status: "open" },
+      reply({ assignee: "me", status: "open" },
         "I can't find the commented passage anymore. Re-select the text and comment again.");
       return;
     }
     const blocks = blocksInRange(doc, range.from, range.to).filter(hasInlineContent);
     if (blocks.length === 0) {
-      this.setThread(attachment, threadId, { assignee: "me", status: "open" },
+      reply({ assignee: "me", status: "open" },
         "This passage has no editable prose (it is an equation, figure or empty block), so I left it unchanged.");
       return;
     }
     if (blocks.length > MAX_BLOCKS_PER_THREAD) {
-      this.setThread(attachment, threadId, { assignee: "me", status: "open" },
+      reply({ assignee: "me", status: "open" },
         `This comment spans ${blocks.length} paragraphs. Comment on ${MAX_BLOCKS_PER_THREAD} or fewer at a time so I can edit them safely.`);
       return;
     }
     this.update(job, { blockId: blocks[0].id });
 
     await this.waitForAuthor(job, attachment, blocks.map((block) => block.id), signal);
-    attachment.presence.claim(blocks[0].id, "editing");
+    attachment.presence.claim(blocks[0].id, "editing", persona);
 
     // Read the passage now, after waiting: this is the base the stale check compares against.
     doc = readDoc(session);
     const fresh = blocks.map((block) => findBlock(doc, block.id));
     if (fresh.some((block) => !block)) {
-      this.setThread(attachment, threadId, { assignee: "me", status: "open" },
+      reply({ assignee: "me", status: "open" },
         "Part of the commented passage was deleted before I started, so I left it alone.");
       return;
     }
@@ -328,6 +332,7 @@ export class CollabAgent {
       quoted: readableText(doc, range.from, range.to),
       before: clip(readableText(doc, 0, first.from), 6000, "end"),
       after: clip(readableText(doc, last.to, doc.content.size), 3000, "start"),
+      persona: persona.editGuidance,
     }), signal);
     if (signal.aborted) throw new Error("Cancelled");
 
@@ -342,7 +347,7 @@ export class CollabAgent {
       }
     }
     const { text, meta } = summarize(parsed.reply, outcomes);
-    this.setThread(attachment, threadId, meta, text);
+    reply(meta, text);
     this.update(job, { detail: meta.statusNote ?? undefined });
   }
 }
@@ -350,7 +355,7 @@ export class CollabAgent {
 function conversationOf(thread: ThreadSnapshot) {
   return thread.comments
     .filter((comment) => !comment.deleted)
-    .map((comment) => ({ author: comment.userId === AI_USER_ID ? "ai" as const : "author" as const, text: comment.text }));
+    .map((comment) => ({ author: isAIUser(comment.userId) ? "ai" as const : "author" as const, text: comment.text }));
 }
 
 /** Several blocks are sent as one passage separated by a protected block marker. */
