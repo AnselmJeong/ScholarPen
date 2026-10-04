@@ -27,6 +27,8 @@ import type { CollabUpdateMessage } from "../shared/collab/protocol";
 import { CollabRegistry } from "./collab/registry";
 import { createFileCollabStorage } from "./collab/storage";
 import { CollabAgent } from "./collab/agent/agent";
+import { Reviewer } from "./collab/agent/reviewer";
+import { parseBibtexCitekeys } from "../shared/bibtex-utils";
 import { completeAgentModel } from "./agent/providers";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
 
@@ -74,20 +76,30 @@ const collabRegistry = new CollabRegistry(createFileCollabStorage(fileSystem), {
 });
 let sendCollabActivity: ((payload: AgentActivityMessage) => void) | null = null;
 
-// The AI co-author: a Bun-side peer that answers comment threads with edits.
+async function completeWithSettings(messages: Parameters<typeof completeAgentModel>[0]["messages"], signal: AbortSignal) {
+  const settings = await fileSystem.getSettings();
+  return completeAgentModel({
+    provider: settings.sidebarAgentProvider,
+    model: settings.sidebarAgentModel,
+    messages,
+    maxTokens: 4096,
+    temperature: 0.2,
+    signal,
+  }, settings);
+}
+
+// The AI co-author: a Bun-side peer that answers comment threads with edits…
 const collabAgent = new CollabAgent(collabRegistry, {
-  complete: async (messages, signal) => {
-    const settings = await fileSystem.getSettings();
-    return completeAgentModel({
-      provider: settings.sidebarAgentProvider,
-      model: settings.sidebarAgentModel,
-      messages,
-      maxTokens: 4096,
-      temperature: 0.2,
-      signal,
-    }, settings);
-  },
+  complete: completeWithSettings,
   onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
+});
+// …and reviews sections the author has finished, leaving comments.
+const collabReviewer = new Reviewer(collabAgent, {
+  complete: completeWithSettings,
+  citekeys: async (projectPath) => {
+    const bibtex = await fileSystem.loadBibtex(projectPath).catch(() => "");
+    return bibtex.trim() ? new Set(parseBibtexCitekeys(bibtex)) : null;
+  },
 });
 
 function collabAgentStatus(docKey: string): AgentActivityMessage {
@@ -556,6 +568,9 @@ async function main() {
           const undone = collabAgent.undoLast(docKey);
           sendCollabActivity?.(collabAgentStatus(docKey));
           return undone;
+        },
+        collabReviewSection: ({ docKey, blockId }) => {
+          collabReviewer.reviewSection(docKey, blockId);
         },
         collabSetAgentPaused: ({ paused }) => {
           collabAgent.setPaused(paused);

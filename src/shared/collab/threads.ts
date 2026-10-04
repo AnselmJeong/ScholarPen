@@ -25,6 +25,10 @@ export interface ThreadMeta {
   blockId?: string;
   /** User feedback: hide this kind of finding in future reviews. */
   muted?: boolean;
+  /** Identity of a review finding, so a dismissed finding is not raised again. */
+  fingerprint?: string;
+  /** Set when the author hands the thread to the AI, so a repeated request is a new job. */
+  requestedAt?: number;
 }
 
 export interface ThreadComment {
@@ -158,11 +162,20 @@ export function updateThreadMeta(threads: Y.Map<any>, threadId: string, patch: P
   }
 }
 
-/** A thread is the AI's to work on when assigned to it or when the latest human comment mentions @AI. */
+/**
+ * A thread is the AI's to work on when the author assigned it to the AI, or
+ * when the latest comment is the author's and mentions @AI.
+ */
 export function threadWantsAI(thread: ThreadSnapshot) {
-  if (thread.resolved || thread.meta.status === "resolved") return false;
+  if (thread.resolved || thread.meta.status === "resolved" || thread.meta.status === "in-progress") return false;
+  if (thread.meta.assignee === "ai") return true;
   const last = [...thread.comments].reverse().find((comment) => !comment.deleted);
   if (!last || last.userId === AI_USER_ID) return false;
-  if (thread.meta.assignee === "ai") return true;
   return /(^|\s)@ai\b/i.test(last.text);
+}
+
+/** Identifies one request to the AI, so each is processed once. */
+export function aiRequestKey(thread: ThreadSnapshot) {
+  const last = [...thread.comments].reverse().find((comment) => !comment.deleted);
+  return `${thread.id}:${last?.id ?? ""}:${thread.meta.requestedAt ?? ""}`;
 }

@@ -4,6 +4,7 @@ import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP } from "../../../shared/collab/prot
 import {
   AI_USER_ID,
   addThreadComment,
+  aiRequestKey,
   readThreads,
   threadWantsAI,
   updateThreadMeta,
@@ -25,8 +26,10 @@ import {
 import { PresenceTracker } from "./presence";
 import { buildCommentEditMessages, clip, parseCommentEditResponse } from "./prompts";
 
-/** Yjs transaction origin of every AI write; the undo manager tracks it. */
+/** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
+/** Origin of AI bookkeeping (comment anchors, review state) that "undo AI edit" must not revert. */
+export const AI_META_ORIGIN = "ai-meta";
 export const AI_EDITS_MAP = "aiEdits";
 
 export interface CollabAgentDeps {
@@ -40,7 +43,7 @@ export interface CollabAgentDeps {
   editModeFor?: (session: CollabSession, blockId: string) => EditMode;
 }
 
-interface Attachment {
+export interface Attachment {
   session: CollabSession;
   presence: PresenceTracker;
   undo: Y.UndoManager;
@@ -147,7 +150,7 @@ export class CollabAgent {
           updateThreadMeta(threads, thread.id, { status: "open", statusNote: "Interrupted; retrying." });
         }
       }
-    }, AI_ORIGIN);
+    }, AI_META_ORIGIN);
     this.scanThreads(attachment);
   }
 
@@ -168,7 +171,7 @@ export class CollabAgent {
     for (const thread of threads) {
       if (!threadWantsAI(thread)) continue;
       const last = [...thread.comments].reverse().find((comment) => !comment.deleted)!;
-      const key = `${attachment.session.docKey}:${thread.id}:${last.id}`;
+      const key = `${attachment.session.docKey}:${aiRequestKey(thread)}`;
       if (this.seen.has(key)) continue;
       this.seen.add(key);
       this.enqueue(attachment, {
@@ -197,6 +200,15 @@ export class CollabAgent {
 
   attachmentFor(docKey: string) {
     return this.attachments.get(docKey) ?? null;
+  }
+
+  attachmentList() {
+    return [...this.attachments.values()];
+  }
+
+  /** True while a job for this document is queued or running. */
+  isBusy(docKey: string) {
+    return this.running?.job.view.docKey === docKey || this.queue.some((job) => job.view.docKey === docKey);
   }
 
   private record(view: AgentJobView) {
@@ -256,7 +268,7 @@ export class CollabAgent {
     attachment.session.ydoc.transact(() => {
       if (reply) addThreadComment(threads, threadId, AI_USER_ID, reply);
       updateThreadMeta(threads, threadId, patch);
-    }, AI_ORIGIN);
+    }, AI_META_ORIGIN);
   }
 
   modeFor(attachment: Attachment, blockId: string): EditMode {
@@ -267,7 +279,7 @@ export class CollabAgent {
   markDirectEdit(attachment: Attachment, blockId: string, source: string) {
     attachment.session.ydoc.transact(() => {
       attachment.session.ydoc.getMap(AI_EDITS_MAP).set(blockId, { at: this.now(), source });
-    }, AI_ORIGIN);
+    }, AI_META_ORIGIN);
   }
 
   private async runCommentJob(job: Job, attachment: Attachment, threadId: string, signal: AbortSignal) {

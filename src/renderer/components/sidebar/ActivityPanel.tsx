@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
-import { Bot, Check, CircleDot, MessageSquare, RotateCcw, User, X } from "lucide-react";
+import { BellOff, Bot, Check, CircleDot, MessageSquare, RotateCcw, User, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import {
@@ -12,6 +12,7 @@ import {
   type ThreadStatus,
 } from "../../../shared/collab/threads";
 import { getEditorCollab } from "../../collab/editor-collab";
+import { REVIEW_CATEGORY_LABEL, REVIEW_MAP } from "../../../shared/collab/review";
 import { AIActivitySection } from "./AIActivitySection";
 
 type Filter = "open" | "ai" | "mine" | "resolved";
@@ -148,8 +149,18 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
             thread={thread}
             reference={referenceText(thread.id)}
             onSelect={() => editor.getExtension(CommentsExtension)?.selectThread(thread.id)}
-            onAssign={(assignee) => setMeta(thread.id, { assignee, status: "open", statusNote: undefined })}
+            onAssign={(assignee) => setMeta(thread.id, {
+              assignee, status: "open", statusNote: undefined, ...(assignee === "ai" ? { requestedAt: Date.now() } : {}),
+            })}
             onResolve={() => setMeta(thread.id, { status: "resolved" })}
+            onMute={thread.meta.category ? () => {
+              const map = collab.ydoc.getMap(REVIEW_MAP);
+              collab.ydoc.transact(() => {
+                const muted = (map.get("muted") as string[] | undefined) ?? [];
+                if (!muted.includes(thread.meta.category!)) map.set("muted", [...muted, thread.meta.category!]);
+                updateThreadMeta(collab.ydoc.getMap(COLLAB_THREADS_MAP), thread.id, { status: "resolved", muted: true });
+              });
+            } : undefined}
             onReopen={() => setMeta(thread.id, { status: "open" })}
           />
         ))}
@@ -158,13 +169,15 @@ export function ActivityPanel({ editor, documentName, children }: ActivityPanelP
   );
 }
 
-function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen }: {
+function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen, onMute }: {
   thread: ThreadSnapshot;
   reference: string | null;
   onSelect: () => void;
   onAssign: (assignee: "ai" | "me") => void;
   onResolve: () => void;
   onReopen: () => void;
+  /** Resolves an AI review finding and stops the reviewer raising its category. */
+  onMute?: () => void;
 }) {
   const status = threadStatus(thread);
   const first = thread.comments.find((comment) => !comment.deleted);
@@ -187,7 +200,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen 
           <span className={cn("rounded px-1 text-[10px]",
             thread.meta.severity === "high" ? "bg-red-500/10 text-red-600"
               : thread.meta.severity === "medium" ? "bg-amber-500/10 text-amber-700" : "bg-muted text-muted-foreground")}>
-            {thread.meta.category ?? thread.meta.severity}
+            {REVIEW_CATEGORY_LABEL[thread.meta.category ?? ""] ?? thread.meta.category ?? thread.meta.severity}
           </span>
         )}
         <span className={cn("ml-auto flex items-center gap-1 rounded-full px-1.5 py-px text-[10px]",
@@ -223,6 +236,9 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen 
               <SmallButton icon={<User className="h-3 w-3" />} label="I'll handle" onClick={() => onAssign("me")} />
             )}
             <SmallButton icon={<Check className="h-3 w-3" />} label="Resolve" onClick={onResolve} />
+            {onMute && fromAI && (
+              <SmallButton icon={<BellOff className="h-3 w-3" />} label="Stop flagging this" onClick={onMute} />
+            )}
           </>
         )}
       </div>

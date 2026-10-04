@@ -74,6 +74,8 @@ const strictRpcMethods = new Set([
   "abortOllamaOpenAIProxy",
   "listProviderModels",
   "rebuildProjectSourcesIndex",
+  "collabReviewSection",
+  "collabUndoAI",
 ]);
 
 // Create Electrobun RPC client for webview using defineRPC
@@ -498,4 +500,5 @@ export const rpc = {
   collabAgentStatus: (docKey: string) => call<AgentActivityMessage>("collabAgentStatus", { docKey }),
   collabUndoAI: (docKey: string) => call<boolean>("collabUndoAI", { docKey }),
   collabSetAgentPaused: (paused: boolean) => call<void>("collabSetAgentPaused", { paused }),
+  collabReviewSection: (docKey: string, blockId: string) => call<void>("collabReviewSection", { docKey, blockId }),
 };

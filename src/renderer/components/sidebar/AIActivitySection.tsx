@@ -1,12 +1,31 @@
 import React, { useEffect, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
-import { AlertTriangle, Bot, Check, CircleDot, Clock, Pause, Play, Undo2, X } from "lucide-react";
+import { AlertTriangle, Bot, Check, CircleDot, Clock, Pause, Play, ScanSearch, Undo2, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { onCollabActivity, rpc } from "../../rpc";
 import { getEditorCollab } from "../../collab/editor-collab";
 import { listSuggestions, resolveAllSuggestions, resolveSuggestion, type PendingSuggestion } from "../../collab/suggestions";
 import type { AgentActivityMessage, AgentJobView } from "../../../shared/collab/agent-types";
+import { REVIEW_MAP, reviewSettingsOf, updateReviewSettings, type ReviewSettings } from "../../../shared/collab/review";
+
+function useReviewSettings(editor: BlockNoteEditor<any, any, any>) {
+  const collab = getEditorCollab(editor);
+  const [settings, setSettings] = useState<ReviewSettings | null>(null);
+  useEffect(() => {
+    if (!collab) return;
+    const map = collab.ydoc.getMap(REVIEW_MAP);
+    const refresh = () => setSettings(reviewSettingsOf(map));
+    refresh();
+    map.observe(refresh);
+    return () => map.unobserve(refresh);
+  }, [collab]);
+  const update = (patch: Partial<ReviewSettings>) => {
+    if (!collab) return;
+    collab.ydoc.transact(() => updateReviewSettings(collab.ydoc.getMap(REVIEW_MAP), patch));
+  };
+  return [settings, update] as const;
+}
 
 function useAgentActivity(docKey: string | null) {
   const [activity, setActivity] = useState<AgentActivityMessage | null>(null);
@@ -66,6 +85,16 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
   const active = jobs.filter((job) => ["queued", "waiting", "working"].includes(job.state));
   const finished = jobs.filter((job) => !active.includes(job));
   const paused = activity?.paused ?? false;
+  const [review, updateReview] = useReviewSettings(editor);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const reviewSection = () => {
+    if (!collab) return;
+    setReviewError(null);
+    const blockId = editor.getTextCursorPosition().block.id;
+    rpc.collabReviewSection(collab.docKey, blockId)
+      .catch((error) => setReviewError(error instanceof Error ? error.message : String(error)));
+  };
 
   const scrollTo = (from: number) => {
     const view = editor.prosemirrorView;
@@ -83,6 +112,12 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
         </span>
         <div className="ml-auto flex gap-1">
           <IconButton
+            label="Review the section at the cursor"
+            disabled={!collab}
+            onClick={reviewSection}
+            icon={<ScanSearch className="h-3 w-3" />}
+          />
+          <IconButton
             label={paused ? "Resume AI" : "Pause AI"}
             onClick={() => void rpc.collabSetAgentPaused(!paused)}
             icon={paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
@@ -96,6 +131,33 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
         </div>
       </div>
 
+      {review && (
+        <div className="flex items-center gap-2 px-3 pb-1.5 text-[11px] text-muted-foreground">
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={review.autoReview}
+              onChange={(event) => updateReview({ autoReview: event.target.checked })} />
+            Review sections I leave
+          </label>
+          <select value={review.minSeverity} aria-label="Minimum severity"
+            onChange={(event) => updateReview({ minSeverity: event.target.value as ReviewSettings["minSeverity"] })}
+            className="ml-auto rounded border border-border bg-background px-1 py-0.5 text-[11px]">
+            <option value="low">All findings</option>
+            <option value="medium">Medium and up</option>
+            <option value="high">High only</option>
+          </select>
+        </div>
+      )}
+      {review && review.muted.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 px-3 pb-1.5 text-[10px] text-muted-foreground">
+          Muted:
+          {review.muted.map((category) => (
+            <button key={category} type="button" title="Show these findings again"
+              onClick={() => updateReview({ muted: review.muted.filter((item) => item !== category) })}
+              className="rounded bg-muted px-1 hover:text-foreground">{category} ×</button>
+          ))}
+        </div>
+      )}
+      {reviewError && <p className="px-3 pb-1.5 text-[11px] text-red-600">{reviewError}</p>}
       {active.map((job) => (
         <JobRow key={job.id} job={job} editor={editor} />
       ))}
