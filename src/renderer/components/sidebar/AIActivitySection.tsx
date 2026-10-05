@@ -9,7 +9,7 @@ import type { PendingChangeSet } from "../../collab/suggestions";
 import { decideAllChangeSets, decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import type { AgentActivityMessage, AgentJobView } from "../../../shared/collab/agent-types";
 import { REVIEW_MAP, reviewSettingsOf, updateReviewSettings, type ReviewSettings } from "../../../shared/collab/review";
-import { DEFAULT_PERSONA_ID, PERSONAS, personaById } from "../../../shared/collab/personas";
+import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
 
 function useReviewSettings(editor: BlockNoteEditor<any, any, any>) {
   const collab = getEditorCollab(editor);
@@ -77,13 +77,11 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
   const paused = activity?.paused ?? false;
   const [review, updateReview] = useReviewSettings(editor);
   const [reviewError, setReviewError] = useState<string | null>(null);
-  const [reviewer, setReviewer] = useState(DEFAULT_PERSONA_ID);
-
   const reviewSection = () => {
     if (!collab) return;
     setReviewError(null);
     const blockId = editor.getTextCursorPosition().block.id;
-    rpc.collabReviewSection(collab.docKey, blockId, reviewer)
+    rpc.collabReviewSection(collab.docKey, blockId)
       .catch((error) => setReviewError(error instanceof Error ? error.message : String(error)));
   };
 
@@ -102,12 +100,8 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
           {paused ? "· paused" : active.length > 0 ? `· ${JOB_STATE[active[0].state].toLowerCase()}` : "· idle"}
         </span>
         <div className="ml-auto flex gap-1">
-          <select value={reviewer} onChange={(event) => setReviewer(event.target.value)} aria-label="Reviewer"
-            className="rounded border border-border bg-background px-1 text-[11px] text-muted-foreground">
-            {PERSONAS.map((persona) => <option key={persona.id} value={persona.id}>{persona.shortName}</option>)}
-          </select>
           <IconButton
-            label={`Review the section at the cursor as ${personaById(reviewer).name}`}
+            label="Review the section at the cursor"
             disabled={!collab}
             onClick={reviewSection}
             icon={<ScanSearch className="h-3 w-3" />}
@@ -194,7 +188,6 @@ function JobRow({ job, editor }: { job: AgentJobView; editor: BlockNoteEditor<an
       <span className="mt-0.5">{JOB_ICON[job.state]}</span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[11px] text-foreground">
-          {job.agent && job.agent !== DEFAULT_PERSONA_ID ? `${personaById(job.agent).shortName} · ` : ""}
           {job.kind === "review" ? "Review: " : job.kind === "draft" ? "Draft: " : ""}{job.label}
         </span>
         <span className={cn("block text-[10px]", job.state === "failed" ? "text-red-600" : "text-muted-foreground")}>
@@ -223,7 +216,6 @@ function ChangeSetRow({ set, editor, scrollTo }: {
   scrollTo: (from: number) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const persona = personaById(set.info?.persona);
   const count = set.paragraphs.length;
   return (
     <div className="border-b border-border/60 last:border-b-0">
@@ -237,7 +229,7 @@ function ChangeSetRow({ set, editor, scrollTo }: {
           else scrollTo(set.from);
         }} className="min-w-0 flex-1 text-left">
           <span className="block truncate text-[11px] text-foreground">
-            <span style={{ color: persona.color }}>{persona.shortName}</span> · {set.info?.label ?? "AI edit"}
+            <span style={{ color: SCHOLARPEN_AI.color }}>{SCHOLARPEN_AI.shortName}</span> · {set.info?.label ?? "AI edit"}
           </span>
           <span className="block text-[10px] text-muted-foreground">
             {count} {count === 1 ? "paragraph" : "paragraphs"}

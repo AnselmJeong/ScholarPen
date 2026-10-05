@@ -12,7 +12,7 @@ import {
 } from "../../../shared/collab/threads";
 import { getEditorCollab } from "../../collab/editor-collab";
 import { REVIEW_CATEGORY_LABEL, REVIEW_MAP } from "../../../shared/collab/review";
-import { PERSONAS, isAIUser, personaById, personaByUser } from "../../../shared/collab/personas";
+import { SCHOLARPEN_AI, isAIUser, personaByUser } from "../../../shared/collab/personas";
 import { AIActivitySection } from "./AIActivitySection";
 import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import { ZonesSection } from "./ZonesSection";
@@ -140,7 +140,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
         {visible.length === 0 && (
           <p className="p-4 text-xs leading-5 text-muted-foreground">
             {filter === "open"
-              ? `No open threads. Select text and use the comment button. Mention ${PERSONAS.map((p) => `@${p.handle}`).join(", ")} or use Ask to have an AI revise that passage.`
+              ? "No open threads. Select text and use the comment button, or type / and choose Add Comment. ScholarPen AI starts on each comment you save."
               : "Nothing here."}
           </p>
         )}
@@ -148,11 +148,11 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
           <ThreadRow
             key={thread.id}
             thread={thread}
-            reference={referenceText(thread.id)}
+            reference={thread.meta.scope === "document" ? "Whole manuscript" : referenceText(thread.id)}
             onSelect={() => editor.getExtension(CommentsExtension)?.selectThread(thread.id)}
-            onAssign={(assignee, agent) => setMeta(thread.id, {
+            onAssign={(assignee) => setMeta(thread.id, {
               assignee, status: "open", statusNote: undefined,
-              ...(assignee === "ai" ? { requestedAt: Date.now(), agent: agent ?? thread.meta.agent } : {}),
+              ...(assignee === "ai" ? { requestedAt: Date.now(), manual: undefined } : { manual: true }),
             })}
             onResolve={() => setMeta(thread.id, { status: "resolved" })}
             onDecideChange={thread.meta.changeSet !== undefined && pendingChangeSets.has(String(thread.meta.changeSet))
@@ -178,7 +178,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
   thread: ThreadSnapshot;
   reference: string | null;
   onSelect: () => void;
-  onAssign: (assignee: "ai" | "me", agent?: string) => void;
+  onAssign: (assignee: "ai" | "me") => void;
   onResolve: () => void;
   onReopen: () => void;
   /** Resolves an AI review finding and stops the reviewer raising its category. */
@@ -218,7 +218,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
           {status === "in-progress" && <CircleDot className="h-2.5 w-2.5 animate-pulse" />}
           {STATUS_LABEL[status]}
           {thread.meta.assignee && status !== "resolved" &&
-            ` · ${thread.meta.assignee === "ai" ? personaById(thread.meta.agent).shortName : "you"}`}
+            ` · ${thread.meta.assignee === "ai" ? SCHOLARPEN_AI.shortName : "you"}`}
         </span>
       </div>
       {reference && (
@@ -251,19 +251,8 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
         ) : (
           <>
             {thread.meta.assignee !== "ai" && (
-              <>
-                <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${personaById(thread.meta.agent).shortName}`}
-                  onClick={() => onAssign("ai", thread.meta.agent)} />
-                <select
-                  aria-label="Ask another AI persona"
-                  value=""
-                  onChange={(event) => { if (event.target.value) onAssign("ai", event.target.value); }}
-                  className="rounded border border-border bg-background px-1 py-0.5 text-[11px] text-muted-foreground"
-                >
-                  <option value="">Ask…</option>
-                  {PERSONAS.map((persona) => <option key={persona.id} value={persona.id}>{persona.name}</option>)}
-                </select>
-              </>
+              <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
+                onClick={() => onAssign("ai")} />
             )}
             {thread.meta.assignee !== "me" && (
               <SmallButton icon={<User className="h-3 w-3" />} label="I'll handle" onClick={() => onAssign("me")} />

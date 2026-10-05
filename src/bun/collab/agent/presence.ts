@@ -1,12 +1,6 @@
 import * as Y from "yjs";
-import {
-  Awareness,
-  applyAwarenessUpdate,
-  encodeAwarenessUpdate,
-  removeAwarenessStates,
-} from "y-protocols/awareness";
 import { BUN_PEER_ID, COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
-import { DEFAULT_PERSONA_ID, PERSONAS, type Persona } from "../../../shared/collab/personas";
+import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
 import type { CollabSession } from "../registry";
 import { blockCursor, yBlockIdOf } from "./doc-model";
 
@@ -29,8 +23,6 @@ function isCommentMarkOnly(event: Y.YEvent<any>) {
  */
 export class PresenceTracker {
   private readonly touched = new Map<string, number>();
-  /** Extra awareness clients so each non-default persona shows its own cursor. */
-  private readonly personaAwareness = new Map<string, Awareness>();
   private readonly observer: (events: Array<Y.YEvent<any>>, transaction: Y.Transaction) => void;
 
   constructor(private readonly session: CollabSession, private readonly now: () => number = Date.now) {
@@ -51,24 +43,13 @@ export class PresenceTracker {
   destroy() {
     this.session.ydoc.getXmlFragment(COLLAB_FRAGMENT).unobserveDeep(this.observer);
     this.release();
-    for (const awareness of this.personaAwareness.values()) {
-      removeAwarenessStates(this.session.awareness, [awareness.clientID], "persona");
-      awareness.destroy();
-    }
-    this.personaAwareness.clear();
-  }
-
-  /** Awareness client ids that belong to AI personas rather than people. */
-  private aiClients() {
-    return new Set([this.session.ydoc.clientID, ...[...this.personaAwareness.values()].map((a) => a.clientID)]);
   }
 
   /** Block ids that hold a person's cursor. */
   cursorBlocks() {
     const ids = new Set<string>();
-    const ai = this.aiClients();
     for (const [clientId, state] of this.session.awareness.getStates()) {
-      if (ai.has(clientId)) continue;
+      if (clientId === this.session.ydoc.clientID) continue;
       const cursor = (state as { cursor?: { anchor?: unknown; head?: unknown } }).cursor;
       for (const position of [cursor?.anchor, cursor?.head]) {
         if (!position) continue;
@@ -98,36 +79,16 @@ export class PresenceTracker {
     return this.touched.get(blockId) ?? 0;
   }
 
-  private awarenessFor(persona: Persona) {
-    if (persona.id === DEFAULT_PERSONA_ID) return this.session.awareness;
-    let awareness = this.personaAwareness.get(persona.id);
-    if (!awareness) {
-      awareness = new Awareness(new Y.Doc());
-      awareness.setLocalState(null);
-      const own = awareness;
-      // Relay this persona's presence through the session so editors render it.
-      own.on("update", ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
-        const changed = [...added, ...updated, ...removed];
-        if (changed.length) applyAwarenessUpdate(this.session.awareness, encodeAwarenessUpdate(own, changed), `persona:${persona.id}`);
-      });
-      this.personaAwareness.set(persona.id, own);
-    }
-    return awareness;
-  }
-
-  /** Shows the persona selecting the block it is working on. */
-  claim(blockId: string, label?: string, persona: Persona = PERSONAS[0]) {
+  /** Shows the AI selecting the block it is working on. */
+  claim(blockId: string, label?: string) {
     const cursor = blockCursor(this.session, blockId);
-    this.awarenessFor(persona).setLocalState({
-      user: { name: label ? `${persona.name} · ${label}` : persona.name, color: persona.color },
+    this.session.awareness.setLocalState({
+      user: { name: label ? `${SCHOLARPEN_AI.name} · ${label}` : SCHOLARPEN_AI.name, color: SCHOLARPEN_AI.color },
       cursor,
     });
   }
 
-  release(persona?: Persona) {
-    const targets = persona ? [this.awarenessFor(persona)] : [this.session.awareness, ...this.personaAwareness.values()];
-    for (const awareness of targets) {
-      if (awareness.getLocalState() !== null) awareness.setLocalState(null);
-    }
+  release() {
+    if (this.session.awareness.getLocalState() !== null) this.session.awareness.setLocalState(null);
   }
 }

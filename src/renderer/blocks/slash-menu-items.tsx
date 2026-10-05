@@ -2,7 +2,7 @@ import React from "react";
 import { insertOrUpdateBlockForSlashMenu, BlockNoteEditor } from "@blocknote/core";
 import { DefaultReactSuggestionItem } from "@blocknote/react";
 import { getAIDictionary } from "@blocknote/xl-ai";
-import { Sparkles } from "lucide-react";
+import { MessageSquarePlus, Sparkles } from "lucide-react";
 import type { ScholarEditor } from "./schema";
 
 // ── Scholar custom slash-menu items ────────────────────────────────────────
@@ -10,15 +10,18 @@ import type { ScholarEditor } from "./schema";
 export function getScholarSlashMenuItems(
   editor: ScholarEditor,
   onOpenDOIDialog: () => void,
+  onAddComment: () => void,
 ): DefaultReactSuggestionItem[] {
+  // Ordered by how often each is used.
   return [
+    // Insert DOI — opens dialog to resolve DOI and insert as inline citation
     {
-      title: "Note",
-      aliases: ["note", "callout", "alert", "읽는 법", "설명"],
+      title: "Insert DOI",
+      aliases: ["doi", "cite", "citation", "reference", "bib", "bibliography"],
       group: "Scholar",
-      icon: <span className="text-base">ⓘ</span>,
-      subtext: "읽는 법 · 설명 박스",
-      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "note" }),
+      icon: <span className="text-xs font-mono font-bold leading-none">DOI</span>,
+      subtext: "Resolve a DOI and insert as inline citation",
+      onItemClick: onOpenDOIDialog,
     },
     // Math equation block
     {
@@ -30,14 +33,22 @@ export function getScholarSlashMenuItems(
       onItemClick: () =>
         insertOrUpdateBlockForSlashMenu(editor, { type: "math" }),
     },
-    // Insert DOI — opens dialog to resolve DOI and insert as inline citation
     {
-      title: "Insert DOI",
-      aliases: ["doi", "cite", "citation", "reference", "bib", "bibliography"],
+      title: "Explain Equation",
+      aliases: ["explain", "note", "callout", "alert", "읽는 법", "수식", "설명"],
       group: "Scholar",
-      icon: <span className="text-xs font-mono font-bold leading-none">DOI</span>,
-      subtext: "Resolve a DOI and insert as inline citation",
-      onItemClick: onOpenDOIDialog,
+      icon: <span className="text-base">ⓘ</span>,
+      subtext: "수식 읽는 법 · 설명 박스",
+      onItemClick: () => insertOrUpdateBlockForSlashMenu(editor, { type: "note" }),
+    },
+    // A comment without a selection: a request about the whole manuscript
+    {
+      title: "Add Comment",
+      aliases: ["comment", "memo", "코멘트", "댓글", "메모"],
+      group: "Scholar",
+      icon: <MessageSquarePlus size={18} />,
+      subtext: "Ask ScholarPen AI to change the whole manuscript",
+      onItemClick: onAddComment,
     },
     // Figure block
     {

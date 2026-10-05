@@ -1,7 +1,7 @@
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import { createThread, readThreads, type ThreadMeta } from "../../../shared/collab/threads";
-import { DEFAULT_PERSONA_ID, personaById, type Persona } from "../../../shared/collab/personas";
+import { SCHOLARPEN_AI, isAIUser } from "../../../shared/collab/personas";
 import {
   REVIEW_MAP,
   reviewSettingsOf,
@@ -92,16 +92,16 @@ export function locateQuote(block: BlockRef, quote: string) {
   return { from: chars[at], to: chars[at + length - 1] + 1 };
 }
 
-function buildReviewMessages(persona: Persona, title: string, paragraphs: string[], context: string, muted: string[]): OllamaMessage[] {
+function buildReviewMessages(title: string, paragraphs: string[], context: string, muted: string[]): OllamaMessage[] {
   const system =
-    `You are ${persona.name}, reviewing a section of an academic manuscript together with its author. ` +
-    `Point out only problems worth the author's time: ${persona.reviewFocus}. ` +
+    `You are ${SCHOLARPEN_AI.name}, reviewing a section of an academic manuscript together with its author. ` +
+    `Point out only problems worth the author's time: ${SCHOLARPEN_AI.reviewFocus}. ` +
     "Do not comment on style, wording preferences or grammar. " +
     "Do not invent references. If the section is sound, return no findings. " +
     (muted.length ? `The author asked not to be told about these kinds of issues: ${muted.join(", ")}. ` : "") +
     "Write each comment in the language of the manuscript, in one or two sentences, and say what to check or change. " +
     "Return JSON only, in this shape:\n" +
-    `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${persona.categories.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
+    `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${SCHOLARPEN_AI.categories.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
     `Report at most ${MAX_NEW_PER_RUN} findings, most important first. The quote must be copied exactly from the paragraph and be at most 25 words.`;
   const user =
     `<section title="${title.replace(/"/g, "'")}">\n` +
@@ -152,9 +152,8 @@ export class Reviewer {
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** Queues a review of the section that contains the block, by one persona. */
-  reviewSection(docKey: string, blockId: string, reason: "manual" | "auto" = "manual", personaId: string = DEFAULT_PERSONA_ID) {
-    const persona = personaById(personaId);
+  /** Queues a review of the section that contains the block. */
+  reviewSection(docKey: string, blockId: string, reason: "manual" | "auto" = "manual") {
     const attachment = this.agent.attachmentFor(docKey);
     if (!attachment) throw new Error("This document is not open.");
     const section = sectionOf(readDoc(attachment.session), blockId);
@@ -164,8 +163,8 @@ export class Reviewer {
       kind: "review",
       label: sectionTitle(section),
       blockId: key,
-      agent: persona.id,
-    }, (_job, att, signal) => this.runReview(att, key, reason, persona, signal));
+      agent: SCHOLARPEN_AI.id,
+    }, (_job, att, signal) => this.runReview(att, key, reason, signal));
   }
 
   /** Looks for sections that were edited and then left alone, and reviews one of them. */
@@ -198,7 +197,7 @@ export class Reviewer {
     }
   }
 
-  private async runReview(attachment: Attachment, key: string, reason: "manual" | "auto", persona: Persona, signal: AbortSignal) {
+  private async runReview(attachment: Attachment, key: string, reason: "manual" | "auto", signal: AbortSignal) {
     const { session } = attachment;
     const reviewMap = session.ydoc.getMap(REVIEW_MAP);
     const settings = reviewSettingsOf(reviewMap);
@@ -210,7 +209,7 @@ export class Reviewer {
     const findings: Array<ReviewFinding & { blockId: string }> = [];
 
     // Deterministic check first: citations whose key is not in the bibliography.
-    const keys = persona.id === DEFAULT_PERSONA_ID ? await this.deps.citekeys(session.projectPath) : null;
+    const keys = await this.deps.citekeys(session.projectPath);
     if (keys) {
       for (const block of prose) {
         blockContent(block).node.descendants((node) => {
@@ -233,9 +232,9 @@ export class Reviewer {
       const last = section.blocks[section.blocks.length - 1];
       const context = clip(readableText(doc, 0, first.pos), 3000, "end") + "\n[…this section…]\n" +
         clip(readableText(doc, last.pos + last.node.nodeSize, doc.content.size), 2000, "start");
-      attachment.presence.claim(prose[0].id, "reviewing", persona);
+      attachment.presence.claim(prose[0].id, "reviewing");
       const response = await this.deps.complete(
-        buildReviewMessages(persona, sectionTitle(section), paragraphs, context, settings.muted), signal);
+        buildReviewMessages(sectionTitle(section), paragraphs, context, settings.muted), signal);
       if (signal.aborted) throw new Error("Cancelled");
       for (const finding of parseFindings(response, prose.length)) {
         findings.push({ ...finding, blockId: prose[finding.paragraph].id });
@@ -246,7 +245,7 @@ export class Reviewer {
     const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
     const existing = readThreads(threads);
     const sectionIds = new Set(section.blocks.flatMap((block) => flatten(block)).map((block) => block.id));
-    const openInSection = existing.filter((thread) => !thread.resolved && thread.comments[0]?.userId === persona.userId &&
+    const openInSection = existing.filter((thread) => !thread.resolved && isAIUser(thread.comments[0]?.userId) &&
       thread.meta.blockId && sectionIds.has(thread.meta.blockId)).length;
     let budget = Math.min(MAX_NEW_PER_RUN, MAX_OPEN_PER_SECTION - openInSection);
     let added = 0;
@@ -256,7 +255,7 @@ export class Reviewer {
       if (budget <= 0) break;
       if (SEVERITY_RANK[finding.severity] < SEVERITY_RANK[settings.minSeverity]) continue;
       if (settings.muted.includes(finding.category)) continue;
-      const fingerprint = `${persona.id}:${finding.blockId}:${finding.category}:${normalize(finding.quote || finding.comment)}`;
+      const fingerprint = `${SCHOLARPEN_AI.id}:${finding.blockId}:${finding.category}:${normalize(finding.quote || finding.comment)}`;
       // Never raise a finding twice, including one the author already resolved.
       const duplicate = existing.some((thread) => thread.meta.fingerprint === fingerprint ||
         (!thread.resolved && thread.meta.blockId === finding.blockId &&
@@ -266,11 +265,11 @@ export class Reviewer {
       if (!block) continue;
       const range = (finding.quote && locateQuote(block, finding.quote)) || blockContent(block);
       const meta: ThreadMeta = {
-        agent: persona.id, category: finding.category, severity: finding.severity,
+        agent: SCHOLARPEN_AI.id, category: finding.category, severity: finding.severity,
         blockId: finding.blockId, assignee: "me", status: "open", fingerprint,
       };
       session.ydoc.transact(() => {
-        const threadId = createThread(threads, persona.userId, finding.comment, meta);
+        const threadId = createThread(threads, SCHOLARPEN_AI.userId, finding.comment, meta);
         anchorThread(session, block.id, threadId, AI_META_ORIGIN, range.from, range.to);
       }, AI_META_ORIGIN);
       doc = readDoc(session);
@@ -281,7 +280,6 @@ export class Reviewer {
 
     session.ydoc.transact(() => {
       const sections = { ...((reviewMap.get("sections") as Record<string, unknown> | undefined) ?? {}) };
-      if (persona.id !== DEFAULT_PERSONA_ID) return;
       sections[key] = { hash: hashText(sectionFingerprint(readDoc(session), sectionOf(readDoc(session), key) ?? section)), at: this.now(), reason, added };
       reviewMap.set("sections", sections);
     }, AI_META_ORIGIN);

@@ -212,3 +212,57 @@ test("the AI waits while the author is typing in the paragraph", async () => {
   expect(agent!.jobs(session.docKey)[0].state).toBe("waiting");
   expect(threadOf(session, threadId).meta.status).toBe("in-progress");
 }, 10_000);
+
+const isPlan = (messages: OllamaMessage[]) => (messages[0].content as string).includes("list every paragraph");
+/** A block's text with the AI's suggestions accepted. */
+const blockTextOf = (session: any, id: string) => marks(session, id)
+  .filter((part) => !part.mark.includes("deletion")).map((part) => part.text).join("");
+
+test("a comment about the whole manuscript edits every paragraph that needs it, as one change set", async () => {
+  const { session, prompts } = await setup(async (messages) => {
+    if (isPlan(messages)) return JSON.stringify({ paragraphs: [1, 3, 99], summary: "Replaced 'data' wording in two paragraphs." });
+    const user = messages[1].content as string;
+    const passage = user.match(/<passage_to_edit>\n([\s\S]*?)\n<\/passage_to_edit>/)![1];
+    return `<reply>ok</reply><passage>${passage.replace("prove that", "suggest that").replace("We recieve the data", "We obtained the measurements")}</passage>`;
+  });
+  const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  let threadId = "";
+  session.ydoc.transact(() => {
+    threadId = createThread(threads, "me", "Make the whole manuscript more cautious", { assignee: "ai", status: "open", scope: "document" });
+  }, "editor");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+
+  // The plan saw every paragraph; the edit call got only the chosen ones.
+  const plan = prompts.find(isPlan)![1].content as string;
+  expect(plan).toContain("[2]");
+  const edit = prompts.find((messages) => !isPlan(messages))![1].content as string;
+  expect(edit).not.toContain("<commented_text>");
+  expect(edit).not.toContain("Earlier trials");
+
+  const thread = threadOf(session, threadId);
+  expect(thread.comments[1].text).toContain("Replaced 'data' wording in two paragraphs.");
+  expect(thread.meta).toMatchObject({ status: "proposed", assignee: "me" });
+  expect(blockTextOf(session, "p1")).toContain("suggest that");
+  expect(blockTextOf(session, "p3")).toContain("obtained the measurements");
+  expect(marks(session, "p2").every((part) => part.mark === "")).toBe(true);
+  expect(session.ydoc.getMap("changeSets").get(String(thread.meta.changeSet))).toMatchObject({ threadId });
+});
+
+test("a passage comment that asks for the whole manuscript widens to it", async () => {
+  const { session, prompts } = await setup(async (messages) => {
+    if (isPlan(messages)) return JSON.stringify({ paragraphs: [3], summary: "Fixed it everywhere." });
+    const user = messages[1].content as string;
+    if (user.includes("<commented_text>")) return "<scope>document</scope>";
+    const passage = user.match(/<passage_to_edit>\n([\s\S]*?)\n<\/passage_to_edit>/)![1];
+    return `<reply>ok</reply><passage>${passage.replace("We recieve the data", "We obtained the measurements")}</passage>`;
+  });
+  const threadId = comment(session, "p1", "@AI not just here — change this throughout the manuscript");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+
+  expect(prompts[0][0].content).toContain("<scope>document</scope>");
+  const thread = threadOf(session, threadId);
+  expect(thread.meta.scope).toBe("document");
+  expect(thread.comments[1].text).toContain("Fixed it everywhere.");
+  expect(blockTextOf(session, "p3")).toContain("obtained the measurements");
+  expect(blockTextOf(session, "p1")).toBe(BLOCKS[0].content as string);
+});

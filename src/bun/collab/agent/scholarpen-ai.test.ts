@@ -24,8 +24,8 @@ const { Reviewer } = await import("./reviewer");
 const { anchorThread } = await import("./doc-model");
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
-const { createThread, readThreads } = await import("../../../shared/collab/threads");
-const { mentionedPersona } = await import("../../../shared/collab/personas");
+const { createThread, readThreads, threadWantsAI } = await import("../../../shared/collab/threads");
+const { isAIUser, mentionedPersona } = await import("../../../shared/collab/personas");
 
 const editor = getHeadlessEditor();
 const BLOCKS = [
@@ -62,52 +62,68 @@ async function settled() {
   for (let i = 0; i < 300 && agent.isBusy("/p::doc.scholarpen.json"); i++) await new Promise((r) => setTimeout(r, 10));
 }
 
-test("a thread addressed to @stats is answered by the statistics reviewer, with its own cursor", async () => {
-  let presence: string[] = [];
-  let system = "";
-  const session = await setup(async (messages, s) => {
-    system = messages[0].content as string;
-    presence = [...s.awareness.getStates().entries()]
-      .filter(([clientId]: [number]) => clientId !== s.ydoc.clientID)
-      .map(([, state]: [number, any]) => state?.user?.name);
+function thread(comments: Array<{ userId: string; text: string }>, meta: Record<string, unknown> = {}) {
+  return {
+    id: "t", createdAt: 0, updatedAt: 0, resolved: false, meta,
+    comments: comments.map((comment, index) => ({ id: `c${index}`, createdAt: index, deleted: false, ...comment })),
+  };
+}
+
+test("a comment saved for the AI is answered without a mention or an Ask", async () => {
+  const session = await setup(async (messages) => {
     const passage = (messages[1].content as string).match(/<passage_to_edit>\n([\s\S]*?)\n<\/passage_to_edit>/)![1];
-    return `<reply>Report the effect size.</reply><passage>${passage.replace("proving a large effect", "a difference whose size is not yet reported")}</passage>`;
+    return `<reply>Softened.</reply><passage>${passage.replace("proving a large effect", "suggesting an effect")}</passage>`;
   });
   let id = "";
-  session.ydoc.transact(() => { id = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "@stats is this right?", {}); }, "editor");
+  session.ydoc.transact(() => {
+    id = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "too strong", { assignee: "ai", status: "open", requestedAt: Date.now() });
+  }, "editor");
   anchorThread(session, "r1", id, "editor");
   await new Promise((r) => setTimeout(r, 300));
   await settled();
 
-  const thread = threads(session).find((t) => t.id === id)!;
-  expect(thread.comments[1].userId).toBe("scholarpen-stats");
-  expect(thread.meta.agent).toBe("stats-reviewer");
-  expect(system).toContain("biostatistician");
-  // Its cursor was a separate collaborator, and the agent did not wait on it.
-  expect(presence).toContain("Statistics reviewer · editing");
-  expect([...session.awareness.getStates().values()].some((state: any) => state?.user)).toBe(false);
+  const answered = threads(session).find((t) => t.id === id)!;
+  expect(answered.comments[1]).toMatchObject({ userId: "scholarpen-ai", text: expect.stringContaining("Softened.") });
+  expect(answered.meta).toMatchObject({ status: "proposed", assignee: "me" });
 });
 
-test("Reviewer 2 reviews with its own focus and posts as itself", async () => {
+test("the author's reply in an AI thread goes back to the AI unless they took it over", () => {
+  const conversation = [{ userId: "me", text: "too strong" }, { userId: "scholarpen-ai", text: "Softened." }];
+  expect(threadWantsAI(thread(conversation, { assignee: "me", status: "proposed" }))).toBe(false);
+  const replied = [...conversation, { userId: "me", text: "even softer" }];
+  expect(threadWantsAI(thread(replied, { assignee: "me", status: "proposed" }))).toBe(true);
+  expect(threadWantsAI(thread(replied, { assignee: "me", status: "open", manual: true }))).toBe(false);
+  expect(threadWantsAI(thread(replied, { assignee: "me", status: "resolved" }))).toBe(false);
+  // Threads from before auto-start that nobody assigned are left alone.
+  expect(threadWantsAI(thread([{ userId: "me", text: "note to self" }]))).toBe(false);
+});
+
+test("the former statistics reviewer and Reviewer 2 now mean ScholarPen AI", async () => {
+  expect(isAIUser("scholarpen-stats")).toBe(true);
+  expect(isAIUser("scholarpen-reviewer2")).toBe(true);
+  expect(threadWantsAI(thread([{ userId: "scholarpen-stats", text: "Report the effect size." }], { assignee: "me" }))).toBe(false);
+
   let system = "";
   const session = await setup(async (messages) => {
     system = messages[0].content as string;
     return JSON.stringify({ findings: [
-      { paragraph: 1, quote: "proving a large effect", category: "generalisation", severity: "high", comment: "Single p-value; the conclusion goes beyond the data." },
+      { paragraph: 1, quote: "proving a large effect", category: "statistics", severity: "high", comment: "Report the effect size." },
     ] });
   });
-  reviewer.reviewSection(session.docKey, "r1", "manual", "reviewer-2");
+  reviewer.reviewSection(session.docKey, "r1", "manual");
   await settled();
   const posted = threads(session);
   expect(posted).toHaveLength(1);
-  expect(posted[0].comments[0].userId).toBe("scholarpen-reviewer2");
-  expect(posted[0].meta).toMatchObject({ agent: "reviewer-2", category: "generalisation" });
-  expect(system).toContain("Reviewer 2");
+  expect(posted[0].comments[0].userId).toBe("scholarpen-ai");
+  expect(posted[0].meta).toMatchObject({ agent: "scholarpen-ai", category: "statistics" });
+  // One reviewer covers what the three used to.
+  expect(system).toContain("effect sizes");
   expect(system).toContain("skeptical journal referee");
 });
 
-test("mentions pick the persona", () => {
+test("mentions address ScholarPen AI, including the old handles", () => {
   expect(mentionedPersona("@AI please")?.id).toBe("scholarpen-ai");
-  expect(mentionedPersona("@ai then @Reviewer2 should weigh in")?.id).toBe("reviewer-2");
+  expect(mentionedPersona("@stats is this right?")?.id).toBe("scholarpen-ai");
+  expect(mentionedPersona("@reviewer2 thoughts?")?.id).toBe("scholarpen-ai");
   expect(mentionedPersona("mail me at x@ai.com")).toBeNull();
 });

@@ -572,8 +572,8 @@ async function main() {
           sendCollabActivity?.(collabAgentStatus(docKey));
           return undone;
         },
-        collabReviewSection: ({ docKey, blockId, personaId }) => {
-          collabReviewer.reviewSection(docKey, blockId, "manual", personaId);
+        collabReviewSection: ({ docKey, blockId }) => {
+          collabReviewer.reviewSection(docKey, blockId, "manual");
         },
         collabDraftSection: ({ docKey, blockId }) => {
           enqueueDraft(collabAgent, docKey, blockId, completeWithSettings);

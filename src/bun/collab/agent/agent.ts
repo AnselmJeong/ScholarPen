@@ -4,14 +4,14 @@ import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP } from "../../../shared/collab/prot
 import {
   addThreadComment,
   aiRequestKey,
-  aiTargetOf,
   readThreads,
+  threadWantsAI,
   updateThreadMeta,
   type ThreadMeta,
   type ThreadSnapshot,
 } from "../../../shared/collab/threads";
 import type { AgentJobView } from "../../../shared/collab/agent-types";
-import { isAIUser, PERSONAS, type Persona } from "../../../shared/collab/personas";
+import { isAIUser, SCHOLARPEN_AI } from "../../../shared/collab/personas";
 import type { CollabRegistry, CollabSession } from "../registry";
 import { applyBlockRewrite, captureBlock, nextSuggestionId, type BlockBase, type EditMode, type EditOutcome } from "./block-edit";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../../shared/collab/change-sets";
@@ -20,12 +20,13 @@ import {
   blocksInRange,
   findBlock,
   hasInlineContent,
+  listBlocks,
   readDoc,
   readableText,
   threadRange,
 } from "./doc-model";
 import { PresenceTracker } from "./presence";
-import { buildCommentEditMessages, clip, parseCommentEditResponse } from "./prompts";
+import { buildCommentEditMessages, buildDocumentPlanMessages, clip, parseCommentEditResponse, parseDocumentPlan } from "./prompts";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
@@ -57,7 +58,12 @@ interface Job {
   run: (job: Job, attachment: Attachment, signal: AbortSignal) => Promise<void>;
 }
 
-const MAX_BLOCKS_PER_THREAD = 5;
+/** Paragraphs sent to the model in one edit call. */
+const MAX_BLOCKS_PER_CALL = 5;
+/** Most paragraphs one request edits; larger requests continue on the next reply. */
+const MAX_DOCUMENT_BLOCKS = 60;
+/** Manuscript text per planning call; longer manuscripts are planned in parts. */
+const PLAN_PART_CHARS = 60_000;
 const RECENT_JOBS = 12;
 
 let jobCounter = 0;
@@ -170,8 +176,7 @@ export class CollabAgent {
   private scanThreads(attachment: Attachment) {
     const threads = readThreads(attachment.session.ydoc.getMap(COLLAB_THREADS_MAP));
     for (const thread of threads) {
-      const persona = aiTargetOf(thread);
-      if (!persona) continue;
+      if (!threadWantsAI(thread)) continue;
       const last = [...thread.comments].reverse().find((comment) => !comment.deleted)!;
       const key = `${attachment.session.docKey}:${aiRequestKey(thread)}`;
       if (this.seen.has(key)) continue;
@@ -179,7 +184,7 @@ export class CollabAgent {
       this.enqueue(attachment, {
         kind: "comment",
         threadId: thread.id,
-        agent: persona.id,
+        agent: SCHOLARPEN_AI.id,
         label: clip(last.text.replace(/\s+/g, " "), 80, "start"),
       }, (job, att, signal) => this.runCommentJob(job, att, thread.id, signal));
     }
@@ -266,10 +271,10 @@ export class CollabAgent {
     this.update(job, { state: "working", detail: undefined });
   }
 
-  private setThread(attachment: Attachment, threadId: string, patch: Partial<ThreadMeta>, reply?: string, persona: Persona = PERSONAS[0]) {
+  private setThread(attachment: Attachment, threadId: string, patch: Partial<ThreadMeta>, reply?: string) {
     const threads = attachment.session.ydoc.getMap(COLLAB_THREADS_MAP);
     attachment.session.ydoc.transact(() => {
-      if (reply) addThreadComment(threads, threadId, persona.userId, reply);
+      if (reply) addThreadComment(threads, threadId, SCHOLARPEN_AI.userId, reply);
       updateThreadMeta(threads, threadId, patch);
     }, AI_META_ORIGIN);
   }
@@ -288,12 +293,12 @@ export class CollabAgent {
   private async runCommentJob(job: Job, attachment: Attachment, threadId: string, signal: AbortSignal) {
     const { session } = attachment;
     const thread = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find((item) => item.id === threadId);
-    const persona = thread ? aiTargetOf(thread) : null;
-    if (!thread || !persona) return;
-    const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text, persona);
-    reply({ assignee: "ai", agent: persona.id, status: "in-progress", statusNote: undefined });
+    if (!thread || !threadWantsAI(thread)) return;
+    const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text);
+    reply({ assignee: "ai", agent: SCHOLARPEN_AI.id, status: "in-progress", statusNote: undefined });
+    if (thread.meta.scope === "document") return this.runDocumentRequest(job, attachment, thread, reply, signal);
 
-    let doc = readDoc(session);
+    const doc = readDoc(session);
     const range = threadRange(doc, threadId);
     if (!range) {
       reply({ assignee: "me", status: "open" },
@@ -306,66 +311,181 @@ export class CollabAgent {
         "This passage has no editable prose (it is an equation, figure or empty block), so I left it unchanged.");
       return;
     }
-    if (blocks.length > MAX_BLOCKS_PER_THREAD) {
+    if (blocks.length > MAX_DOCUMENT_BLOCKS) {
       reply({ assignee: "me", status: "open" },
-        `This comment spans ${blocks.length} paragraphs. Comment on ${MAX_BLOCKS_PER_THREAD} or fewer at a time so I can edit them safely.`);
+        `This comment spans ${blocks.length} paragraphs. Comment on ${MAX_DOCUMENT_BLOCKS} or fewer at a time so I can edit them safely.`);
       return;
     }
-    this.update(job, { blockId: blocks[0].id });
-
-    await this.waitForAuthor(job, attachment, blocks.map((block) => block.id), signal);
-    attachment.presence.claim(blocks[0].id, "editing", persona);
-
-    // Read the passage now, after waiting: this is the base the stale check compares against.
-    doc = readDoc(session);
-    const fresh = blocks.map((block) => findBlock(doc, block.id));
-    if (fresh.some((block) => !block)) {
-      reply({ assignee: "me", status: "open" },
-        "Part of the commented passage was deleted before I started, so I left it alone.");
-      return;
-    }
-    const bases: BlockBase[] = fresh.map((block) => captureBlock(block!));
-    const first = blockContent(fresh[0]!);
-    const last = blockContent(fresh[fresh.length - 1]!);
-    const response = await this.deps.complete(buildCommentEditMessages({
-      conversation: conversationOf(thread),
-      passage: joinProtections(bases),
+    const result = await this.editBlocks(job, attachment, thread, blocks.map((block) => block.id), {
       quoted: readableText(doc, range.from, range.to),
-      before: clip(readableText(doc, 0, first.from), 6000, "end"),
-      after: clip(readableText(doc, last.to, doc.content.size), 3000, "start"),
-      persona: persona.editGuidance,
-    }), signal);
-    if (signal.aborted) throw new Error("Cancelled");
-
-    const parsed = parseCommentEditResponse(response);
-    const outcomes: EditOutcome[] = [];
-    // Everything this request changes is one change set, accepted or rejected together.
-    const changeSetId = nextSuggestionId(readDoc(session));
-    if (parsed.passage !== null) {
-      const parts = splitProtected(bases, parsed.passage);
-      for (let index = 0; index < bases.length; index++) {
-        const outcome = applyBlockRewrite(session, bases[index], parts[index],
-          this.modeFor(attachment, bases[index].blockId), AI_ORIGIN, changeSetId);
-        outcomes.push(outcome);
-        if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[index].blockId, `comment:${threadId}`);
-      }
+      allowWiderScope: true,
+    }, signal);
+    if (result === "document") {
+      // The thread asks for more than its passage; from now on it is about the whole manuscript.
+      reply({ scope: "document" });
+      return this.runDocumentRequest(job, attachment, { ...thread, meta: { ...thread.meta, scope: "document" } }, reply, signal);
     }
-    const suggested = outcomes.some((outcome) => outcome.kind === "applied" && outcome.mode === "suggest");
+    this.finishEdit(job, attachment, thread, result, reply);
+  }
+
+  /** A request about the whole manuscript: find the paragraphs it touches, then edit them in batches. */
+  private async runDocumentRequest(job: Job, attachment: Attachment, thread: ThreadSnapshot,
+    reply: (patch: Partial<ThreadMeta>, text?: string) => void, signal: AbortSignal) {
+    const doc = readDoc(attachment.session);
+    const prose = listBlocks(doc).filter(hasInlineContent);
+    if (prose.length === 0) {
+      reply({ assignee: "me", status: "open" }, "The manuscript has no editable prose yet, so I left it unchanged.");
+      return;
+    }
+    const paragraphs = prose.map((block, index) => ({
+      number: index + 1,
+      kind: blockContent(block).node.type.name,
+      text: readableText(doc, blockContent(block).from, blockContent(block).to),
+    }));
+    // Long manuscripts are read in parts that each fit one model call.
+    const parts: Array<typeof paragraphs> = [[]];
+    let size = 0;
+    for (const paragraph of paragraphs) {
+      if (size > 0 && size + paragraph.text.length > PLAN_PART_CHARS) {
+        parts.push([]);
+        size = 0;
+      }
+      parts[parts.length - 1].push(paragraph);
+      size += paragraph.text.length;
+    }
+
+    this.update(job, { detail: "Reading the manuscript" });
+    attachment.presence.claim(prose[0].id, "reading");
+    const chosen = new Set<number>();
+    let summary = "";
+    for (let index = 0; index < parts.length; index++) {
+      const response = await this.deps.complete(buildDocumentPlanMessages({
+        conversation: conversationOf(thread),
+        paragraphs: parts[index],
+        part: parts.length > 1 ? { index: index + 1, total: parts.length } : undefined,
+      }), signal);
+      if (signal.aborted) throw new Error("Cancelled");
+      const plan = parseDocumentPlan(response, new Set(parts[index].map((paragraph) => paragraph.number)));
+      plan.paragraphs.forEach((number) => chosen.add(number));
+      summary ||= plan.summary;
+    }
+    attachment.presence.release();
+
+    const targets = [...chosen].sort((a, b) => a - b).map((number) => prose[number - 1].id);
+    if (targets.length === 0) {
+      reply({ assignee: "me", status: "open", statusNote: undefined }, summary || "Nothing in the manuscript needs to change for this.");
+      return;
+    }
+    const capped = targets.slice(0, MAX_DOCUMENT_BLOCKS);
+    const result = await this.editBlocks(job, attachment, thread, capped, { summary }, signal);
+    if (result === "document") return;
+    if (targets.length > capped.length) {
+      result.notes.push(`${targets.length} paragraphs need this change; I edited the first ${capped.length}. Reply here to continue with the rest.`);
+    }
+    this.finishEdit(job, attachment, thread, result, reply);
+  }
+
+  /**
+   * Rewrites the given blocks for the thread, a few paragraphs per model call,
+   * as one change set. Returns "document" when the model says the request
+   * needs the whole manuscript (only when `allowWiderScope` is set).
+   */
+  private async editBlocks(job: Job, attachment: Attachment, thread: ThreadSnapshot, blockIds: string[],
+    options: { quoted?: string; summary?: string; allowWiderScope?: boolean }, signal: AbortSignal): Promise<EditResult | "document"> {
+    const { session } = attachment;
+    const batches: string[][] = [];
+    for (let index = 0; index < blockIds.length; index += MAX_BLOCKS_PER_CALL) batches.push(blockIds.slice(index, index + MAX_BLOCKS_PER_CALL));
+    const result: EditResult = {
+      outcomes: [], replies: [], notes: [], summary: options.summary,
+      // Everything this request changes is one change set, accepted or rejected together.
+      changeSetId: nextSuggestionId(readDoc(session)),
+      paragraphs: blockIds.length,
+    };
+    this.update(job, { blockId: blockIds[0] });
+
+    for (let index = 0; index < batches.length; index++) {
+      if (batches.length > 1) this.update(job, { detail: `Editing part ${index + 1} of ${batches.length}` });
+      await this.waitForAuthor(job, attachment, batches[index], signal);
+      // Read the paragraphs now, after waiting: this is the base the stale check compares against.
+      const doc = readDoc(session);
+      const fresh = batches[index].map((id) => findBlock(doc, id)).filter((block): block is NonNullable<typeof block> => !!block);
+      if (fresh.length < batches[index].length) {
+        result.notes.push(batches.length > 1
+          ? "Some paragraphs were deleted before I reached them, so I skipped them."
+          : "Part of the commented passage was deleted before I started, so I left it alone.");
+        if (batches.length === 1) break;
+      }
+      if (fresh.length === 0) continue;
+      attachment.presence.claim(fresh[0].id, "editing");
+      const bases: BlockBase[] = fresh.map((block) => captureBlock(block));
+      const first = blockContent(fresh[0]);
+      const last = blockContent(fresh[fresh.length - 1]);
+      const response = await this.deps.complete(buildCommentEditMessages({
+        conversation: conversationOf(thread),
+        passage: joinProtections(bases),
+        quoted: options.quoted,
+        before: clip(readableText(doc, 0, first.from), 6000, "end"),
+        after: clip(readableText(doc, last.to, doc.content.size), 3000, "start"),
+        part: options.quoted === undefined ? { index: index + 1, total: batches.length } : undefined,
+        allowWiderScope: options.allowWiderScope,
+      }), signal);
+      if (signal.aborted) throw new Error("Cancelled");
+
+      const parsed = parseCommentEditResponse(response);
+      if (parsed.wantsDocument && options.allowWiderScope && index === 0) return "document";
+      if (parsed.reply) result.replies.push(parsed.reply);
+      if (parsed.passage === null) continue;
+      let parts: string[];
+      try {
+        parts = splitProtected(bases, parsed.passage);
+      } catch (error) {
+        if (batches.length === 1) throw error;
+        result.notes.push(`Part ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      for (let at = 0; at < bases.length; at++) {
+        const outcome = applyBlockRewrite(session, bases[at], parts[at],
+          this.modeFor(attachment, bases[at].blockId), AI_ORIGIN, result.changeSetId);
+        result.outcomes.push(outcome);
+        if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[at].blockId, `comment:${thread.id}`);
+      }
+      attachment.presence.release();
+    }
+    return result;
+  }
+
+  private finishEdit(job: Job, attachment: Attachment, thread: ThreadSnapshot, result: EditResult,
+    reply: (patch: Partial<ThreadMeta>, text?: string) => void) {
+    const { session } = attachment;
+    const suggested = result.outcomes.some((outcome) => outcome.kind === "applied" && outcome.mode === "suggest");
     if (suggested) {
       session.ydoc.transact(() => {
-        session.ydoc.getMap<ChangeSetInfo>(CHANGE_SETS_MAP).set(String(changeSetId), {
-          id: changeSetId,
+        session.ydoc.getMap<ChangeSetInfo>(CHANGE_SETS_MAP).set(String(result.changeSetId), {
+          id: result.changeSetId,
           label: clip(conversationOf(thread).at(-1)?.text.replace(/\s+/g, " ") ?? "AI edit", 80, "start"),
-          persona: persona.id,
-          threadId,
+          persona: SCHOLARPEN_AI.id,
+          threadId: thread.id,
           createdAt: this.now(),
         });
       }, AI_META_ORIGIN);
     }
-    const { text, meta } = summarize(parsed.reply, outcomes);
-    reply(suggested ? { ...meta, changeSet: changeSetId } : meta, text);
+    const lead = result.summary || result.replies[0] || "";
+    const changed = result.outcomes.filter((outcome) => outcome.kind === "applied").length;
+    const notes = [...result.notes];
+    if (result.paragraphs > MAX_BLOCKS_PER_CALL) notes.unshift(`Changed ${changed} of ${result.paragraphs} paragraphs.`);
+    const { text, meta } = summarize(lead, result.outcomes, notes);
+    reply(suggested ? { ...meta, changeSet: result.changeSetId } : meta, text);
     this.update(job, { detail: meta.statusNote ?? undefined });
   }
+}
+
+interface EditResult {
+  outcomes: EditOutcome[];
+  replies: string[];
+  notes: string[];
+  summary?: string;
+  changeSetId: number;
+  paragraphs: number;
 }
 
 function conversationOf(thread: ThreadSnapshot) {
@@ -400,7 +520,9 @@ function splitProtected(bases: BlockBase[], passage: string) {
   return parts;
 }
 
-function summarize(reply: string, outcomes: EditOutcome[]): { text: string; meta: Partial<ThreadMeta> } {
+const MAX_CONFLICT_PREVIEWS = 3;
+
+function summarize(reply: string, outcomes: EditOutcome[], notes: string[] = []): { text: string; meta: Partial<ThreadMeta> } {
   const applied = outcomes.filter((outcome): outcome is Extract<EditOutcome, { kind: "applied" }> => outcome.kind === "applied");
   const conflicts = outcomes.filter((outcome): outcome is Extract<EditOutcome, { kind: "conflict" }> => outcome.kind === "conflict");
   const lines = [reply || (applied.length ? "Done." : "I didn't change the text.")];
@@ -414,9 +536,13 @@ function summarize(reply: string, outcomes: EditOutcome[]): { text: string; meta
   if (applied.some((outcome) => outcome.rebased)) {
     lines.push("You edited this passage while I worked; I merged my changes around yours.");
   }
-  for (const conflict of conflicts) {
+  for (const conflict of conflicts.slice(0, MAX_CONFLICT_PREVIEWS)) {
     lines.push(`${conflict.reason} I didn't change the text. Here is what I would write:\n\n${conflict.preview}`);
   }
+  if (conflicts.length > MAX_CONFLICT_PREVIEWS) {
+    lines.push(`${conflicts.length - MAX_CONFLICT_PREVIEWS} more paragraphs were left as proposals for the same reason.`);
+  }
+  lines.push(...notes);
 
   if (conflicts.length > 0) {
     const observed = conflicts.every((conflict) => conflict.reason.includes("Observe"));

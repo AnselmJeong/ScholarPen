@@ -22,9 +22,11 @@ import {
   UnnestBlockButton,
   CreateLinkButton,
   AddCommentButton,
+  FloatingThreadController,
 } from "@blocknote/react";
 import { CommentsExtension } from "@blocknote/core/comments";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
+import { ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
@@ -702,6 +704,7 @@ function CollabEditorArea({
     const scholar = getScholarSlashMenuItems(
       editor as Parameters<typeof getScholarSlashMenuItems>[0],
       () => setDoiDialogOpen(true),
+      () => startCommentAtCursor(editor),
     );
     const headings = getCustomHeadingSlashMenuItems(
       editor as Parameters<typeof getCustomHeadingSlashMenuItems>[0]
@@ -764,8 +767,11 @@ function CollabEditorArea({
             slashMenu={false}
             formattingToolbar={false}
             sideMenu={false}
+            comments={false}
           >
             <EditorSideMenu onOpenProperties={setPropertiesBlockId} />
+            <ScholarFloatingComposerController />
+            <FloatingThreadController floatingThread={ScholarFloatingThread} />
             <AIMenuController />
             <SuggestionMenuController
               triggerCharacter="$"
