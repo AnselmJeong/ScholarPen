@@ -1,7 +1,7 @@
 {
   "name": "scholarpen",
   "type": "module",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "AI-Assisted Academic Article Writer for macOS",
   "private": true,
   "scripts": {
@@ -9,7 +9,8 @@
     "dev": "vite build && electrobun dev --watch",
     "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
     "hmr": "vite --port 5173",
-    "build:release": "vite build && electrobun build --env=stable"
+    "build:release": "vite build && electrobun build --env=stable",
+    "sync:im-not-ai": "bun scripts/sync-im-not-ai.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.38",

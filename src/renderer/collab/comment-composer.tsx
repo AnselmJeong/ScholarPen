@@ -194,14 +194,11 @@ function blockTextRange(editor: BlockNoteEditor<any, any, any>, blockId: string)
 }
 
 /**
- * Opens the comment composer without a text selection (slash menu). Such a
- * comment asks for changes anywhere in the manuscript. It still needs a place
- * in the text to live: the cursor's paragraph, or on an empty line the
- * nearest paragraph above (or below) that has text.
+ * A comment about the whole manuscript still needs a place in the text to
+ * live: selects the cursor's paragraph, or on an empty line the nearest
+ * paragraph above (or below) that has text.
  */
-export function startCommentAtCursor(editor: BlockNoteEditor<any, any, any>) {
-  const comments = editor.getExtension(CommentsExtension);
-  if (!comments) return;
+function selectManuscriptCommentAnchor(editor: BlockNoteEditor<any, any, any>) {
   const cursor = editor.getTextCursorPosition();
   const candidates = [cursor.block];
   for (let block = cursor.prevBlock; block; block = editor.getPrevBlock(block)) candidates.push(block);
@@ -209,15 +206,43 @@ export function startCommentAtCursor(editor: BlockNoteEditor<any, any, any>) {
   const range = candidates
     .map((block) => blockTextRange(editor, block.id))
     .find((candidate) => candidate && candidate.to > candidate.from);
-  if (!range) return;
   const view = editor.prosemirrorView;
-  if (!view) return;
+  if (!range || !view) return false;
   view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, range.from, range.to)));
+  return true;
+}
+
+/**
+ * Opens the comment composer without a text selection (slash menu). Such a
+ * comment asks for changes anywhere in the manuscript.
+ */
+export function startCommentAtCursor(editor: BlockNoteEditor<any, any, any>) {
+  const comments = editor.getExtension(CommentsExtension);
+  if (!comments || !selectManuscriptCommentAnchor(editor)) return;
   manuscriptComments.add(editor);
   // Opening is deferred so the selection change above (which cancels a pending
   // comment) and the slash menu closing are both settled first.
   requestAnimationFrame(() => {
     comments.startPendingComment();
     editor.getExtension(FormattingToolbarExtension)?.store.setState(false);
+  });
+}
+
+/**
+ * Asks ScholarPen AI to run the built-in im-not-ai humanizer over the whole
+ * manuscript (slash menu): saves the request as a comment right away.
+ */
+export function requestHumanizeManuscript(editor: BlockNoteEditor<any, any, any>) {
+  const comments = editor.getExtension(CommentsExtension);
+  if (!comments) return;
+  const text = "/humanize — 원고 전체의 AI 티를 없애고 어투를 자연스럽게 다듬어 주세요 (im-not-ai).";
+  // Deferred like startCommentAtCursor, so the slash menu has removed its query text first.
+  requestAnimationFrame(() => {
+    if (!selectManuscriptCommentAnchor(editor)) return;
+    const metadata: ThreadMeta = { assignee: "ai", status: "open", requestedAt: Date.now(), scope: "document" };
+    void comments.createThread({
+      initialComment: { body: [{ type: "paragraph", content: [{ type: "text", text, styles: {} }] }] },
+      metadata,
+    });
   });
 }

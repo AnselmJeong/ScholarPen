@@ -11,6 +11,7 @@ export function getScholarSlashMenuItems(
   editor: ScholarEditor,
   onOpenDOIDialog: () => void,
   onAddComment: () => void,
+  onHumanize: () => void,
 ): DefaultReactSuggestionItem[] {
   // Ordered by how often each is used.
   return [
@@ -49,6 +50,15 @@ export function getScholarSlashMenuItems(
       icon: <MessageSquarePlus size={18} />,
       subtext: "Ask ScholarPen AI to change the whole manuscript",
       onItemClick: onAddComment,
+    },
+    // The built-in im-not-ai humanizer over the whole manuscript
+    {
+      title: "Humanize Korean",
+      aliases: ["humanize", "im-not-ai", "윤문", "어투", "자연스럽게", "ai티"],
+      group: "Scholar",
+      icon: <Sparkles size={18} />,
+      subtext: "AI 티 제거 · 원고 전체를 자연스러운 한국어로 (im-not-ai)",
+      onItemClick: onHumanize,
     },
     // Figure block
     {

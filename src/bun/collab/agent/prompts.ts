@@ -24,6 +24,8 @@ export interface CommentEditPrompt {
   part?: { index: number; total: number };
   /** Lets the model answer that the request needs changes outside the commented passage. */
   allowWiderScope?: boolean;
+  /** Instructions of a skill the thread asked for (e.g. the im-not-ai humanizer). */
+  guidance?: string;
 }
 
 export function buildCommentEditMessages(prompt: CommentEditPrompt): OllamaMessage[] {
@@ -45,6 +47,7 @@ export function buildCommentEditMessages(prompt: CommentEditPrompt): OllamaMessa
     "Do not invent facts, data, quotations, citations or references. If the request needs information you do not have, " +
     "say so in your reply instead of guessing. " +
     MARKER_RULES + " " +
+    (prompt.guidance ? `${prompt.guidance}\n\n` : "") +
     "Answer in exactly this format and nothing else:\n" +
     "<reply>One to three sentences for the comment thread, in the language the author used in the thread: what you changed and anything they should verify.</reply>\n" +
     "<passage>The complete annotated passage with your revision, or exactly NO_CHANGE when the thread is a question or needs no edit.</passage>";

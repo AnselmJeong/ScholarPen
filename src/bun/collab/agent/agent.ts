@@ -20,13 +20,28 @@ import {
   blocksInRange,
   findBlock,
   hasInlineContent,
+  hasSuggestionMarks,
   listBlocks,
   readDoc,
   readableText,
   threadRange,
+  type BlockRef,
 } from "./doc-model";
 import { PresenceTracker } from "./presence";
 import { buildCommentEditMessages, buildDocumentPlanMessages, clip, parseCommentEditResponse, parseDocumentPlan } from "./prompts";
+import {
+  asksForHumanize,
+  buildHumanizeDiagnosisMessages,
+  CHANGE_RATE_ABORT,
+  CHANGE_RATE_WARN,
+  changeRate,
+  humanizeGuidance,
+  isKoreanProse,
+  parseHumanizeDiagnosis,
+  sampleParagraphs,
+} from "./humanize/humanize";
+import { protectedRewritePreview } from "../../../shared/ai-text-protection";
+import type { Node as PMNode } from "prosemirror-model";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
@@ -62,6 +77,8 @@ interface Job {
 const MAX_BLOCKS_PER_CALL = 5;
 /** Most paragraphs one request edits; larger requests continue on the next reply. */
 const MAX_DOCUMENT_BLOCKS = 60;
+/** The humanizer rewrites every Korean paragraph, so it takes a whole paper in one request. */
+const MAX_HUMANIZE_BLOCKS = 200;
 /** Manuscript text per planning call; longer manuscripts are planned in parts. */
 const PLAN_PART_CHARS = 60_000;
 const RECENT_JOBS = 12;
@@ -316,9 +333,13 @@ export class CollabAgent {
         `This comment spans ${blocks.length} paragraphs. Comment on ${MAX_DOCUMENT_BLOCKS} or fewer at a time so I can edit them safely.`);
       return;
     }
+    const humanize = asksForHumanize(conversationOf(thread))
+      ? await this.diagnoseHumanize(job, attachment, thread, doc, blocks, signal)
+      : undefined;
     const result = await this.editBlocks(job, attachment, thread, blocks.map((block) => block.id), {
       quoted: readableText(doc, range.from, range.to),
       allowWiderScope: true,
+      ...(humanize !== undefined ? { guidance: humanizeGuidance(humanize), gateChangeRate: true } : {}),
     }, signal);
     if (result === "document") {
       // The thread asks for more than its passage; from now on it is about the whole manuscript.
@@ -337,6 +358,7 @@ export class CollabAgent {
       reply({ assignee: "me", status: "open" }, "The manuscript has no editable prose yet, so I left it unchanged.");
       return;
     }
+    if (asksForHumanize(conversationOf(thread))) return this.runHumanizeRequest(job, attachment, thread, doc, prose, reply, signal);
     const paragraphs = prose.map((block, index) => ({
       number: index + 1,
       kind: blockContent(block).node.type.name,
@@ -386,17 +408,64 @@ export class CollabAgent {
   }
 
   /**
+   * The im-not-ai humanizer over the whole manuscript: no planning call, every
+   * Korean paragraph is a target; one diagnosis, then the batched rewrite.
+   */
+  private async runHumanizeRequest(job: Job, attachment: Attachment, thread: ThreadSnapshot, doc: PMNode, prose: BlockRef[],
+    reply: (patch: Partial<ThreadMeta>, text?: string) => void, signal: AbortSignal) {
+    const targets = prose.filter((block) => {
+      const content = blockContent(block).node;
+      // Headings are section titles (kept by the rulebook); paragraphs with pending suggestions are left for the author.
+      return content.type.name !== "heading" && !hasSuggestionMarks(content) && isKoreanProse(content.textContent);
+    });
+    if (targets.length === 0) {
+      reply({ assignee: "me", status: "open", statusNote: undefined },
+        "I found no Korean paragraphs to humanize (paragraphs with pending suggestions are skipped), so I left the manuscript unchanged.");
+      return;
+    }
+    const capped = targets.slice(0, MAX_HUMANIZE_BLOCKS);
+    const diagnosis = await this.diagnoseHumanize(job, attachment, thread, doc, capped, signal);
+    const result = await this.editBlocks(job, attachment, thread, capped.map((block) => block.id), {
+      summary: diagnosis?.summary,
+      guidance: humanizeGuidance(diagnosis),
+      gateChangeRate: true,
+    }, signal);
+    if (result === "document") return;
+    if (targets.length > capped.length) {
+      result.notes.push(`${targets.length} paragraphs are in Korean; I worked on the first ${capped.length}. Reply here to continue with the rest.`);
+    }
+    this.finishEdit(job, attachment, thread, result, reply);
+  }
+
+  /** One diagnosis call over the text: which AI tells dominate it. Null when the answer could not be read. */
+  private async diagnoseHumanize(job: Job, attachment: Attachment, thread: ThreadSnapshot, doc: PMNode, blocks: BlockRef[],
+    signal: AbortSignal) {
+    this.update(job, { detail: "Diagnosing AI tells (im-not-ai)" });
+    attachment.presence.claim(blocks[0].id, "reading");
+    const texts = blocks.map((block) => readableText(doc, blockContent(block).from, blockContent(block).to));
+    const response = await this.deps.complete(buildHumanizeDiagnosisMessages({
+      conversation: conversationOf(thread),
+      paragraphs: sampleParagraphs(texts),
+    }), signal);
+    attachment.presence.release();
+    if (signal.aborted) throw new Error("Cancelled");
+    this.update(job, { detail: undefined });
+    return parseHumanizeDiagnosis(response);
+  }
+
+  /**
    * Rewrites the given blocks for the thread, a few paragraphs per model call,
    * as one change set. Returns "document" when the model says the request
    * needs the whole manuscript (only when `allowWiderScope` is set).
    */
   private async editBlocks(job: Job, attachment: Attachment, thread: ThreadSnapshot, blockIds: string[],
-    options: { quoted?: string; summary?: string; allowWiderScope?: boolean }, signal: AbortSignal): Promise<EditResult | "document"> {
+    options: { quoted?: string; summary?: string; allowWiderScope?: boolean; guidance?: string; gateChangeRate?: boolean },
+    signal: AbortSignal): Promise<EditResult | "document"> {
     const { session } = attachment;
     const batches: string[][] = [];
     for (let index = 0; index < blockIds.length; index += MAX_BLOCKS_PER_CALL) batches.push(blockIds.slice(index, index + MAX_BLOCKS_PER_CALL));
     const result: EditResult = {
-      outcomes: [], replies: [], notes: [], summary: options.summary,
+      outcomes: [], replies: [], notes: [], changeRates: [], summary: options.summary,
       // Everything this request changes is one change set, accepted or rejected together.
       changeSetId: nextSuggestionId(readDoc(session)),
       paragraphs: blockIds.length,
@@ -428,6 +497,7 @@ export class CollabAgent {
         after: clip(readableText(doc, last.to, doc.content.size), 3000, "start"),
         part: options.quoted === undefined ? { index: index + 1, total: batches.length } : undefined,
         allowWiderScope: options.allowWiderScope,
+        guidance: options.guidance,
       }), signal);
       if (signal.aborted) throw new Error("Cancelled");
 
@@ -444,9 +514,20 @@ export class CollabAgent {
         continue;
       }
       for (let at = 0; at < bases.length; at++) {
+        let rate: number | undefined;
+        if (options.gateChangeRate) {
+          const before = protectedRewritePreview(bases[at].protection.protectedText, bases[at].protection);
+          rate = changeRate(before, protectedRewritePreview(parts[at], bases[at].protection));
+          if (rate >= CHANGE_RATE_ABORT) {
+            result.notes.push(`I left one paragraph unchanged ("${clip(before, 40, "start").replace(/\n\[…\]$/, "…")}"): ` +
+              `the rewrite changed ${percent(rate)} of it, which im-not-ai treats as over-polishing.`);
+            continue;
+          }
+        }
         const outcome = applyBlockRewrite(session, bases[at], parts[at],
           this.modeFor(attachment, bases[at].blockId), AI_ORIGIN, result.changeSetId);
         result.outcomes.push(outcome);
+        if (rate !== undefined && outcome.kind === "applied") result.changeRates.push(rate);
         if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[at].blockId, `comment:${thread.id}`);
       }
       attachment.presence.release();
@@ -473,6 +554,12 @@ export class CollabAgent {
     const changed = result.outcomes.filter((outcome) => outcome.kind === "applied").length;
     const notes = [...result.notes];
     if (result.paragraphs > MAX_BLOCKS_PER_CALL) notes.unshift(`Changed ${changed} of ${result.paragraphs} paragraphs.`);
+    if (result.changeRates.length > 0) {
+      const mean = result.changeRates.reduce((sum, rate) => sum + rate, 0) / result.changeRates.length;
+      const high = result.changeRates.filter((rate) => rate >= CHANGE_RATE_WARN).length;
+      notes.push(`Change rate ${percent(mean)} on average across the paragraphs I changed` +
+        (high ? `; ${high} changed by ${percent(CHANGE_RATE_WARN)} or more, so check those first.` : "."));
+    }
     const { text, meta } = summarize(lead, result.outcomes, notes);
     reply(suggested ? { ...meta, changeSet: result.changeSetId } : meta, text);
     this.update(job, { detail: meta.statusNote ?? undefined });
@@ -483,9 +570,15 @@ interface EditResult {
   outcomes: EditOutcome[];
   replies: string[];
   notes: string[];
+  /** Change rate of each applied paragraph, when the request gates it (the humanizer). */
+  changeRates: number[];
   summary?: string;
   changeSetId: number;
   paragraphs: number;
+}
+
+function percent(rate: number) {
+  return `${Math.round(rate * 100)}%`;
 }
 
 function conversationOf(thread: ThreadSnapshot) {
