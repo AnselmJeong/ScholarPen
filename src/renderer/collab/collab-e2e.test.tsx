@@ -231,14 +231,23 @@ test("a comment for the AI comes back as a suggestion the author can accept", as
   expect(view.dom.querySelector("del")?.textContent).toContain("prove");
   expect(JSON.stringify(acceptedDocument(a.editor))).toContain("These data prove the hypothesis beyond doubt.");
 
+  // A reload from the saved JSON (accepted text only) must keep pending suggestions.
+  await act(async () => { reconcileBlocks(a.editor, JSON.parse(JSON.stringify(acceptedDocument(a.editor)))); });
+  await settle();
+  expect(view.dom.querySelector("ins")?.textContent).toContain("support");
+
   const panel = document.createElement("div");
   document.body.append(panel);
   const panelRoot = createRoot(panel);
   await act(async () => { panelRoot.render(<AIActivitySection editor={a.editor} />); });
-  expect(panel.textContent).toContain("suggested change");
-  const acceptAll = [...panel.querySelectorAll("button")].find((button) => button.textContent === "Accept all")!;
-  await act(async () => { acceptAll.click(); });
+  expect(panel.textContent).toContain("1 AI change to review");
+  expect(panel.textContent).toContain("1 paragraph");
+  const accept = [...panel.querySelectorAll("button")].find((button) => button.textContent === "Accept")!;
+  await act(async () => { accept.click(); });
   await settle();
+  // Accepting the change set closes the loop on the thread that asked for it.
+  expect(readThreads(a.peer.ydoc.getMap("threads"))[0]).toMatchObject({ resolved: true, meta: { status: "resolved" } });
+  expect(panel.textContent).not.toContain("AI change to review");
   expect(view.dom.querySelector("ins")).toBeNull();
   expect(JSON.stringify(acceptedDocument(a.editor))).toContain("These data support the hypothesis.");
   // Accepting syncs back to Bun like any other edit.

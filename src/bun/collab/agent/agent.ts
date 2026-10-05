@@ -13,7 +13,8 @@ import {
 import type { AgentJobView } from "../../../shared/collab/agent-types";
 import { isAIUser, PERSONAS, type Persona } from "../../../shared/collab/personas";
 import type { CollabRegistry, CollabSession } from "../registry";
-import { applyBlockRewrite, captureBlock, type BlockBase, type EditMode, type EditOutcome } from "./block-edit";
+import { applyBlockRewrite, captureBlock, nextSuggestionId, type BlockBase, type EditMode, type EditOutcome } from "./block-edit";
+import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../../shared/collab/change-sets";
 import {
   blockContent,
   blocksInRange,
@@ -338,16 +339,31 @@ export class CollabAgent {
 
     const parsed = parseCommentEditResponse(response);
     const outcomes: EditOutcome[] = [];
+    // Everything this request changes is one change set, accepted or rejected together.
+    const changeSetId = nextSuggestionId(readDoc(session));
     if (parsed.passage !== null) {
       const parts = splitProtected(bases, parsed.passage);
       for (let index = 0; index < bases.length; index++) {
-        const outcome = applyBlockRewrite(session, bases[index], parts[index], this.modeFor(attachment, bases[index].blockId), AI_ORIGIN);
+        const outcome = applyBlockRewrite(session, bases[index], parts[index],
+          this.modeFor(attachment, bases[index].blockId), AI_ORIGIN, changeSetId);
         outcomes.push(outcome);
         if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[index].blockId, `comment:${threadId}`);
       }
     }
+    const suggested = outcomes.some((outcome) => outcome.kind === "applied" && outcome.mode === "suggest");
+    if (suggested) {
+      session.ydoc.transact(() => {
+        session.ydoc.getMap<ChangeSetInfo>(CHANGE_SETS_MAP).set(String(changeSetId), {
+          id: changeSetId,
+          label: clip(conversationOf(thread).at(-1)?.text.replace(/\s+/g, " ") ?? "AI edit", 80, "start"),
+          persona: persona.id,
+          threadId,
+          createdAt: this.now(),
+        });
+      }, AI_META_ORIGIN);
+    }
     const { text, meta } = summarize(parsed.reply, outcomes);
-    reply(meta, text);
+    reply(suggested ? { ...meta, changeSet: changeSetId } : meta, text);
     this.update(job, { detail: meta.statusNote ?? undefined });
   }
 }
@@ -390,7 +406,7 @@ function summarize(reply: string, outcomes: EditOutcome[]): { text: string; meta
   const lines = [reply || (applied.length ? "Done." : "I didn't change the text.")];
 
   if (applied.some((outcome) => outcome.mode === "suggest")) {
-    lines.push("My edits are marked as suggestions in the text. Accept or reject them from the Activity panel.");
+    lines.push("My edits are marked as suggestions in the text. Accept or reject them together from this thread or the Activity panel.");
   }
   if (applied.some((outcome) => outcome.mode === "direct")) {
     lines.push("Small corrections were applied directly; you can undo them from the Activity panel.");

@@ -14,6 +14,7 @@ import { getEditorCollab } from "../../collab/editor-collab";
 import { REVIEW_CATEGORY_LABEL, REVIEW_MAP } from "../../../shared/collab/review";
 import { PERSONAS, isAIUser, personaById, personaByUser } from "../../../shared/collab/personas";
 import { AIActivitySection } from "./AIActivitySection";
+import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import { ZonesSection } from "./ZonesSection";
 
 type Filter = "open" | "ai" | "mine" | "resolved";
@@ -66,6 +67,7 @@ interface ActivityPanelProps {
 export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   const threads = useThreads(editor);
   const positions = useThreadPositions(editor);
+  const pendingChangeSets = new Set(usePendingChangeSets(editor).map((set) => String(set.id)));
   const [filter, setFilter] = useState<Filter>("open");
   const collab = editor ? getEditorCollab(editor) : null;
 
@@ -153,6 +155,9 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
               ...(assignee === "ai" ? { requestedAt: Date.now(), agent: agent ?? thread.meta.agent } : {}),
             })}
             onResolve={() => setMeta(thread.id, { status: "resolved" })}
+            onDecideChange={thread.meta.changeSet !== undefined && pendingChangeSets.has(String(thread.meta.changeSet))
+              ? (accept) => decideChangeSet(editor, thread.meta.changeSet!, accept)
+              : undefined}
             onMute={thread.meta.category ? () => {
               const map = collab.ydoc.getMap(REVIEW_MAP);
               collab.ydoc.transact(() => {
@@ -169,7 +174,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   );
 }
 
-function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen, onMute }: {
+function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen, onMute, onDecideChange }: {
   thread: ThreadSnapshot;
   reference: string | null;
   onSelect: () => void;
@@ -178,6 +183,8 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
   onReopen: () => void;
   /** Resolves an AI review finding and stops the reviewer raising its category. */
   onMute?: () => void;
+  /** Accepts or rejects the AI's change set for this thread, when one is pending. */
+  onDecideChange?: (accept: boolean) => void;
 }) {
   const status = threadStatus(thread);
   const first = thread.comments.find((comment) => !comment.deleted);
@@ -227,6 +234,18 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
         <p className="mt-1 text-[11px] italic leading-4 text-muted-foreground">{thread.meta.statusNote}</p>
       )}
       <div className="mt-1.5 flex gap-1 opacity-70 group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
+        {onDecideChange && (
+          <>
+            <button type="button" onClick={() => onDecideChange(true)}
+              className="flex items-center gap-1 rounded border border-emerald-600/30 px-1.5 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-500/10">
+              <Check className="h-3 w-3" /> Accept change
+            </button>
+            <button type="button" onClick={() => onDecideChange(false)}
+              className="flex items-center gap-1 rounded border border-red-600/30 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-500/10">
+              <X className="h-3 w-3" /> Reject change
+            </button>
+          </>
+        )}
         {status === "resolved" ? (
           <SmallButton icon={<RotateCcw className="h-3 w-3" />} label="Reopen" onClick={onReopen} />
         ) : (

@@ -1,4 +1,5 @@
 import type { BlockNoteEditor, PartialBlock } from "@blocknote/core";
+import { acceptedDocument } from "./suggestions";
 
 /**
  * Brings a collaborative editor in line with a JSON snapshot that changed
@@ -8,10 +9,11 @@ import type { BlockNoteEditor, PartialBlock } from "@blocknote/core";
  */
 export function reconcileBlocks(editor: BlockNoteEditor<any, any, any>, target: PartialBlock<any, any, any>[]) {
   const current = editor.document;
-  // Normalize the target the same way the editor would store it.
+  // The JSON holds only accepted text, so compare it with the accepted view:
+  // a block whose only difference is a pending AI suggestion is unchanged.
   const serialize = (block: unknown) => JSON.stringify(block);
   const targetKeys = target.map(serialize);
-  const currentKeys = current.map(serialize);
+  const currentKeys = acceptedDocument(editor).map(serialize);
 
   let start = 0;
   while (start < current.length && start < target.length && currentKeys[start] === targetKeys[start]) start++;
@@ -29,7 +31,7 @@ export function reconcileBlocks(editor: BlockNoteEditor<any, any, any>, target: 
     if (replaced.length > 0 && inserted.length > 0 && replaced.length === inserted.length) {
       // Same shape: swap block by block so unchanged blocks in between keep their marks.
       replaced.forEach((block, index) => {
-        if (serialize(block) !== serialize(inserted[index])) editor.replaceBlocks([block.id], [inserted[index]]);
+        if (currentKeys[start + index] !== targetKeys[start + index]) editor.replaceBlocks([block.id], [inserted[index]]);
       });
     } else if (replaced.length > 0) {
       editor.replaceBlocks(replaced.map((block) => block.id), inserted);

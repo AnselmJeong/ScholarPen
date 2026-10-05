@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
-import { AlertTriangle, Bot, Check, CircleDot, Clock, Pause, Play, ScanSearch, Undo2, X } from "lucide-react";
+import { AlertTriangle, Bot, Check, ChevronDown, ChevronRight, CircleDot, Clock, Pause, Play, ScanSearch, Undo2, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { onCollabActivity, rpc } from "../../rpc";
 import { getEditorCollab } from "../../collab/editor-collab";
-import { listSuggestions, resolveAllSuggestions, resolveSuggestion, type PendingSuggestion } from "../../collab/suggestions";
+import type { PendingChangeSet } from "../../collab/suggestions";
+import { decideAllChangeSets, decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import type { AgentActivityMessage, AgentJobView } from "../../../shared/collab/agent-types";
 import { REVIEW_MAP, reviewSettingsOf, updateReviewSettings, type ReviewSettings } from "../../../shared/collab/review";
 import { DEFAULT_PERSONA_ID, PERSONAS, personaById } from "../../../shared/collab/personas";
@@ -45,18 +46,6 @@ function useAgentActivity(docKey: string | null) {
   return activity;
 }
 
-function useSuggestions(editor: BlockNoteEditor<any, any, any>) {
-  const [suggestions, setSuggestions] = useState<PendingSuggestion[]>([]);
-  useEffect(() => {
-    const refresh = () => {
-      const doc = editor.prosemirrorView?.state.doc;
-      setSuggestions(doc ? listSuggestions(doc) : []);
-    };
-    refresh();
-    return editor.onChange(refresh);
-  }, [editor]);
-  return suggestions;
-}
 
 const JOB_ICON: Record<AgentJobView["state"], React.ReactNode> = {
   queued: <Clock className="h-3 w-3 text-muted-foreground" />,
@@ -76,11 +65,11 @@ const JOB_STATE: Record<AgentJobView["state"], string> = {
   cancelled: "Stopped",
 };
 
-/** AI work queue and pending suggestions for the active document. */
+/** AI work queue and pending change sets for the active document. */
 export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any, any> }) {
   const collab = getEditorCollab(editor);
   const activity = useAgentActivity(collab?.docKey ?? null);
-  const suggestions = useSuggestions(editor);
+  const changeSets = usePendingChangeSets(editor);
   const [showDone, setShowDone] = useState(false);
   const jobs = activity?.jobs ?? [];
   const active = jobs.filter((job) => ["queued", "waiting", "working"].includes(job.state));
@@ -175,31 +164,19 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
       )}
       {showDone && finished.map((job) => <JobRow key={job.id} job={job} editor={editor} />)}
 
-      {suggestions.length > 0 && (
+      {changeSets.length > 0 && (
         <div className="border-t border-border">
           <div className="flex items-center gap-1 px-3 py-1.5">
             <span className="mr-auto text-[11px] font-medium text-foreground">
-              {suggestions.length} suggested {suggestions.length === 1 ? "change" : "changes"}
+              {changeSets.length} AI {changeSets.length === 1 ? "change" : "changes"} to review
             </span>
-            <button type="button" onClick={() => resolveAllSuggestions(editor, true)}
+            <button type="button" onClick={() => decideAllChangeSets(editor, true)}
               className="rounded px-1.5 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-500/10">Accept all</button>
-            <button type="button" onClick={() => resolveAllSuggestions(editor, false)}
+            <button type="button" onClick={() => decideAllChangeSets(editor, false)}
               className="rounded px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-500/10">Reject all</button>
           </div>
-          <div className="max-h-48 overflow-y-auto">
-            {suggestions.map((suggestion) => (
-              <div key={String(suggestion.id)} className="group flex items-start gap-2 px-3 py-1.5 hover:bg-muted/50">
-                <button type="button" onClick={() => scrollTo(suggestion.from)} className="min-w-0 flex-1 text-left text-[11px] leading-4">
-                  {suggestion.deleted && <del className="text-muted-foreground">{suggestion.deleted.slice(0, 120)}</del>}
-                  {suggestion.deleted && suggestion.inserted && " "}
-                  {suggestion.inserted && <ins className="no-underline">{suggestion.inserted.slice(0, 120)}</ins>}
-                </button>
-                <IconButton label="Accept" onClick={() => resolveSuggestion(editor, suggestion.id, true)}
-                  icon={<Check className="h-3 w-3 text-emerald-700" />} />
-                <IconButton label="Reject" onClick={() => resolveSuggestion(editor, suggestion.id, false)}
-                  icon={<X className="h-3 w-3 text-red-600" />} />
-              </div>
-            ))}
+          <div className="max-h-72 overflow-y-auto">
+            {changeSets.map((set) => <ChangeSetRow key={String(set.id)} set={set} editor={editor} scrollTo={scrollTo} />)}
           </div>
         </div>
       )}
@@ -236,5 +213,54 @@ function IconButton({ label, icon, onClick, disabled }: {
       className="rounded border border-border p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40">
       {icon}
     </button>
+  );
+}
+
+/** One AI request's changes: decided as a unit, with an optional per-paragraph review. */
+function ChangeSetRow({ set, editor, scrollTo }: {
+  set: PendingChangeSet;
+  editor: BlockNoteEditor<any, any, any>;
+  scrollTo: (from: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const persona = personaById(set.info?.persona);
+  const count = set.paragraphs.length;
+  return (
+    <div className="border-b border-border/60 last:border-b-0">
+      <div className="flex items-center gap-1.5 px-3 py-1.5">
+        <button type="button" onClick={() => setOpen((value) => !value)} aria-label={open ? "Hide details" : "Review paragraph by paragraph"}
+          className="text-muted-foreground hover:text-foreground">
+          {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        </button>
+        <button type="button" onClick={() => {
+          if (set.info?.threadId) editor.getExtension(CommentsExtension)?.selectThread(set.info.threadId);
+          else scrollTo(set.from);
+        }} className="min-w-0 flex-1 text-left">
+          <span className="block truncate text-[11px] text-foreground">
+            <span style={{ color: persona.color }}>{persona.shortName}</span> · {set.info?.label ?? "AI edit"}
+          </span>
+          <span className="block text-[10px] text-muted-foreground">
+            {count} {count === 1 ? "paragraph" : "paragraphs"}
+          </span>
+        </button>
+        <button type="button" onClick={() => decideChangeSet(editor, set.id, true)}
+          className="rounded border border-emerald-600/30 px-1.5 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-500/10">Accept</button>
+        <button type="button" onClick={() => decideChangeSet(editor, set.id, false)}
+          className="rounded border border-red-600/30 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-500/10">Reject</button>
+      </div>
+      {open && set.paragraphs.map((paragraph) => (
+        <div key={paragraph.blockId ?? paragraph.from} className="flex items-start gap-2 py-1 pl-8 pr-3 hover:bg-muted/50">
+          <button type="button" onClick={() => scrollTo(paragraph.from)} className="min-w-0 flex-1 text-left text-[11px] leading-4">
+            {paragraph.deleted && <del className="text-muted-foreground">{paragraph.deleted.slice(0, 160)}</del>}
+            {paragraph.deleted && paragraph.inserted && " "}
+            {paragraph.inserted && <ins className="no-underline">{paragraph.inserted.slice(0, 160)}</ins>}
+          </button>
+          <IconButton label="Accept this paragraph" icon={<Check className="h-3 w-3 text-emerald-700" />}
+            onClick={() => decideChangeSet(editor, set.id, true, paragraph)} />
+          <IconButton label="Reject this paragraph" icon={<X className="h-3 w-3 text-red-600" />}
+            onClick={() => decideChangeSet(editor, set.id, false, paragraph)} />
+        </div>
+      ))}
+    </div>
   );
 }

@@ -134,6 +134,24 @@ test("a comment for the AI becomes a tracked suggestion and a thread reply", asy
   expect(parts.filter((p) => p.mark === "insertion").map((p) => p.text).join("|")).toContain("suggest");
   // The comment still anchors the passage.
   expect(threadRange(readDoc(session), threadId)).not.toBeNull();
+  // Every change of this request carries one id: the change set the thread points to.
+  const ids = new Set<number>();
+  blockContent(findBlock(readDoc(session), "p1")!).node.descendants((node) => {
+    node.marks.forEach((mark) => { if (mark.type.name === "insertion" || mark.type.name === "deletion") ids.add(mark.attrs.id); });
+    return true;
+  });
+  expect([...ids]).toEqual([thread.meta.changeSet!]);
+  expect(session.ydoc.getMap("changeSets").get(String(thread.meta.changeSet))).toMatchObject({ threadId, persona: "scholarpen-ai" });
+});
+
+test("a rewrite of most of a paragraph is one replaced span, not a patchwork of words", async () => {
+  const { session } = await setup(async (messages) => rewrite(messages,
+    "These results prove that the drug causes recovery in all patients.",
+    "In this cohort, recovery was more frequent among treated patients, although causality remains uncertain."));
+  const threadId = comment(session, "p1", "@AI rewrite this paragraph");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  const parts = marks(session, "p1").filter((p) => p.mark);
+  expect(parts.map((p) => p.mark)).toEqual(["deletion", "insertion"]);
 });
 
 test("citations survive and concurrent edits elsewhere in the paragraph are merged", async () => {

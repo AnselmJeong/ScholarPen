@@ -31,6 +31,8 @@ export interface ThreadMeta {
   fingerprint?: string;
   /** Set when the author hands the thread to the AI, so a repeated request is a new job. */
   requestedAt?: number;
+  /** Suggestion id of the change set the AI proposed in answer to this thread. */
+  changeSet?: number;
 }
 
 export interface ThreadComment {

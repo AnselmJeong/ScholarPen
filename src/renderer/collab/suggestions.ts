@@ -2,18 +2,11 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { docToBlocks } from "@blocknote/core";
 import { EditorState } from "prosemirror-state";
 import type { Node as PMNode } from "prosemirror-model";
+import type * as Y from "yjs";
+import type { ChangeSetInfo } from "../../shared/collab/change-sets";
 import { applySuggestion, revertSuggestion, revertSuggestions } from "@handlewithcare/prosemirror-suggest-changes";
 
 const SUGGESTION_MARKS = ["insertion", "deletion", "modification"];
-
-export interface PendingSuggestion {
-  id: string | number;
-  from: number;
-  to: number;
-  inserted: string;
-  deleted: string;
-  blockId: string | null;
-}
 
 function hasSuggestions(doc: PMNode) {
   let found = false;
@@ -38,8 +31,25 @@ export function acceptedDocument(editor: BlockNoteEditor<any, any, any>) {
   return docToBlocks(doc);
 }
 
-export function listSuggestions(doc: PMNode): PendingSuggestion[] {
-  const byId = new Map<string | number, PendingSuggestion>();
+/** One paragraph's part of a change set. */
+export interface ChangeSetParagraph {
+  blockId: string | null;
+  from: number;
+  to: number;
+  inserted: string;
+  deleted: string;
+}
+
+/** Everything one AI request changed, waiting for the author's decision. */
+export interface PendingChangeSet {
+  id: string | number;
+  info: ChangeSetInfo | null;
+  from: number;
+  paragraphs: ChangeSetParagraph[];
+}
+
+export function listChangeSets(doc: PMNode, infos?: Y.Map<ChangeSetInfo>): PendingChangeSet[] {
+  const sets = new Map<string | number, PendingChangeSet>();
   doc.descendants((node, pos) => {
     if (!node.isInline) return true;
     for (const mark of node.marks) {
@@ -50,33 +60,45 @@ export function listSuggestions(doc: PMNode): PendingSuggestion[] {
       for (let depth = $pos.depth; depth > 0; depth--) {
         if ($pos.node(depth).type.name === "blockContainer") { blockId = $pos.node(depth).attrs.id; break; }
       }
-      const entry = byId.get(id) ?? { id, from: pos, to: pos + node.nodeSize, inserted: "", deleted: "", blockId };
-      entry.from = Math.min(entry.from, pos);
-      entry.to = Math.max(entry.to, pos + node.nodeSize);
+      const set = sets.get(id) ?? { id, info: infos?.get(String(id)) ?? null, from: pos, paragraphs: [] };
+      set.from = Math.min(set.from, pos);
+      let paragraph = set.paragraphs.find((item) => item.blockId === blockId);
+      if (!paragraph) {
+        paragraph = { blockId, from: pos, to: pos + node.nodeSize, inserted: "", deleted: "" };
+        set.paragraphs.push(paragraph);
+      }
+      paragraph.from = Math.min(paragraph.from, pos);
+      paragraph.to = Math.max(paragraph.to, pos + node.nodeSize);
       const text = node.isText ? node.text ?? "" : `[${node.type.name}]`;
-      if (mark.type.name === "insertion") entry.inserted += text;
-      else entry.deleted += text;
-      byId.set(id, entry);
+      if (mark.type.name === "insertion") paragraph.inserted += text;
+      else paragraph.deleted += (paragraph.deleted && !paragraph.deleted.endsWith(" ") ? " … " : "") + text;
+      sets.set(id, set);
     }
     return true;
   });
-  return [...byId.values()].sort((a, b) => a.from - b.from);
+  return [...sets.values()].sort((a, b) => a.from - b.from);
 }
 
-export function resolveSuggestion(editor: BlockNoteEditor<any, any, any>, id: string | number, accept: boolean) {
+/**
+ * Accepts or rejects a whole change set, or only its part inside [from, to]
+ * (one paragraph). Returns true when anything changed.
+ */
+export function resolveChangeSet(
+  editor: BlockNoteEditor<any, any, any>,
+  id: string | number,
+  accept: boolean,
+  range?: { from: number; to: number },
+) {
   const view = editor.prosemirrorView;
   if (!view) return false;
-  return (accept ? applySuggestion(id) : revertSuggestion(id))(view.state, view.dispatch);
+  const command = accept ? applySuggestion(id, range?.from, range?.to) : revertSuggestion(id, range?.from, range?.to);
+  return command(view.state, view.dispatch);
 }
 
-/** Accepts or rejects every suggestion that overlaps the range (the whole document by default). */
-export function resolveAllSuggestions(editor: BlockNoteEditor<any, any, any>, accept: boolean, from = 0, to = Infinity) {
+/** Accepts or rejects every pending change set. */
+export function resolveAllChangeSets(editor: BlockNoteEditor<any, any, any>, accept: boolean) {
   const view = editor.prosemirrorView;
-  if (!view) return 0;
-  const ids = listSuggestions(view.state.doc)
-    .filter((suggestion) => suggestion.from < to && from < suggestion.to)
-    .map((suggestion) => suggestion.id);
-  let resolved = 0;
-  for (const id of ids) if (resolveSuggestion(editor, id, accept)) resolved++;
-  return resolved;
+  if (!view) return [];
+  const ids = listChangeSets(view.state.doc).map((set) => set.id);
+  return ids.filter((id) => resolveChangeSet(editor, id, accept));
 }
