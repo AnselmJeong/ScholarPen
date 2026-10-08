@@ -2,6 +2,7 @@ import { afterAll, afterEach, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import { EditorState } from "prosemirror-state";
 import type { OllamaMessage } from "../../../shared/rpc-types";
+import type { CollabSession } from "../registry";
 
 const dom = new Window();
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
@@ -26,7 +27,7 @@ const { readDoc, findBlock, blockContent, writeBlock, threadRange } = await impo
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
 const { readThreads, updateThreadMeta, AI_USER_ID } = await import("../../../shared/collab/threads");
-const { REVIEW_MAP } = await import("../../../shared/collab/review");
+const { REVIEW_MAP, PROJECT_REVIEW_SETTINGS_KEY, REVIEW_CATEGORIES } = await import("../../../shared/collab/review");
 
 const editor = getHeadlessEditor();
 const schemaSpec = schemaToSpecJSON(editor.pmSchema);
@@ -51,10 +52,10 @@ afterEach(async () => {
   await registry?.dispose();
 });
 
-async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, clock = { now: Date.now() }) {
-  const seeded = blocksToYDoc(editor, BLOCKS as any, "document-store");
+async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, clock = { now: Date.now() }, blocks = BLOCKS, saved?: Uint8Array) {
+  const seeded = blocksToYDoc(editor, blocks as any, "document-store");
   registry = new CollabRegistry({
-    read: async () => ({ state: Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
+    read: async () => ({ state: saved ?? Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
     write: async () => {},
     jsonHash: async () => "h",
   }, { update: () => {}, awareness: () => {} });
@@ -79,7 +80,7 @@ async function idle() {
   for (let i = 0; i < 100 && agent.isBusy("/p::doc.scholarpen.json"); i++) await new Promise((r) => setTimeout(r, 10));
 }
 
-test("a section review posts anchored AI threads within the fatigue limits", async () => {
+test("a section review posts anchored AI threads and respects severity", async () => {
   const { session, prompts } = await setup(findings([
     { paragraph: 1, quote: "prove that the treatment works in every patient", category: "overclaim", severity: "high", comment: "This overstates the evidence." },
     { paragraph: 1, quote: "Our findings", category: "definition", severity: "low", comment: "Minor point." },
@@ -107,7 +108,7 @@ test("a section review posts anchored AI threads within the fatigue limits", asy
   const logic = posted.find((t) => t.meta.category === "logic")!;
   expect(threadRange(doc, logic.id)).not.toBeNull();
 
-  // Reviewing again posts nothing new: duplicates and the per-section cap.
+  // Reviewing again posts nothing new: duplicate findings are still suppressed.
   reviewer.reviewSection(session.docKey, "p1");
   await idle();
   expect(threads(session)).toHaveLength(3);
@@ -129,31 +130,43 @@ test("muted categories and resolved findings are not raised again", async () => 
   expect(threads(session)).toHaveLength(1);
 });
 
-test("sections are reviewed automatically only after the author leaves them", async () => {
-  const clock = { now: 1_000_000 };
-  const { session, prompts } = await setup(findings([]), clock);
-  // The author types in the Discussion section.
+function authorEdit(session: CollabSession, blockId: string) {
   const doc = readDoc(session);
-  const block = findBlock(doc, "p3")!;
+  const block = findBlock(doc, blockId)!;
   const content = blockContent(block);
   const state = EditorState.create({ schema: session.schema, doc });
   writeBlock(session, state.tr.insertText(" More.", content.to).doc.nodeAt(block.pos)!, "editor");
+}
 
-  reviewer.tick();
-  await idle();
-  expect(prompts).toHaveLength(0);
+function reviewedTarget(messages: OllamaMessage[]) {
+  return String(messages[1].content).split("<rest_of_manuscript")[0];
+}
 
-  clock.now += 120_000;
-  reviewer.tick();
-  await idle();
-  expect(prompts).toHaveLength(1);
-  expect(prompts[0][1].content).toContain("This is a separate section. More.");
-
-  // Unchanged since the last review: nothing more to do.
-  clock.now += 600_000;
+test("automatically reviews untouched sections, then stops until content or preferences change", async () => {
+  const clock = { now: 1_000_000 };
+  const { session, prompts } = await setup(findings([]), clock);
   reviewer.tick();
   await idle();
   expect(prompts).toHaveLength(1);
+  expect(reviewedTarget(prompts[0])).toContain('title="Results"');
+
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(reviewedTarget(prompts[1])).toContain('title="Discussion"');
+
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 2, totalSections: 2 });
+
+  authorEdit(session, "p1");
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(3);
+  expect(reviewedTarget(prompts[2])).toContain(" More.");
 });
 
 test("the author can hand an AI finding back to the AI to fix", async () => {
@@ -182,4 +195,249 @@ test("the author can hand an AI finding back to the AI to fix", async () => {
     return true;
   });
   expect(inserted).toContain("suggest");
+});
+
+
+test("repeated opening edits do not starve the tail, even across a restart", async () => {
+  const clock = { now: 1_000_000 };
+  let { session, prompts } = await setup(findings([]), clock);
+  reviewer.tick();
+  await idle();
+  authorEdit(session, "p1");
+  const saved = Y.encodeStateAsUpdate(session.ydoc);
+  reviewer.dispose();
+  agent.dispose();
+  await registry.dispose();
+  ({ session, prompts } = await setup(findings([]), clock, BLOCKS, saved));
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(1);
+  expect(reviewedTarget(prompts[0])).toContain('title="Discussion"');
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(reviewedTarget(prompts[1])).toContain('title="Results"');
+});
+
+test("a failing opening section does not block reviewing later sections", async () => {
+  const clock = { now: 1_000_000 };
+  const { session, prompts } = await setup(async (messages) => {
+    if (reviewedTarget(messages).includes('title="Results"')) throw new Error("Model unavailable");
+    return '{"findings":[]}';
+  }, clock);
+  reviewer.tick();
+  await idle();
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(reviewedTarget(prompts[1])).toContain('title="Discussion"');
+  expect(agent.jobs(session.docKey).some(job => job.state === "failed")).toBe(true);
+});
+
+test("long sections send every paragraph in batches and post more than three comments", async () => {
+  const blocks = [BLOCKS[0], ...Array.from({ length: 20 }, (_, i) => ({
+    id: `long-${i}`, type: "paragraph", content: `Passage ${i}. A claim requiring scrutiny.`,
+  }))];
+  const { session, prompts } = await setup(async (messages) => {
+    const target = reviewedTarget(messages);
+    return JSON.stringify({ findings: [...target.matchAll(/<paragraph n="(\d+)">\n(Passage \d+)/g)].map(match => ({
+      paragraph: Number(match[1]), quote: match[2], category: "logic", severity: "medium", comment: `Check ${match[2]}.`,
+    })) });
+  }, undefined, blocks);
+  reviewer.reviewSection(session.docKey, "long-0");
+  await idle();
+  expect(prompts).toHaveLength(3);
+  expect(threads(session)).toHaveLength(20);
+  expect(threads(session).some(thread => thread.meta.blockId === "long-19")).toBe(true);
+  expect(prompts.every(messages => String(messages[0].content).includes("at most 10 findings"))).toBe(true);
+  // All comments remain anchored to the actual reviewed paragraphs.
+  for (const thread of threads(session)) expect(threadRange(readDoc(session), thread.id)).not.toBeNull();
+  reviewer.reviewSection(session.docKey, "long-0");
+  await idle();
+  expect(threads(session)).toHaveLength(20);
+});
+
+test("bibliography findings cannot crowd out a later substantive comment", async () => {
+  const blocks = [BLOCKS[0], ...Array.from({ length: 5 }, (_, i) => ({
+    id: `cite-${i}`, type: "paragraph", content: [
+      { type: "text", text: `Claim ${i} `, styles: {} },
+      { type: "citation", props: { citekey: `absent${i}`, locator: "" } },
+    ],
+  }))];
+  const { session } = await setup(findings([
+    { paragraph: 5, quote: "Claim 4", category: "logic", severity: "high", comment: "The final argument needs support." },
+  ]), undefined, blocks);
+  reviewer.reviewSection(session.docKey, "cite-0");
+  await idle();
+  expect(threads(session)).toHaveLength(6);
+  expect(threads(session).filter(thread => thread.meta.category === "citation")).toHaveLength(5);
+  expect(threads(session).find(thread => thread.meta.category === "logic")?.meta.blockId).toBe("cite-4");
+});
+
+test("distinct issues of the same category in one paragraph are allowed", async () => {
+  const { session } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "logic", severity: "high", comment: "First issue." },
+    { paragraph: 1, quote: "every patient", category: "logic", severity: "high", comment: "Second issue." },
+  ]));
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session).filter(thread => thread.meta.category === "logic")).toHaveLength(2);
+});
+
+test("edits during inference are not marked as reviewed or given stale comments", async () => {
+  const clock = { now: 1_000_000 };
+  let respond: (value: string) => void = () => {};
+  const { session, prompts } = await setup(() => new Promise<string>(resolve => { respond = resolve; }), clock);
+  reviewer.reviewSection(session.docKey, "p1");
+  for (let i = 0; i < 50 && !prompts.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  authorEdit(session, "p1");
+  respond(JSON.stringify({ findings: [
+    { paragraph: 1, quote: "Our findings", category: "logic", severity: "high", comment: "Stale comment." },
+  ] }));
+  await idle();
+  expect(threads(session).some(thread => thread.meta.category === "logic")).toBe(false);
+  reviewer.tick();
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 0, totalSections: 2 });
+  for (let i = 0; i < 50 && prompts.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  respond('{"findings":[]}');
+  await idle();
+});
+
+test("unmuting or lowering the threshold reconsiders unchanged content", async () => {
+  const clock = { now: 1_000_000 };
+  const { session, prompts } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "logic", severity: "low", comment: "Check this connection." },
+  ]), clock, BLOCKS.slice(0, 2));
+  const map = session.ydoc.getMap(REVIEW_MAP);
+  map.set("muted", ["logic"]);
+  reviewer.tick();
+  await idle();
+  expect(threads(session)).toHaveLength(0);
+  map.set("muted", []);
+  map.set("minSeverity", "low");
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(threads(session)).toHaveLength(1);
+});
+
+test("pause and auto-review off stop background calls; heading-only sections are skipped", async () => {
+  const { session, prompts } = await setup(findings([]), undefined, [BLOCKS[0], BLOCKS[3], BLOCKS[4]]);
+  session.ydoc.getMap(REVIEW_MAP).set("autoReview", false);
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(0);
+  session.ydoc.getMap(REVIEW_MAP).set("autoReview", true);
+  agent.setPaused(true);
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(0);
+  agent.setPaused(false);
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(1);
+  expect(reviewedTarget(prompts[0])).toContain('title="Discussion"');
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 0, totalSections: 1 });
+});
+
+
+test("an invalid model response is a failed review, never a clean bill of health", async () => {
+  const { session } = await setup(async () => '{"message":"Unable to review"}');
+  reviewer.tick();
+  await idle();
+  expect(agent.jobs(session.docKey)[0].state).toBe("failed");
+  expect(session.ydoc.getMap(REVIEW_MAP).get("sections")).toBeUndefined();
+});
+
+test("legacy review completion is revisited once under the expanded review policy", async () => {
+  const clock = { now: 1_000_000 };
+  const { session, prompts } = await setup(findings([]), clock, BLOCKS.slice(0, 2));
+  reviewer.tick();
+  await idle();
+  const map = session.ydoc.getMap(REVIEW_MAP);
+  const sections = map.get("sections") as Record<string, Record<string, unknown>>;
+  const { version, settings, ...legacy } = sections.h1;
+  map.set("sections", { h1: legacy });
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+});
+
+test("turning off auto-review during inference prevents new automatic comments", async () => {
+  let stop: () => void = () => {};
+  const { session } = await setup(async () => {
+    stop();
+    return JSON.stringify({ findings: [
+      { paragraph: 1, quote: "Our findings", category: "logic", severity: "high", comment: "Cancelled comment." },
+    ] });
+  });
+  stop = () => session.ydoc.getMap(REVIEW_MAP).set("autoReview", false);
+  reviewer.tick();
+  await idle();
+  expect(threads(session)).toHaveLength(0);
+  expect(session.ydoc.getMap(REVIEW_MAP).get("sections")).toBeUndefined();
+});
+
+
+test("project-disabled categories and unknown model types cannot become comments", async () => {
+  const { session, prompts } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "invented-kind", severity: "high", comment: "Unrecognized." },
+    { paragraph: 1, quote: "Our findings", category: "Needs citation", severity: "high", comment: "Disabled citation alias." },
+    { paragraph: 1, quote: "every patient", category: "logic", severity: "high", comment: "Enabled logic." },
+  ]));
+  session.ydoc.getMap(REVIEW_MAP).set(PROJECT_REVIEW_SETTINGS_KEY, { disabledCategories: ["citation"] });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session).map(t => t.meta.category)).toEqual(["logic"]);
+  expect(String(prompts[0][0].content).split('"category":"')[1].split('"')[0]).not.toContain("citation");
+});
+
+test("disabling a project type during inference filters the in-flight response too", async () => {
+  let disable: () => void = () => {};
+  const { session } = await setup(async () => {
+    disable();
+    return JSON.stringify({ findings: [
+      { paragraph: 1, quote: "Our findings", category: "logic", severity: "high", comment: "Disabled while working." },
+    ] });
+  });
+  disable = () => session.ydoc.getMap(REVIEW_MAP).set(PROJECT_REVIEW_SETTINGS_KEY, { disabledCategories: ["logic", "citation"] });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session)).toHaveLength(0);
+});
+
+test("all project types off causes no model requests, even for a manual review", async () => {
+  const { session, prompts } = await setup(findings([]));
+  session.ydoc.getMap(REVIEW_MAP).set(PROJECT_REVIEW_SETTINGS_KEY, { disabledCategories: REVIEW_CATEGORIES.map(c => c.id) });
+  reviewer.tick();
+  await idle();
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(prompts).toHaveLength(0);
+  expect(threads(session)).toHaveLength(0);
+});
+
+test("a resolved legacy Needs citation finding stays deduplicated after category merging", async () => {
+  const { session } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "missing-citation", severity: "high", comment: "Needs a source." },
+  ]));
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const citation = threads(session).find(t => t.comments[0].text === "Needs a source.")!;
+  expect(citation.meta.category).toBe("citation");
+  updateThreadMeta(map, citation.id, {
+    status: "resolved", category: "missing-citation",
+    fingerprint: citation.meta.fingerprint!.replace(":citation:", ":missing-citation:"),
+  });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session).filter(t => t.comments[0].text === "Needs a source.")).toHaveLength(1);
 });

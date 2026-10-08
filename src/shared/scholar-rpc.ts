@@ -1,3 +1,4 @@
+import type { ReviewCategory, ProjectReviewSettings } from "./collab/review";
 import type { CodexStatus } from "./codex";
 import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "./project-memory";
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
@@ -167,6 +168,7 @@ type BunRequests = RPCSchema<{
     collabAgentStatus: { params: { docKey: string }; response: AgentActivityMessage };
     collabUndoAI: { params: { docKey: string }; response: boolean };
     collabSetAgentPaused: { params: { paused: boolean }; response: void };
+    collabSetReviewCategory: { params: { docKey: string; category: ReviewCategory; enabled: boolean }; response: ProjectReviewSettings };
     collabReviewSection: { params: { docKey: string; blockId: string }; response: void };
     collabDraftSection: { params: { docKey: string; blockId: string }; response: void };
   };

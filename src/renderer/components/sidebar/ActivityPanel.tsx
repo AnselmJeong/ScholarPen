@@ -1,3 +1,4 @@
+import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
@@ -11,7 +12,7 @@ import {
   type ThreadStatus,
 } from "../../../shared/collab/threads";
 import { getEditorCollab } from "../../collab/editor-collab";
-import { REVIEW_CATEGORY_LABEL, REVIEW_MAP } from "../../../shared/collab/review";
+import { reviewCategoryLabel, normalizeReviewCategory } from "../../../shared/collab/review";
 import { SCHOLARPEN_AI, isAIUser, personaByUser } from "../../../shared/collab/personas";
 import { AIActivitySection } from "./AIActivitySection";
 import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
@@ -69,6 +70,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   const positions = useThreadPositions(editor);
   const pendingChangeSets = new Set(usePendingChangeSets(editor).map((set) => String(set.id)));
   const [filter, setFilter] = useState<Filter>("open");
+  const [categoryError, setCategoryError] = useState<string | null>(null);
   const collab = editor ? getEditorCollab(editor) : null;
 
   const visible = useMemo(() => {
@@ -116,6 +118,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <AIActivitySection editor={editor} />
+      {categoryError && <p role="alert" className="px-3 py-1 text-xs text-red-600">{categoryError}</p>}
       <ZonesSection editor={editor} />
       <div className="flex items-center gap-1 border-b border-border px-3 py-2">
         <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
@@ -158,13 +161,11 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
             onDecideChange={thread.meta.changeSet !== undefined && pendingChangeSets.has(String(thread.meta.changeSet))
               ? (accept) => decideChangeSet(editor, thread.meta.changeSet!, accept)
               : undefined}
-            onMute={thread.meta.category ? () => {
-              const map = collab.ydoc.getMap(REVIEW_MAP);
-              collab.ydoc.transact(() => {
-                const muted = (map.get("muted") as string[] | undefined) ?? [];
-                if (!muted.includes(thread.meta.category!)) map.set("muted", [...muted, thread.meta.category!]);
-                updateThreadMeta(collab.ydoc.getMap(COLLAB_THREADS_MAP), thread.id, { status: "resolved", muted: true });
-              });
+            onMute={normalizeReviewCategory(thread.meta.category) ? () => {
+              const category = normalizeReviewCategory(thread.meta.category)!;
+              setCategoryError(null);
+              void rpc.collabSetReviewCategory(collab.docKey, category, false)
+                .catch(error => setCategoryError(error instanceof Error ? error.message : String(error)));
             } : undefined}
             onReopen={() => setMeta(thread.id, { status: "open" })}
           />
@@ -181,7 +182,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
   onAssign: (assignee: "ai" | "me") => void;
   onResolve: () => void;
   onReopen: () => void;
-  /** Resolves an AI review finding and stops the reviewer raising its category. */
+  /** Disables this category project-wide without resolving or hiding existing comments. */
   onMute?: () => void;
   /** Accepts or rejects the AI's change set for this thread, when one is pending. */
   onDecideChange?: (accept: boolean) => void;
@@ -208,7 +209,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
           <span className={cn("rounded px-1 text-[10px]",
             thread.meta.severity === "high" ? "bg-red-500/10 text-red-600"
               : thread.meta.severity === "medium" ? "bg-amber-500/10 text-amber-700" : "bg-muted text-muted-foreground")}>
-            {REVIEW_CATEGORY_LABEL[thread.meta.category ?? ""] ?? thread.meta.category ?? thread.meta.severity}
+            {reviewCategoryLabel(thread.meta.category)}
           </span>
         )}
         <span className={cn("ml-auto flex items-center gap-1 rounded-full px-1.5 py-px text-[10px]",
@@ -233,7 +234,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
       {thread.meta.statusNote && status !== "resolved" && (
         <p className="mt-1 text-[11px] italic leading-4 text-muted-foreground">{thread.meta.statusNote}</p>
       )}
-      <div className="mt-1.5 flex gap-1 opacity-70 group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
+      <div className="mt-1.5 flex flex-wrap gap-1 opacity-70 group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
         {onDecideChange && (
           <>
             <button type="button" onClick={() => onDecideChange(true)}
@@ -259,7 +260,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
             )}
             <SmallButton icon={<Check className="h-3 w-3" />} label="Resolve" onClick={onResolve} />
             {onMute && fromAI && (
-              <SmallButton icon={<BellOff className="h-3 w-3" />} label="Stop flagging this" onClick={onMute} />
+              <SmallButton icon={<BellOff className="h-3 w-3" />} label="Disable type in project" onClick={onMute} />
             )}
           </>
         )}

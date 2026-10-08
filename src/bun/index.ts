@@ -1,3 +1,6 @@
+import * as Y from "yjs";
+import { toBase64 } from "lib0/buffer";
+import { ProjectReviewSettingsStore, applyProjectReviewSettings } from "./collab/project-review-settings";
 import Electrobun, { BrowserView, BrowserWindow, ApplicationMenu, Utils, Updater } from "electrobun/bun";
 import { watch, type FSWatcher } from "fs";
 import { join } from "path";
@@ -75,15 +78,16 @@ const collabRegistry = new CollabRegistry(createFileCollabStorage(fileSystem), {
   update: (message) => sendCollabUpdate?.(message),
   awareness: (message) => sendCollabAwareness?.(message),
 });
+const projectReviewSettings = new ProjectReviewSettingsStore();
 let sendCollabActivity: ((payload: AgentActivityMessage) => void) | null = null;
 
-async function completeWithSettings(messages: Parameters<typeof completeAgentModel>[0]["messages"], signal: AbortSignal) {
+async function completeWithSettings(messages: Parameters<typeof completeAgentModel>[0]["messages"], signal: AbortSignal, maxTokens = 4096) {
   const settings = await fileSystem.getSettings();
   return completeAgentModel({
     provider: settings.sidebarAgentProvider,
     model: settings.sidebarAgentModel,
     messages,
-    maxTokens: 4096,
+    maxTokens,
     temperature: 0.2,
     signal,
   }, settings);
@@ -96,9 +100,9 @@ const collabAgent = new CollabAgent(collabRegistry, {
   // Each section's work zone decides whether AI edits are proposals, suggestions or direct.
   editModeFor: zoneEditMode,
 });
-// …and reviews sections the author has finished, leaving comments.
+// …and reviews the whole manuscript, independently of the author’s edits.
 const collabReviewer = new Reviewer(collabAgent, {
-  complete: completeWithSettings,
+  complete: (messages, signal) => completeWithSettings(messages, signal, 8192),
   citekeys: async (projectPath) => {
     const bibtex = await fileSystem.loadBibtex(projectPath).catch(() => "");
     return bibtex.trim() ? new Set(parseBibtexCitekeys(bibtex)) : null;
@@ -566,7 +570,27 @@ async function main() {
         logoutCodex: () => codexClient.logout(),
         openExternal: ({ url }) => { openValidatedExternalUrl(url); },
 
-        collabOpen: (params) => collabRegistry.open(params),
+        collabOpen: async (params) => {
+          const opened = await collabRegistry.open(params);
+          try {
+            const settings = await projectReviewSettings.get(params.projectPath);
+            applyProjectReviewSettings(collabRegistry.list(), params.projectPath, settings);
+            const session = collabRegistry.get(opened.docKey)!;
+            return { ...opened, state: toBase64(Y.encodeStateAsUpdate(session.ydoc)) };
+          } catch (error) {
+            await collabRegistry.close(opened.docKey, params.peerId);
+            throw error;
+          }
+        },
+        collabSetReviewCategory: async ({ docKey, category, enabled }) => {
+          const session = collabRegistry.get(docKey);
+          if (!session) throw new Error("This document is not open.");
+          await projectReviewSettings.setCategory(session.projectPath, category, enabled);
+          // Read after pending writes, so simultaneous toggles always broadcast the latest policy.
+          const settings = await projectReviewSettings.get(session.projectPath);
+          applyProjectReviewSettings(collabRegistry.list(), session.projectPath, settings);
+          return settings;
+        },
         collabPush: ({ docKey, peerId, update }) => collabRegistry.push(docKey, peerId, update),
         collabAwareness: ({ docKey, peerId, update }) => collabRegistry.pushAwareness(docKey, peerId, update),
         collabClose: ({ docKey, peerId }) => collabRegistry.close(docKey, peerId),

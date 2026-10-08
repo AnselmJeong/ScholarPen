@@ -1,15 +1,20 @@
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import { createThread, readThreads, type ThreadMeta } from "../../../shared/collab/threads";
-import { SCHOLARPEN_AI, isAIUser } from "../../../shared/collab/personas";
+import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
 import {
   REVIEW_MAP,
+  REVIEW_CATEGORIES,
+  enabledReviewCategories,
+  normalizeReviewCategory,
+  type ReviewCategory,
   reviewSettingsOf,
   SEVERITY_RANK,
   type ReviewFinding,
   type ReviewSeverity,
+  type ReviewSettings,
+  type ReviewProgress,
 } from "../../../shared/collab/review";
-import type { CollabSession } from "../registry";
 import { AI_META_ORIGIN, type Attachment, type CollabAgent } from "./agent";
 import {
   anchorThread,
@@ -28,16 +33,54 @@ export interface ReviewerDeps {
   /** Citekeys in the project's bibliography, or null when it cannot be read. */
   citekeys(projectPath: string): Promise<Set<string> | null>;
   now?: () => number;
-  /** A section is reviewed automatically once the author has left it alone this long. */
-  idleMs?: number;
   /** Minimum gap between automatic reviews of one document. */
   autoIntervalMs?: number;
   maxAutoPerHour?: number;
   tickMs?: number;
 }
 
-const MAX_OPEN_PER_SECTION = 3;
-const MAX_NEW_PER_RUN = 3;
+// Limit each model response, not the number of comments a document may receive.
+const MAX_FINDINGS_PER_BATCH = 10;
+const MAX_PARAGRAPHS_PER_BATCH = 8;
+const MAX_BATCH_CHARS = 8_000;
+const REVIEW_VERSION = 2;
+
+interface SectionReview {
+  hash: string;
+  at: number;
+  reason: "manual" | "auto";
+  added: number;
+  version?: number;
+  settings?: string;
+}
+
+function settingsFingerprint(settings: ReviewSettings) {
+  return JSON.stringify([settings.minSeverity, [...settings.muted].sort()]);
+}
+
+function proseOf(section: Section) {
+  return section.blocks.flatMap(flatten)
+    .filter((block) => hasInlineContent(block) && block.node.firstChild?.type.name !== "heading");
+}
+
+/** Keep every paragraph, including the tail of long sections. Never truncate the review target. */
+function paragraphBatches(prose: BlockRef[], doc: ReturnType<typeof readDoc>) {
+  const batches: BlockRef[][] = [];
+  let batch: BlockRef[] = [];
+  let chars = 0;
+  for (const block of prose) {
+    const size = readableText(doc, blockContent(block).from, blockContent(block).to).length;
+    if (batch.length && (batch.length >= MAX_PARAGRAPHS_PER_BATCH || chars + size > MAX_BATCH_CHARS)) {
+      batches.push(batch);
+      batch = [];
+      chars = 0;
+    }
+    batch.push(block);
+    chars += size;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
 
 type Section = NonNullable<ReturnType<typeof sectionOf>>;
 
@@ -92,17 +135,20 @@ export function locateQuote(block: BlockRef, quote: string) {
   return { from: chars[at], to: chars[at + length - 1] + 1 };
 }
 
-function buildReviewMessages(title: string, paragraphs: string[], context: string, muted: string[]): OllamaMessage[] {
+function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[]): OllamaMessage[] {
   const system =
     `You are ${SCHOLARPEN_AI.name}, reviewing a section of an academic manuscript together with its author. ` +
     `Point out only problems worth the author's time: ${SCHOLARPEN_AI.reviewFocus}. ` +
-    "Do not comment on style, wording preferences or grammar. " +
+    "Offer substantive questions, missing connections and useful improvements as well as identifying errors. " +
+    "Read every supplied paragraph, including the last one. Do not focus only on the opening. " +
+    "Avoid cosmetic wording preferences and trivial grammar corrections. " +
     "Do not invent references. If the section is sound, return no findings. " +
-    (muted.length ? `The author asked not to be told about these kinds of issues: ${muted.join(", ")}. ` : "") +
+    `Only report these enabled categories: ${allowed.join(", ")}. Do not invent categories or rename disabled issues to an enabled type. ` +
+    REVIEW_CATEGORIES.filter(category => allowed.includes(category.id)).map(category => `${category.id}: ${category.description}`).join("\n") + "\n" +
     "Write each comment in the language of the manuscript, in one or two sentences, and say what to check or change. " +
     "Return JSON only, in this shape:\n" +
-    `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${SCHOLARPEN_AI.categories.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
-    `Report at most ${MAX_NEW_PER_RUN} findings, most important first. The quote must be copied exactly from the paragraph and be at most 25 words.`;
+    `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${allowed.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
+    `Report at most ${MAX_FINDINGS_PER_BATCH} findings, most important first. The quote must be copied exactly from the paragraph and be at most 25 words.`;
   const user =
     `<section title="${title.replace(/"/g, "'")}">\n` +
     paragraphs.map((text, index) => `<paragraph n="${index + 1}">\n${text}\n</paragraph>`).join("\n") +
@@ -115,10 +161,16 @@ function parseFindings(response: string, paragraphCount: number): ReviewFinding[
   const cleaned = response.replace(/<think>[\s\S]*?<\/think>/g, "");
   const json = cleaned.match(/\{[\s\S]*\}/)?.[0];
   if (!json) throw new Error("The reviewer did not return JSON.");
-  const parsed = JSON.parse(json) as { findings?: unknown[] };
+  const parsed: unknown = JSON.parse(json);
+  if (!parsed || typeof parsed !== "object" || !("findings" in parsed) || !Array.isArray(parsed.findings)) {
+    throw new Error("The reviewer did not return a findings array.");
+  }
   const findings: ReviewFinding[] = [];
-  for (const raw of parsed.findings ?? []) {
+  for (const raw of parsed.findings) {
+    if (!raw || typeof raw !== "object") continue;
     const item = raw as Record<string, unknown>;
+    const category = normalizeReviewCategory(item.category);
+    if (!category) continue;
     const paragraph = Number(item.paragraph);
     const severity = (["low", "medium", "high"].includes(String(item.severity)) ? item.severity : "medium") as ReviewSeverity;
     if (!Number.isInteger(paragraph) || paragraph < 1 || paragraph > paragraphCount) continue;
@@ -126,7 +178,7 @@ function parseFindings(response: string, paragraphCount: number): ReviewFinding[
     findings.push({
       paragraph: paragraph - 1,
       quote: item.quote,
-      category: String(item.category ?? "logic"),
+      category,
       severity,
       comment: item.comment.trim(),
     });
@@ -135,17 +187,18 @@ function parseFindings(response: string, paragraphCount: number): ReviewFinding[
 }
 
 /**
- * Reviews sections the author has finished working on and leaves its findings
- * as AI comment threads, within limits that keep comments from becoming noise.
+ * Reviews the whole open manuscript independently of human edits. Coverage and
+ * the next position survive reopening; changed sections are revisited fairly.
  */
 export class Reviewer {
   private readonly now: () => number;
   private readonly timer: ReturnType<typeof setInterval> | null;
   private readonly lastAuto = new Map<string, number[]>();
+  private lastDocument: string | null = null;
 
   constructor(private readonly agent: CollabAgent, private readonly deps: ReviewerDeps) {
     this.now = deps.now ?? Date.now;
-    this.timer = deps.tickMs === 0 ? null : setInterval(() => this.tick(), deps.tickMs ?? 15_000);
+    this.timer = deps.tickMs === 0 ? null : setInterval(() => this.tick(), deps.tickMs ?? 10_000);
   }
 
   dispose() {
@@ -167,31 +220,54 @@ export class Reviewer {
     }, (_job, att, signal) => this.runReview(att, key, reason, signal));
   }
 
-  /** Looks for sections that were edited and then left alone, and reviews one of them. */
+  /** Round-robin across documents and sections; no edit or cursor prerequisite. */
   tick() {
-    for (const attachment of this.agent.attachmentList()) {
+    const attachments = this.agent.attachmentList();
+    const docStart = attachments.findIndex((att) => att.session.docKey === this.lastDocument) + 1;
+    for (let offset = 0; offset < attachments.length; offset++) {
+      const attachment = attachments[(docStart + offset) % attachments.length];
       const { session } = attachment;
-      const settings = reviewSettingsOf(session.ydoc.getMap(REVIEW_MAP));
-      if (!settings.autoReview || this.agent.isPaused() || this.agent.isBusy(session.docKey)) continue;
-      const history = (this.lastAuto.get(session.docKey) ?? []).filter((at) => this.now() - at < 3_600_000);
-      if (history.length >= (this.deps.maxAutoPerHour ?? 12)) continue;
-      if (history.length && this.now() - history[history.length - 1] < (this.deps.autoIntervalMs ?? 300_000)) continue;
-
+      const map = session.ydoc.getMap(REVIEW_MAP);
+      const settings = reviewSettingsOf(map);
       const doc = readDoc(session);
-      const reviewed = session.ydoc.getMap(REVIEW_MAP).get("sections") as Record<string, { hash: string }> | undefined ?? {};
+      const reviewed = (map.get("sections") as Record<string, SectionReview> | undefined) ?? {};
+      const settingsHash = settingsFingerprint(settings);
       const seen = new Set<string>();
-      for (const block of doc.firstChild ? [...iterateTop(doc)] : []) {
+      const sections: Array<{ key: string; current: boolean }> = [];
+      for (const block of iterateTop(doc)) {
         const section = sectionOf(doc, block.id);
         if (!section) continue;
         const key = sectionKey(section);
         if (seen.has(key)) continue;
         seen.add(key);
-        const touched = Math.max(...section.blocks.map((b) => lastTouchedDeep(attachment, b)));
-        if (touched === 0 || this.now() - touched < (this.deps.idleMs ?? 90_000)) continue;
-        if (reviewed[key]?.hash === hashText(sectionFingerprint(doc, section))) continue;
+        if (!proseOf(section).length) continue;
+        const previous = reviewed[key];
+        sections.push({ key, current: previous?.version === REVIEW_VERSION &&
+          previous.settings === settingsHash && previous.hash === hashText(sectionFingerprint(doc, section)) });
+      }
+      const progress: ReviewProgress = {
+        reviewedSections: sections.filter((section) => section.current).length,
+        totalSections: sections.length,
+      };
+      const previousProgress = map.get("progress") as ReviewProgress | undefined;
+      if (previousProgress?.reviewedSections !== progress.reviewedSections || previousProgress?.totalSections !== progress.totalSections) {
+        session.ydoc.transact(() => map.set("progress", progress), AI_META_ORIGIN);
+      }
+      if (!settings.autoReview || !enabledReviewCategories(settings).length || this.agent.isPaused() || this.agent.isBusy(session.docKey)) continue;
+      const history = (this.lastAuto.get(session.docKey) ?? []).filter((at) => this.now() - at < 3_600_000);
+      if (history.length >= (this.deps.maxAutoPerHour ?? Infinity)) continue;
+      if (history.length && this.now() - history[history.length - 1] < (this.deps.autoIntervalMs ?? 15_000)) continue;
+
+      const start = sections.findIndex((section) => section.key === map.get("cursor")) + 1;
+      for (let index = 0; index < sections.length; index++) {
+        const section = sections[(start + index) % sections.length];
+        if (section.current) continue;
+        // Save before starting, so failures/restarts cannot trap us at the beginning.
+        session.ydoc.transact(() => map.set("cursor", section.key), AI_META_ORIGIN);
         history.push(this.now());
         this.lastAuto.set(session.docKey, history);
-        this.reviewSection(session.docKey, key, "auto");
+        this.lastDocument = session.docKey;
+        this.reviewSection(session.docKey, section.key, "auto");
         return;
       }
     }
@@ -201,15 +277,19 @@ export class Reviewer {
     const { session } = attachment;
     const reviewMap = session.ydoc.getMap(REVIEW_MAP);
     const settings = reviewSettingsOf(reviewMap);
+    const allowed = enabledReviewCategories(settings);
+    if (!allowed.length) return;
     let doc = readDoc(session);
     const section = sectionOf(doc, key);
     if (!section) return;
-    const prose = section.blocks.flatMap((block) => flatten(block))
-      .filter((block) => hasInlineContent(block) && block.node.firstChild?.type.name !== "heading");
+    const originalHash = hashText(sectionFingerprint(doc, section));
+    const prose = proseOf(section);
+    const originalText = new Map(prose.map((block) => [block.id,
+      readableText(doc, blockContent(block).from, blockContent(block).to)]));
     const findings: Array<ReviewFinding & { blockId: string }> = [];
 
     // Deterministic check first: citations whose key is not in the bibliography.
-    const keys = await this.deps.citekeys(session.projectPath);
+    const keys = allowed.includes("citation") ? await this.deps.citekeys(session.projectPath) : null;
     if (keys) {
       for (const block of prose) {
         blockContent(block).node.descendants((node) => {
@@ -226,43 +306,47 @@ export class Reviewer {
       }
     }
 
-    if (prose.length > 0) {
-      const paragraphs = prose.map((block) => readableText(doc, blockContent(block).from, blockContent(block).to));
-      const first = section.blocks[0];
-      const last = section.blocks[section.blocks.length - 1];
-      const context = clip(readableText(doc, 0, first.pos), 3000, "end") + "\n[…this section…]\n" +
-        clip(readableText(doc, last.pos + last.node.nodeSize, doc.content.size), 2000, "start");
-      attachment.presence.claim(prose[0].id, "reviewing");
-      const response = await this.deps.complete(
-        buildReviewMessages(sectionTitle(section), paragraphs, context, settings.muted), signal);
+    const batches = paragraphBatches(prose, doc);
+    for (const batch of batches) {
       if (signal.aborted) throw new Error("Cancelled");
-      for (const finding of parseFindings(response, prose.length)) {
-        findings.push({ ...finding, blockId: prose[finding.paragraph].id });
+      if (reason === "auto" && !reviewSettingsOf(reviewMap).autoReview) return;
+      const paragraphs = batch.map((block) => originalText.get(block.id)!);
+      const first = batch[0];
+      const last = batch[batch.length - 1];
+      const context = clip(readableText(doc, 0, first.pos), 3000, "end") + "\n[…reviewed paragraphs…]\n" +
+        clip(readableText(doc, last.pos + last.node.nodeSize, doc.content.size), 2000, "start");
+      attachment.presence.claim(first.id, "reviewing");
+      const response = await this.deps.complete(
+        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed), signal);
+      if (signal.aborted) throw new Error("Cancelled");
+      for (const finding of parseFindings(response, batch.length)) {
+        findings.push({ ...finding, blockId: batch[finding.paragraph].id });
       }
     }
 
-    // Fatigue limits: threshold, muted kinds, duplicates, and per-section caps.
+    // No per-section or per-run posting cap: bibliography checks cannot displace
+    // substantive findings. Keep explicit preferences and exact deduplication.
+    if (signal.aborted) throw new Error("Cancelled");
+    const currentSettings = reviewSettingsOf(reviewMap);
+    if (reason === "auto" && !currentSettings.autoReview) return;
     const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
     const existing = readThreads(threads);
-    const sectionIds = new Set(section.blocks.flatMap((block) => flatten(block)).map((block) => block.id));
-    const openInSection = existing.filter((thread) => !thread.resolved && isAIUser(thread.comments[0]?.userId) &&
-      thread.meta.blockId && sectionIds.has(thread.meta.blockId)).length;
-    let budget = Math.min(MAX_NEW_PER_RUN, MAX_OPEN_PER_SECTION - openInSection);
     let added = 0;
 
     doc = readDoc(session);
     for (const finding of findings) {
-      if (budget <= 0) break;
-      if (SEVERITY_RANK[finding.severity] < SEVERITY_RANK[settings.minSeverity]) continue;
-      if (settings.muted.includes(finding.category)) continue;
+      if (SEVERITY_RANK[finding.severity] < SEVERITY_RANK[currentSettings.minSeverity]) continue;
+      if (currentSettings.muted.includes(finding.category)) continue;
       const fingerprint = `${SCHOLARPEN_AI.id}:${finding.blockId}:${finding.category}:${normalize(finding.quote || finding.comment)}`;
       // Never raise a finding twice, including one the author already resolved.
-      const duplicate = existing.some((thread) => thread.meta.fingerprint === fingerprint ||
+      const duplicate = existing.some((thread) => canonicalFingerprint(thread.meta) === fingerprint ||
         (!thread.resolved && thread.meta.blockId === finding.blockId &&
-          (thread.meta.category === finding.category || normalize(thread.comments[0]?.text ?? "") === normalize(finding.comment))));
+          normalize(thread.comments[0]?.text ?? "") === normalize(finding.comment)));
       if (duplicate) continue;
       const block = findBlock(doc, finding.blockId);
       if (!block) continue;
+      // Do not attach a response to words that changed while the model was reading.
+      if (readableText(doc, blockContent(block).from, blockContent(block).to) !== originalText.get(block.id)) continue;
       const range = (finding.quote && locateQuote(block, finding.quote)) || blockContent(block);
       const meta: ThreadMeta = {
         agent: SCHOLARPEN_AI.id, category: finding.category, severity: finding.severity,
@@ -274,13 +358,14 @@ export class Reviewer {
       }, AI_META_ORIGIN);
       doc = readDoc(session);
       existing.push(...readThreads(threads).filter((thread) => thread.meta.fingerprint === fingerprint));
-      budget--;
       added++;
     }
 
     session.ydoc.transact(() => {
       const sections = { ...((reviewMap.get("sections") as Record<string, unknown> | undefined) ?? {}) };
-      sections[key] = { hash: hashText(sectionFingerprint(readDoc(session), sectionOf(readDoc(session), key) ?? section)), at: this.now(), reason, added };
+      // Record the version we actually read, not a newer edit made during inference.
+      sections[key] = { hash: originalHash, at: this.now(), reason, added,
+        version: REVIEW_VERSION, settings: settingsFingerprint(settings) } satisfies SectionReview;
       reviewMap.set("sections", sections);
     }, AI_META_ORIGIN);
   }
@@ -296,7 +381,8 @@ function flatten(block: BlockRef): BlockRef[] {
 }
 
 function* iterateTop(doc: ReturnType<typeof readDoc>) {
-  const group = doc.firstChild!;
+  const group = doc.firstChild;
+  if (!group) return;
   let offset = 1;
   for (let i = 0; i < group.childCount; i++) {
     const node = group.child(i);
@@ -305,12 +391,14 @@ function* iterateTop(doc: ReturnType<typeof readDoc>) {
   }
 }
 
-function lastTouchedDeep(attachment: Attachment, block: BlockRef) {
-  return Math.max(...flatten(block).map((item) => attachment.presence.lastTouched(item.id)));
-}
-
 function hashText(text: string) {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
   return `${text.length}:${hash >>> 0}`;
+}
+
+/** Resolved legacy citation findings remain deduplicated after merging the labels. */
+function canonicalFingerprint(meta: ThreadMeta) {
+  const category = normalizeReviewCategory(meta.category);
+  return category && meta.category ? meta.fingerprint?.replace(`:${meta.category}:`, `:${category}:`) : meta.fingerprint;
 }

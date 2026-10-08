@@ -1,3 +1,4 @@
+import type { ReviewCategory, ProjectReviewSettings } from "../shared/collab/review";
 import type { CodexStatus } from "../shared/codex";
 import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "../shared/project-memory";
 // RPC client for calling Main process handlers from the Renderer
@@ -77,6 +78,7 @@ const strictRpcMethods = new Set([
   "listProviderModels",
   "rebuildProjectSourcesIndex",
   "collabReviewSection",
+  "collabSetReviewCategory",
   "collabDraftSection",
   "collabUndoAI",
 ]);
@@ -507,6 +509,8 @@ export const rpc = {
   collabAgentStatus: (docKey: string) => call<AgentActivityMessage>("collabAgentStatus", { docKey }),
   collabUndoAI: (docKey: string) => call<boolean>("collabUndoAI", { docKey }),
   collabSetAgentPaused: (paused: boolean) => call<void>("collabSetAgentPaused", { paused }),
+  collabSetReviewCategory: (docKey: string, category: ReviewCategory, enabled: boolean) =>
+    call<ProjectReviewSettings>("collabSetReviewCategory", { docKey, category, enabled }),
   collabReviewSection: (docKey: string, blockId: string) =>
     call<void>("collabReviewSection", { docKey, blockId }),
   collabDraftSection: (docKey: string, blockId: string) => call<void>("collabDraftSection", { docKey, blockId }),

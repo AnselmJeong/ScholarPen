@@ -1,3 +1,5 @@
+import { REVIEW_CATEGORIES } from "./review";
+
 /**
  * ScholarPen AI, the one AI collaborator in a document: its own comment
  * author, collaboration cursor, @ai handle and review focus.
@@ -33,11 +35,7 @@ export const SCHOLARPEN_AI: Persona = {
     "uncorrected multiple comparisons, causal language from correlational designs, inappropriate tests, numbers inconsistent with each other); " +
     "and what a skeptical journal referee would object to (unclear novelty, alternative explanations not addressed, missing limitations, " +
     "generalisations beyond the sample, missing key literature)",
-  categories: [
-    "overclaim", "missing-citation", "citation", "logic", "consistency", "definition",
-    "statistics", "inference", "reporting",
-    "novelty", "alternative-explanation", "limitation", "generalisation", "literature",
-  ],
+  categories: REVIEW_CATEGORIES.map(category => category.id),
 };
 
 /**
