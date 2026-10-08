@@ -1,4 +1,6 @@
 import { validateAgentImages } from "../../shared/agent-images";
+import { projectMemoryPrompt, type ProjectMemoryHit } from "../../shared/project-memory";
+import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
 import { citationClient, type SupportingCitation } from "../citation/client";
@@ -196,6 +198,17 @@ export async function buildAgentMessages(
       })
     : [];
   const query = researchQuery(params);
+  let memories: ProjectMemoryHit[] = [];
+  let memoryUnavailable = false;
+  if (params.projectPath) {
+    try {
+      memories = await fileSystem.recallProjectMemory(params.projectPath, query, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      memoryUnavailable = true;
+      console.warn("[Hindsight] Recall unavailable; continuing without memory.");
+    }
+  }
   const isFindCitation =
     params.analysisMode === "find-citation" &&
     Boolean(params.citationContext?.selectedText.trim());
@@ -365,10 +378,14 @@ export async function buildAgentMessages(
         `<mentioned_file path="${file.displayPath}" truncated="${file.truncated ? "true" : "false"}">\n${file.content}\n</mentioned_file>`
     ),
     buildProjectSourcePrompt(projectSources),
+    projectMemoryPrompt(memories),
+    memoryUnavailable ? "Project memory retrieval was unavailable for this request. Do not claim to have consulted stored project memories." : "",
     webContext(webResults),
   ].filter(Boolean);
 
   const references = [
+    memories.length ? `\n\n### 프로젝트 기억 (Hindsight)\n${memories.map((hit, i) => `- [M${i + 1}] ${hit.text.replace(/[\r\n]+/g, " ").replace(/[\\`*_{}\[\]()<>#!|]/g, "\\$&")}`).join("\n")}\n` : "",
+    memoryUnavailable ? "\n\n*Hindsight 연결 실패로 이번 답변에는 프로젝트 기억을 참조하지 못했습니다.*\n" : "",
     isFindCitation ? buildCitationReferenceList(citationCandidates) : "",
     !isFindCitation ? buildProjectSourceReferences(projectSources) : "",
     webResults.length > 0 ? buildWebReferenceList(webResults) : "",

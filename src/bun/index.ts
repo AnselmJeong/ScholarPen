@@ -233,6 +233,10 @@ async function main() {
         },
 
         listProjects: () => fileSystem.listProjects(),
+        getProjectMemoryStatus: ({ projectPath }) => fileSystem.getProjectMemoryStatus(projectPath),
+        retainProjectMemory: ({ projectPath, content, source }) => fileSystem.retainProjectMemory(projectPath, content, source),
+        recallProjectMemory: ({ projectPath, query }) => fileSystem.recallProjectMemory(projectPath, query),
+        getProjectMemoryOperation: ({ projectPath, operationId }) => fileSystem.getProjectMemoryOperation(projectPath, operationId),
 
         openProject: async ({ name }) => {
           const proj = await fileSystem.openProject(name);

@@ -1,4 +1,5 @@
 import type { CodexStatus } from "../shared/codex";
+import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "../shared/project-memory";
 // RPC client for calling Main process handlers from the Renderer
 // Uses Electrobun's webview RPC bridge
 
@@ -43,6 +44,7 @@ type BibliographyValidationProgressHandler = (progress: BibliographyValidationPr
 type CollabMessageHandler = (message: CollabUpdateMessage) => void;
 
 const strictRpcMethods = new Set([
+  "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
   "getCodexStatus", "loginCodex", "cancelCodexLogin", "logoutCodex", "listProviderModels",
   "selectFigure",
   "readFigure",
@@ -338,6 +340,10 @@ async function call<T>(method: string, params?: unknown): Promise<T> {
 }
 
 export const rpc = {
+  getProjectMemoryStatus: (projectPath: string) => call<ProjectMemoryStatus>("getProjectMemoryStatus", { projectPath }),
+  retainProjectMemory: (projectPath: string, content: string, source: string) => call<ProjectMemoryReceipt>("retainProjectMemory", { projectPath, content, source }),
+  recallProjectMemory: (projectPath: string, query: string) => call<ProjectMemoryHit[]>("recallProjectMemory", { projectPath, query }),
+  getProjectMemoryOperation: (projectPath: string, operationId: string) => call<ProjectMemoryOperation>("getProjectMemoryOperation", { projectPath, operationId }),
   getOllamaStatus: () => call<OllamaStatus>("getOllamaStatus"),
   confirmAction: (options: {
     title: string;

@@ -60,6 +60,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { ProjectMemoryPanel } from "./ProjectMemoryPanel";
 
 interface AISidebarProps {
   responsePreferences: AIResponsePreferences;
@@ -1279,6 +1280,8 @@ export function AISidebar({
             onRebuildSources={rebuildProjectSources}
           />
         )}
+
+        {project && <ProjectMemoryPanel key={project.path} projectPath={project.path} sourceName={activeDocumentName} getSelection={() => editor?.getSelectedText() ?? ""} />}
 
         {!activeThreadUsesCurrentModel && (
           <div className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">

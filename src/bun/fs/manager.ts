@@ -26,6 +26,7 @@ import { seedAppInstructions } from "../agent/app-skills";
 import { ProjectReferenceIndex } from "./project-references";
 import { linkSelectedFigure, readLinkedFigure } from "./figure-files";
 import { bundleExportImages } from "./export-image-bundle";
+import { projectMemory } from "../memory/hindsight";
 
 // SCHOLARPEN_HOME points a development build at a scratch settings/projects root.
 const SCHOLARPEN_BASE = process.env.SCHOLARPEN_HOME || join(homedir(), "ScholarPen");
@@ -384,6 +385,7 @@ class FileSystemManager {
     const projectPath = this.markProjectPath(join(rootDir, safeName));
 
     await initializeProjectSkeleton(projectPath, safeName);
+    await this.initializeProjectMemory(projectPath);
 
     return {
       name: safeName,
@@ -399,6 +401,7 @@ class FileSystemManager {
     const projectPath = this.markProjectPath(join(rootDir, safeName));
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
+    await this.initializeProjectMemory(projectPath);
     return {
       name: safeName,
       path: projectPath,
@@ -412,6 +415,7 @@ class FileSystemManager {
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
     const name = basename(projectPath);
+    await this.initializeProjectMemory(projectPath);
     return {
       name,
       path: projectPath,
@@ -421,6 +425,27 @@ class FileSystemManager {
   }
 
   // ── Document CRUD ───────────────────────────────────────────
+  private async initializeProjectMemory(projectPath: string): Promise<void> {
+    try { await projectMemory.initialize(projectPath); }
+    catch (error) { console.warn("[Hindsight] Project memory initialization failed:", error); }
+  }
+
+  async getProjectMemoryStatus(projectPath: string) {
+    return projectMemory.status(await this.assertKnownProjectPath(projectPath));
+  }
+
+  async retainProjectMemory(projectPath: string, content: string, source: string) {
+    return projectMemory.retain(await this.assertKnownProjectPath(projectPath), content, source);
+  }
+
+  async recallProjectMemory(projectPath: string, query: string, signal?: AbortSignal) {
+    return projectMemory.recall(await this.assertKnownProjectPath(projectPath), query, signal);
+  }
+
+  async getProjectMemoryOperation(projectPath: string, operationId: string) {
+    return projectMemory.operation(await this.assertKnownProjectPath(projectPath), operationId);
+  }
+
 
   /** Writes the JSON snapshot and returns the hash of the bytes written. */
   async saveDocument(projectPath: string, filename: string, content: unknown): Promise<string> {

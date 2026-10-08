@@ -1,4 +1,5 @@
 import type { CodexStatus } from "./codex";
+import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "./project-memory";
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
 import type { ReferenceDocument } from "./project-references";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "./collab/protocol";
@@ -45,6 +46,10 @@ type BunRequests = RPCSchema<{
     openProject: { params: { name: string }; response: ProjectInfo };
     openProjectByPath: { params: { projectPath: string }; response: ProjectInfo };
     createProject: { params: { name: string }; response: ProjectInfo };
+    getProjectMemoryStatus: { params: { projectPath: string }; response: ProjectMemoryStatus };
+    retainProjectMemory: { params: { projectPath: string; content: string; source: string }; response: ProjectMemoryReceipt };
+    recallProjectMemory: { params: { projectPath: string; query: string }; response: ProjectMemoryHit[] };
+    getProjectMemoryOperation: { params: { projectPath: string; operationId: string }; response: ProjectMemoryOperation };
     // Multi-document support
     /** `collab` marks a snapshot written by a Y.Doc-backed editor peer. */
     saveDocument: { params: { projectPath: string; filename: string; content: unknown; collab?: boolean }; response: void };
