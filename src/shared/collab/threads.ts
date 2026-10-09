@@ -22,6 +22,8 @@ export interface ThreadMeta {
   agent?: string;
   /** "document": the thread asks for changes anywhere in the manuscript, not only the commented passage. */
   scope?: "document";
+  /** Explicit slash action; independent of the current selection or model interpretation. */
+  documentAction?: "humanize" | "remove-watermark";
   /** The author took the thread over ("I'll handle"); their replies are notes, not requests to the AI. */
   manual?: boolean;
   /** Review finding category and severity for AI-opened threads. */

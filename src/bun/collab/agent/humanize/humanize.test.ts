@@ -211,12 +211,49 @@ test("English-majority Humanize uses blader rules and preserves Korean paragraph
 test("the slash menu keeps Humanize independent from watermark removal", async () => {
   const { getScholarSlashMenuItems } = await import("../../../../renderer/blocks/slash-menu-items");
   let requested = false;
-  const items = getScholarSlashMenuItems(editor as any, () => {}, () => {}, () => { requested = true; });
+  let watermarkRequested = false;
+  const items = getScholarSlashMenuItems(editor as any, () => {}, () => {}, () => { requested = true; }, () => { watermarkRequested = true; });
   const action = items.find(item => item.title === "Humanize")!;
   expect(action.aliases).toContain("humanize");
   expect(action.aliases).not.toContain("watermark");
   expect(action.subtext).toContain("영어");
   action.onItemClick();
   expect(requested).toBe(true);
+  expect(watermarkRequested).toBe(false);
+  const watermark = items.find(item => item.title === "Remove watermark")!;
+  expect(watermark.subtext).toContain("현재 문서 전체");
+  watermark.onItemClick();
+  expect(watermarkRequested).toBe(true);
   expect(asksForHumanize(author("/remove watermark"))).toBe(false);
+});
+
+test("explicit document Humanize processes the tail beyond 200 paragraphs without a selection or planning cap", async () => {
+  const blocks = Array.from({ length: 205 }, (_, i) => ({
+    id: `long-${i}`, type: "paragraph", content: `문단번호${i} 연구 결과를 정확하게 설명한다.`,
+  }));
+  const seeded = blocksToYDoc(editor, blocks as any, "document-store");
+  registry = new CollabRegistry({
+    read: async () => ({ state: Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
+    write: async () => {}, jsonHash: async () => "h",
+  }, { update: () => {}, awareness: () => {} });
+  await registry.open({ projectPath: "/p", filename: "long.scholarpen.json", peerId: "editor", schema: schemaToSpecJSON(editor.pmSchema) });
+  const session = registry.get("/p::long.scholarpen.json")!;
+  const visited = new Set<number>();
+  agent = new CollabAgent(registry, {
+    complete: async messages => {
+      if (isDiagnosis(messages)) return '{"patterns":[],"preserve":[]}';
+      expect(isPlan(messages)).toBe(false);
+      const passage = String(messages[1].content).match(/<passage_to_edit>\n([\s\S]*?)\n<\/passage_to_edit>/)![1];
+      for (const match of passage.matchAll(/문단번호(\d+)/g)) visited.add(Number(match[1]));
+      return '<reply>확인했습니다.</reply><passage>NO_CHANGE</passage>';
+    }, onActivity: () => {}, pollMs: 5,
+  });
+  const id = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "문서를 다듬어 주세요.", {
+    assignee: "ai", status: "open", documentAction: "humanize",
+  });
+  for (let i = 0; i < 300 && !readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find(t => t.id === id)?.comments[1]; i++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  expect(visited.size).toBe(205);
+  expect(visited.has(204)).toBe(true);
 });

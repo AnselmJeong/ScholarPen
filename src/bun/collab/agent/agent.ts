@@ -43,7 +43,10 @@ import {
 } from "./humanize/humanize";
 import { manuscriptLanguage } from "./humanize/language";
 import { englishHumanizeGuidance } from "./humanize/english";
-import { protectedRewritePreview } from "../../../shared/ai-text-protection";
+import { cleanDocumentWatermarks } from "./watermark/document";
+import { editableSegments, parseTextEdits } from "./text-edits";
+import { completeWithDeadline } from "./completion";
+import { protectedRewritePreview, restoreProtectedSelection } from "../../../shared/ai-text-protection";
 import type { Node as PMNode } from "prosemirror-model";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
@@ -59,6 +62,8 @@ export interface CollabAgentDeps {
   /** How long the AI waits for the author to leave a paragraph before working on it anyway. */
   waitForAuthorMs?: number;
   pollMs?: number;
+  /** Per-model-call deadline, not a limit on processing the whole manuscript. */
+  completionTimeoutMs?: number;
   /** Decides suggestion vs direct edits for a block (zones refine this in stage 5). */
   editModeFor?: (session: CollabSession, blockId: string) => EditMode;
 }
@@ -80,8 +85,6 @@ interface Job {
 const MAX_BLOCKS_PER_CALL = 5;
 /** Most paragraphs one request edits; larger requests continue on the next reply. */
 const MAX_DOCUMENT_BLOCKS = 60;
-/** The humanizer rewrites every Korean paragraph, so it takes a whole paper in one request. */
-const MAX_HUMANIZE_BLOCKS = 200;
 /** Manuscript text per planning call; longer manuscripts are planned in parts. */
 const PLAN_PART_CHARS = 60_000;
 const RECENT_JOBS = 12;
@@ -172,11 +175,12 @@ export class CollabAgent {
     };
     this.attachments.set(session.docKey, attachment);
 
-    // Threads left "AI working" by an interrupted run go back to the queue.
+    // A process restart must not silently repeat a failed or partially applied edit.
     session.ydoc.transact(() => {
       for (const thread of readThreads(threads)) {
         if (thread.meta.status === "in-progress") {
-          updateThreadMeta(threads, thread.id, { status: "open", statusNote: "Interrupted; retrying." });
+          updateThreadMeta(threads, thread.id, { assignee: "me", status: "open", statusNote: "Interrupted. Ask AI to retry when ready." });
+          addThreadComment(threads, thread.id, SCHOLARPEN_AI.userId, "The previous AI task was interrupted. Any existing suggestions remain available for review. Ask AI to retry when ready.");
         }
       }
     }, AI_META_ORIGIN);
@@ -269,6 +273,13 @@ export class CollabAgent {
       if (job.view.state === "working" || job.view.state === "waiting") this.update(job, { state: "done", finishedAt: this.now() });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (job.view.threadId) {
+        const thread = readThreads(attachment.session.ydoc.getMap(COLLAB_THREADS_MAP)).find(item => item.id === job.view.threadId);
+        if (thread?.meta.status === "in-progress") this.setThread(attachment, thread.id, {
+          assignee: "me", status: thread.meta.changeSet === undefined ? "open" : "proposed",
+          statusNote: controller.signal.aborted ? "Cancelled" : `Failed: ${message}`,
+        }, `${controller.signal.aborted ? "The task was cancelled." : `The task stopped: ${message}`} Any earlier suggestions remain available for review. Ask AI to retry when ready.`);
+      }
       this.update(job, { state: controller.signal.aborted ? "cancelled" : "failed", detail: message, finishedAt: this.now() });
     } finally {
       attachment.presence.release();
@@ -279,6 +290,10 @@ export class CollabAgent {
       }
       void this.pump();
     }
+  }
+
+  private complete(messages: OllamaMessage[], signal: AbortSignal) {
+    return completeWithDeadline(this.deps.complete, messages, signal, this.deps.completionTimeoutMs ?? 180_000);
   }
 
   /** Waits until the author is not in (or just editing) any of the blocks. */
@@ -319,7 +334,18 @@ export class CollabAgent {
     if (!thread || !threadWantsAI(thread)) return;
     const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text);
     reply({ assignee: "ai", agent: SCHOLARPEN_AI.id, status: "in-progress", statusNote: undefined });
-    if (thread.meta.scope === "document") return this.runDocumentRequest(job, attachment, thread, reply, signal);
+    if (thread.meta.documentAction === "remove-watermark") {
+      if (signal.aborted) throw new Error("Cancelled");
+      const result = cleanDocumentWatermarks(session, AI_ORIGIN);
+      reply({ assignee: "me", status: "resolved", editedBlockIds: result.blockIds },
+        `현재 문서 전체에서 ${result.scanned}개 텍스트 블록을 확인했습니다. 숨은 문자 ${result.removed}개 제거, 특수 공백 ${result.replaced}개 정리. ` +
+        `코드 또는 검토 중인 수정안이 있는 블록 ${result.skipped}개는 보존했습니다. ` +
+        "문체 재작성 없이 로컬 유니코드 정리만 수행했습니다. 통계적 워터마크나 첨부 파일의 워터마크 제거를 보장하지 않습니다. " +
+        (result.blockIds.length ? "Activity의 Undo last AI edit으로 전체 정리를 되돌릴 수 있습니다." : "변경할 문자가 없어 원문을 유지했습니다."));
+      this.update(job, { detail: `Removed ${result.removed} characters; normalized ${result.replaced} spaces` });
+      return;
+    }
+    if (thread.meta.scope === "document" || thread.meta.documentAction === "humanize") return this.runDocumentRequest(job, attachment, thread, reply, signal);
 
     const doc = readDoc(session);
     const range = threadRange(doc, threadId);
@@ -367,7 +393,7 @@ export class CollabAgent {
       reply({ assignee: "me", status: "open" }, "The manuscript has no editable prose yet, so I left it unchanged.");
       return;
     }
-    if (asksForHumanize(conversationOf(thread))) return this.runHumanizeRequest(job, attachment, thread, doc, prose, reply, signal);
+    if (thread.meta.documentAction === "humanize" || asksForHumanize(conversationOf(thread))) return this.runHumanizeRequest(job, attachment, thread, doc, prose, reply, signal);
     const paragraphs = prose.map((block, index) => ({
       number: index + 1,
       kind: blockContent(block).node.type.name,
@@ -390,7 +416,7 @@ export class CollabAgent {
     const chosen = new Set<number>();
     let summary = "";
     for (let index = 0; index < parts.length; index++) {
-      const response = await this.deps.complete(buildDocumentPlanMessages({
+      const response = await this.complete(buildDocumentPlanMessages({
         conversation: conversationOf(thread),
         paragraphs: parts[index],
         part: parts.length > 1 ? { index: index + 1, total: parts.length } : undefined,
@@ -432,24 +458,22 @@ export class CollabAgent {
     const targets = prose.filter((block) => {
       const content = blockContent(block).node;
       // Headings are section titles (kept by the rulebook); paragraphs with pending suggestions are left for the author.
-      return content.type.name !== "heading" && !hasSuggestionMarks(content) && isKoreanProse(content.textContent);
+      return content.type.name !== "heading" && content.type.name !== "codeBlock" && !content.type.spec.code &&
+        !hasSuggestionMarks(content) && isKoreanProse(content.textContent);
     });
     if (targets.length === 0) {
       reply({ assignee: "me", status: "open", statusNote: undefined },
         "I found no Korean paragraphs to humanize (paragraphs with pending suggestions are skipped), so I left the manuscript unchanged.");
       return;
     }
-    const capped = targets.slice(0, MAX_HUMANIZE_BLOCKS);
-    const diagnosis = await this.diagnoseHumanize(job, attachment, thread, doc, capped, signal);
-    const result = await this.editBlocks(job, attachment, thread, capped.map((block) => block.id), {
+    const diagnosis = await this.diagnoseHumanize(job, attachment, thread, doc, targets, signal);
+    const result = await this.editBlocks(job, attachment, thread, targets.map((block) => block.id), {
       summary: diagnosis?.summary,
       guidance: humanizeGuidance(diagnosis),
       gateChangeRate: true,
+      skipAuthorWait: thread.meta.scope === "document" || !!thread.meta.documentAction,
     }, signal);
     if (result === "document") return;
-    if (targets.length > capped.length) {
-      result.notes.push(`${targets.length} paragraphs are in Korean; I worked on the first ${capped.length}. Reply here to continue with the rest.`);
-    }
     this.finishEdit(job, attachment, thread, result, reply);
   }
 
@@ -469,6 +493,7 @@ export class CollabAgent {
     const result = await this.editBlocks(job, attachment, thread, targets.map(block => block.id), {
       guidance: englishHumanizeGuidance(),
       suggestOnly: true,
+      skipAuthorWait: thread.meta.scope === "document" || !!thread.meta.documentAction,
     }, signal);
     if (result !== "document") {
       result.notes.unshift("English manuscript detected; used blader/humanizer for style editing.");
@@ -482,7 +507,7 @@ export class CollabAgent {
     this.update(job, { detail: "Diagnosing AI tells (im-not-ai)" });
     attachment.presence.claim(blocks[0].id, "reading");
     const texts = blocks.map((block) => readableText(doc, blockContent(block).from, blockContent(block).to));
-    const response = await this.deps.complete(buildHumanizeDiagnosisMessages({
+    const response = await this.complete(buildHumanizeDiagnosisMessages({
       conversation: conversationOf(thread),
       paragraphs: sampleParagraphs(texts),
     }), signal);
@@ -498,11 +523,22 @@ export class CollabAgent {
    * needs the whole manuscript (only when `allowWiderScope` is set).
    */
   private async editBlocks(job: Job, attachment: Attachment, thread: ThreadSnapshot, blockIds: string[],
-    options: { quoted?: string; summary?: string; allowWiderScope?: boolean; guidance?: string; gateChangeRate?: boolean; suggestOnly?: boolean },
+    options: { quoted?: string; summary?: string; allowWiderScope?: boolean; guidance?: string; gateChangeRate?: boolean; suggestOnly?: boolean; skipAuthorWait?: boolean },
     signal: AbortSignal): Promise<EditResult | "document"> {
     const { session } = attachment;
     const batches: string[][] = [];
-    for (let index = 0; index < blockIds.length; index += MAX_BLOCKS_PER_CALL) batches.push(blockIds.slice(index, index + MAX_BLOCKS_PER_CALL));
+    // Bound annotated output size as well as paragraph count to reduce truncation.
+    const snapshot = readDoc(session);
+    let batch: string[] = [], chars = 0;
+    for (const id of blockIds) {
+      const block = findBlock(snapshot, id);
+      const size = block ? captureBlock(block).protection.protectedText.length : 0;
+      if (batch.length && (batch.length >= MAX_BLOCKS_PER_CALL || chars + size > 6000)) {
+        batches.push(batch); batch = []; chars = 0;
+      }
+      batch.push(id); chars += size;
+    }
+    if (batch.length) batches.push(batch);
     const result: EditResult = {
       outcomes: [], replies: [], notes: [], changeRates: [], editedBlockIds: [], summary: options.summary,
       // Everything this request changes is one change set, accepted or rejected together.
@@ -512,8 +548,8 @@ export class CollabAgent {
     this.update(job, { blockId: blockIds[0] });
 
     for (let index = 0; index < batches.length; index++) {
-      if (batches.length > 1) this.update(job, { detail: `Editing part ${index + 1} of ${batches.length}` });
-      await this.waitForAuthor(job, attachment, batches[index], signal);
+      if (!options.skipAuthorWait) await this.waitForAuthor(job, attachment, batches[index], signal);
+      this.update(job, { state: "working", detail: `Editing part ${index + 1} of ${batches.length}` });
       // Read the paragraphs now, after waiting: this is the base the stale check compares against.
       const doc = readDoc(session);
       const fresh = batches[index].map((id) => findBlock(doc, id)).filter((block): block is NonNullable<typeof block> => !!block);
@@ -528,7 +564,7 @@ export class CollabAgent {
       const bases: BlockBase[] = fresh.map((block) => captureBlock(block));
       const first = blockContent(fresh[0]);
       const last = blockContent(fresh[fresh.length - 1]);
-      const response = await this.deps.complete(buildCommentEditMessages({
+      const messages = buildCommentEditMessages({
         conversation: conversationOf(thread),
         passage: joinProtections(bases),
         quoted: options.quoted,
@@ -537,21 +573,38 @@ export class CollabAgent {
         part: options.quoted === undefined ? { index: index + 1, total: batches.length } : undefined,
         allowWiderScope: options.allowWiderScope,
         guidance: options.guidance,
-      }), signal);
-      if (signal.aborted) throw new Error("Cancelled");
-
-      const parsed = parseCommentEditResponse(response);
-      if (parsed.wantsDocument && options.allowWiderScope && index === 0) return "document";
-      if (parsed.reply) result.replies.push(parsed.reply);
-      if (parsed.passage === null) continue;
-      let parts: string[];
-      try {
-        parts = splitProtected(bases, parsed.passage);
-      } catch (error) {
-        if (batches.length === 1) throw error;
-        result.notes.push(`Part ${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
-        continue;
+        segments: editableSegments(bases.map(base => base.protection)).map(({ id, text }) => ({ id, text })),
+      });
+      let parsed: ReturnType<typeof parseCommentEditResponse> | undefined;
+      let parts: string[] = [];
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await this.complete(messages, signal);
+        if (signal.aborted) throw new Error("Cancelled");
+        try {
+          const structured = parseTextEdits(response, bases.map(base => base.protection));
+          parsed = structured
+            ? { reply: structured.reply, passage: structured.parts ? "structured" : null, wantsDocument: structured.wantsDocument }
+            : parseCommentEditResponse(response);
+          if (parsed.wantsDocument && options.allowWiderScope && index === 0) return "document";
+          if (parsed.passage !== null) {
+            parts = structured?.parts ?? splitProtected(bases, parsed.passage);
+            // Validate the entire batch before applying any paragraph. Never
+            // infer missing markers or strip them to make an unsafe reply fit.
+            parts.forEach((part, at) => restoreProtectedSelection(session.schema, bases[at].protection, part));
+          }
+          break;
+        } catch (error) {
+          if (attempt === 1) throw error;
+          this.update(job, { detail: `Retrying format for part ${index + 1} of ${batches.length} (1/1)` });
+          messages.push({ role: "assistant", content: response }, { role: "user", content:
+            "Your response could not be applied: " + (error instanceof Error ? error.message : String(error)) +
+            " Return one JSON object with reply and edits. Copy every id from editable_segments exactly once; " +
+            "return revised text for each id or its exact original text if unchanged. Do not copy the ⟦SP: control markers. " +
+            "No Markdown or text outside the JSON object. Preserve the claims, quotations, numbers and technical terms." });
+        }
       }
+      if (parsed?.reply) result.replies.push(parsed.reply);
+      if (parsed?.passage == null) continue;
       for (let at = 0; at < bases.length; at++) {
         let rate: number | undefined;
         if (options.gateChangeRate) {
@@ -571,13 +624,13 @@ export class CollabAgent {
         if (rate !== undefined && outcome.kind === "applied") result.changeRates.push(rate);
         if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[at].blockId, `comment:${thread.id}`);
       }
+      this.recordEditProgress(attachment, thread, result);
       attachment.presence.release();
     }
     return result;
   }
 
-  private finishEdit(job: Job, attachment: Attachment, thread: ThreadSnapshot, result: EditResult,
-    reply: (patch: Partial<ThreadMeta>, text?: string) => void) {
+  private recordEditProgress(attachment: Attachment, thread: ThreadSnapshot, result: EditResult) {
     const { session } = attachment;
     const suggested = result.outcomes.some((outcome) => outcome.kind === "applied" && outcome.mode === "suggest");
     if (suggested) {
@@ -591,6 +644,16 @@ export class CollabAgent {
         });
       }, AI_META_ORIGIN);
     }
+    this.setThread(attachment, thread.id, {
+      editedBlockIds: [...new Set([...(thread.meta.editedBlockIds ?? []), ...result.editedBlockIds])],
+      ...(suggested ? { changeSet: result.changeSetId } : {}),
+    });
+  }
+
+  private finishEdit(job: Job, attachment: Attachment, thread: ThreadSnapshot, result: EditResult,
+    reply: (patch: Partial<ThreadMeta>, text?: string) => void) {
+    this.recordEditProgress(attachment, thread, result);
+    const suggested = result.outcomes.some((outcome) => outcome.kind === "applied" && outcome.mode === "suggest");
     const lead = result.summary || result.replies[0] || "";
     const changed = result.outcomes.filter((outcome) => outcome.kind === "applied").length;
     const notes = [...result.notes];

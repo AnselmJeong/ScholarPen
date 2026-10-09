@@ -49,7 +49,7 @@ afterEach(async () => {
   await registry?.dispose();
 });
 
-async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, options: { waitForAuthorMs?: number } = {}) {
+async function setup(complete: (messages: OllamaMessage[], signal: AbortSignal) => Promise<string>, options: { waitForAuthorMs?: number; completionTimeoutMs?: number } = {}) {
   const seeded = blocksToYDoc(editor, BLOCKS as any, "document-store");
   registry = new CollabRegistry({
     read: async () => ({ state: Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
@@ -60,7 +60,8 @@ async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, o
   const session = registry.get("/p::doc.scholarpen.json")!;
   const prompts: OllamaMessage[][] = [];
   agent = new CollabAgent(registry, {
-    complete: async (messages) => { prompts.push(messages); return complete(messages); },
+    complete: async (messages, signal) => { prompts.push([...messages]); return complete(messages, signal); },
+    completionTimeoutMs: options.completionTimeoutMs,
     onActivity: () => {},
     pollMs: 10,
     waitForAuthorMs: options.waitForAuthorMs ?? 2000,
@@ -265,4 +266,134 @@ test("a passage comment that asks for the whole manuscript widens to it", async 
   expect(thread.comments[1].text).toContain("Fixed it everywhere.");
   expect(blockTextOf(session, "p3")).toContain("obtained the measurements");
   expect(blockTextOf(session, "p1")).toBe(BLOCKS[0].content as string);
+});
+
+function structuredRewrite(messages: OllamaMessage[], change = (text: string) => text) {
+  const segments = JSON.parse((messages[1].content as string).match(/<editable_segments>\n([\s\S]*?)\n<\/editable_segments>/)![1]);
+  return JSON.stringify({ reply: "Revised the prose.", edits: segments.map((segment: any) => ({ id: segment.id, text: change(segment.text) })) });
+}
+
+test("plain-text segment editing preserves citation atoms and original formatting without model-generated markers", async () => {
+  const { session } = await setup(async messages => structuredRewrite(messages, text => text.replace("Earlier trials reported", "Previous studies found")));
+  const threadId = comment(session, "p2", "@AI make the wording clearer");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  expect(threadOf(session, threadId).meta.status).toBe("proposed");
+  expect(blockTextOf(session, "p2")).toContain("Previous studies found");
+  const atoms: unknown[] = [];
+  blockContent(findBlock(readDoc(session), "p2")!).node.descendants(node => {
+    if (node.type.name === "citation") atoms.push(node.attrs);
+  });
+  expect(atoms).toEqual([expect.objectContaining({ citekey: "smith2020" })]);
+});
+
+for (const bad of [
+  "<reply>Done</reply><passage>Rewritten without any markers.</passage>",
+  "trailing",
+  "outside",
+]) test(`invalid edit format (${bad.slice(0, 12)}) is retried once before any mutation`, async () => {
+  let calls = 0;
+  const { session } = await setup(async messages => {
+    calls++;
+    if (calls === 1) {
+      const valid = rewrite(messages, "prove", "suggest");
+      if (bad === "trailing") return valid.replace("</passage>", " Extra text</passage>");
+      if (bad === "outside") return valid.replace("<passage>", "<passage>Extra text ");
+      return bad;
+    }
+    expect(blockTextOf(session, "p1")).toBe(BLOCKS[0].content as string);
+    return structuredRewrite(messages, text => text.replace("prove", "suggest"));
+  });
+  const threadId = comment(session, "p1", "@AI soften the claim");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  expect(calls).toBe(2);
+  expect(threadOf(session, threadId).meta.status).toBe("proposed");
+  expect(blockTextOf(session, "p1")).toContain("suggest");
+});
+
+test("repeated malformed responses stop, clear AI working, and never silently requeue", async () => {
+  const { session, prompts } = await setup(async () => '<reply>Done</reply><passage>Missing markers</passage>');
+  const original = readDoc(session).textContent;
+  const threadId = comment(session, "p1", "@AI improve this");
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "failed");
+  expect(prompts.length).toBe(2);
+  expect(threadOf(session, threadId).meta).toMatchObject({ assignee: "me", status: "open" });
+  expect(threadOf(session, threadId).meta.statusNote).toContain("Failed:");
+  expect(readDoc(session).textContent).toBe(original);
+  agent!.rescan(session.docKey);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  expect(prompts.length).toBe(2);
+});
+
+test("a hung provider times out and settles the comment even if it ignores abort", async () => {
+  let modelSignal: AbortSignal | undefined;
+  const { session } = await setup(async (_messages, signal) => { modelSignal = signal; return new Promise(() => {}); }, { completionTimeoutMs: 20 });
+  const threadId = comment(session, "p1", "@AI improve this");
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "failed");
+  expect(modelSignal?.aborted).toBe(true);
+  expect(threadOf(session, threadId).meta.status).toBe("open");
+  expect(threadOf(session, threadId).meta.statusNote).toContain("did not respond");
+});
+
+test("explicit whole-document Humanize does not wait for the author's cursor or recent typing", async () => {
+  const { session, prompts } = await setup(async messages => structuredRewrite(messages), { waitForAuthorMs: 60_000 });
+  authorEdit(session, "p3", "three", "four");
+  let threadId = "";
+  session.ydoc.transact(() => {
+    threadId = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "/humanize", {
+      assignee: "ai", status: "open", scope: "document", documentAction: "humanize",
+    });
+  }, "editor");
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "done");
+  expect(threadOf(session, threadId).meta.status).not.toBe("in-progress");
+  expect(prompts.length).toBe(1);
+  expect(prompts[0][1].content).toContain("four sites");
+});
+
+test("an interrupted saved thread is handed back without automatic replay on app restart", async () => {
+  const { session, prompts } = await setup(async () => "unexpected");
+  agent!.dispose();
+  let threadId = "";
+  session.ydoc.transact(() => {
+    threadId = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "/humanize", { assignee: "ai", status: "in-progress", scope: "document" });
+  }, "editor");
+  agent = new CollabAgent(registry, { complete: async () => { throw new Error("Must not replay"); }, onActivity: () => {} });
+  expect(threadOf(session, threadId).meta).toMatchObject({ assignee: "me", status: "open" });
+  expect(threadOf(session, threadId).comments.at(-1)?.text).toContain("interrupted");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  expect(agent.jobs(session.docKey)).toHaveLength(0);
+  expect(prompts).toHaveLength(0);
+});
+
+
+test("cancelling a hung model clears AI working without waiting for the provider", async () => {
+  const { session } = await setup(async () => new Promise(() => {}));
+  const threadId = comment(session, "p1", "@AI improve this");
+  await waitFor(() => threadOf(session, threadId).meta.status === "in-progress");
+  agent!.setPaused(true);
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "cancelled");
+  expect(threadOf(session, threadId).meta).toMatchObject({ assignee: "me", status: "open", statusNote: "Cancelled" });
+});
+
+test("a later batch failure leaves earlier suggestions linked for Accept/Reject", async () => {
+  let calls = 0;
+  const { session } = await setup(async messages => {
+    calls++;
+    if (calls > 1) throw new Error("Provider disconnected");
+    return structuredRewrite(messages, text => text.replace("prove", "suggest"));
+  });
+  // Force separate output-sized batches while retaining a real citation in p2.
+  authorEdit(session, "p1", "These results", "Additional context. ".repeat(400) + "These results");
+  let threadId = "";
+  session.ydoc.transact(() => {
+    threadId = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "/humanize", {
+      assignee: "ai", scope: "document", documentAction: "humanize",
+    });
+  }, "editor");
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "failed");
+  const thread = threadOf(session, threadId);
+  expect(thread.meta.status).toBe("proposed");
+  expect(thread.meta.editedBlockIds).toEqual(["p1"]);
+  expect(session.ydoc.getMap("changeSets").get(String(thread.meta.changeSet))).toMatchObject({ threadId });
+  expect(blockTextOf(session, "p1")).toContain("suggest");
+  expect(thread.meta.statusNote).toContain("Provider disconnected");
 });

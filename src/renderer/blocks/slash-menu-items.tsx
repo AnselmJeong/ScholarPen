@@ -12,6 +12,7 @@ export function getScholarSlashMenuItems(
   onOpenDOIDialog: () => void,
   onAddComment: () => void,
   onHumanize: () => void,
+  onRemoveWatermark: () => void,
 ): DefaultReactSuggestionItem[] {
   // Ordered by how often each is used.
   return [
@@ -57,8 +58,16 @@ export function getScholarSlashMenuItems(
       aliases: ["humanize", "im-not-ai", "윤문", "어투", "자연스럽게", "ai티"],
       group: "Scholar",
       icon: <Sparkles size={18} />,
-      subtext: "문서 언어 자동 감지 · 한국어 / 영어 문체 다듬기",
+      subtext: "현재 문서 전체 · 언어 자동 감지 · 한국어 / 영어 문체 다듬기",
       onItemClick: onHumanize,
+    },
+    {
+      title: "Remove watermark",
+      aliases: ["remove-watermark", "watermark", "워터마크", "숨은문자"],
+      group: "Scholar",
+      icon: <Sparkles size={18} />,
+      subtext: "현재 문서 전체 · 숨은 유니코드·특수 공백 정리 · Undo 가능",
+      onItemClick: onRemoveWatermark,
     },
     // Figure block
     {

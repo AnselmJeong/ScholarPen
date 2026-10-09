@@ -82,6 +82,8 @@ const { readThreads, threadWantsAI } = await import("../../shared/collab/threads
 const { AISelectionTargetExtension, suggestAISelection, trackAISelection } = await import("../components/editor/ai-selection-target");
 const { protectSelectionSlice } = await import("../../shared/ai-text-protection");
 const { CHANGE_SETS_MAP } = await import("../../shared/collab/change-sets");
+const { requestHumanizeManuscript, requestRemoveWatermarkManuscript } = await import("./comment-composer");
+const { getScholarSlashMenuItems } = await import("../blocks/slash-menu-items");
 
 async function settle() {
   for (let i = 0; i < 5; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -111,6 +113,72 @@ async function mountPeer(name: string, filename = "doc.scholarpen.json") {
 
 const texts = (editor: { document: unknown[] }) =>
   editor.document.map((block: any) => (block.content ?? []).map((part: any) => part.text ?? `[${part.type}]`).join(""));
+
+test("independent slash actions target the current document despite a partial selection; cleanup is local and undoable", async () => {
+  const { CollabAgent } = await import("../../bun/collab/agent/agent");
+  jsonFiles.set("/p/watermark.scholarpen.json", [
+    { id: "first", type: "paragraph", content: "First\u200B passage.", children: [{ id: "nested", type: "paragraph", content: "Nested\u200B prose." }] },
+    { id: "last", type: "paragraph", content: [
+      { type: "text", text: "Last\u00A0passage ", styles: { bold: true } },
+      { type: "citation", props: { citekey: "smith2026", locator: "p. 4" } },
+      { type: "text", text: " A\u200BB 👨‍👩‍👧", styles: {} },
+      { type: "text", text: " inline\u200Bcode", styles: { code: true } },
+      { type: "text", text: " $a\u200Bb$", styles: {} },
+    ] },
+  ]);
+  (jsonFiles.get("/p/watermark.scholarpen.json") as unknown[]).push(
+    { id: "code", type: "codeBlock", content: "code\u200Btext" },
+    { id: "title", type: "heading", content: "Heading\u00A0text" },
+  );
+  jsonFiles.set("/p/untouched.scholarpen.json", [{ id: "other", type: "paragraph", content: "Other\u200B document." }]);
+  const a = await mountPeer("A", "watermark.scholarpen.json");
+  const b = await mountPeer("B", "untouched.scholarpen.json");
+  const original = texts(a.editor);
+  const agent = new CollabAgent(registry, {
+    complete: async () => { throw new Error("Watermark cleanup must not call the model"); },
+    onActivity: () => {}, pollMs: 5,
+  });
+  try {
+  const items = getScholarSlashMenuItems(a.editor, () => {}, () => {},
+    () => requestHumanizeManuscript(a.editor), () => requestRemoveWatermarkManuscript(a.editor));
+  const view = a.editor.prosemirrorView!;
+  let textStart = 0;
+  view.state.doc.descendants((node, pos) => { if (!textStart && node.isText) textStart = pos; });
+  await act(async () => {
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textStart, textStart + 2)));
+    items.find(item => item.title === "Remove watermark")!.onItemClick();
+  });
+  for (let i = 0; i < 100; i++) {
+    await settle();
+    if (readThreads(a.peer.ydoc.getMap("threads"))[0]?.resolved) break;
+  }
+  expect(texts(a.editor).filter(Boolean)).toEqual(["First passage.", "Last passage [citation] AB 👨‍👩‍👧 inline\u200Bcode $a\u200Bb$", "code\u200Btext", "Heading text"]);
+  expect(a.editor.getBlock("nested")!.content).toContainEqual({ type: "text", text: "Nested prose.", styles: {} });
+  expect(texts(b.editor).filter(Boolean)).toEqual(["Other\u200B document."]);
+  expect(a.editor.getBlock("last")!.content).toContainEqual({ type: "text", text: "Last passage ", styles: { bold: true } });
+  expect(readThreads(a.peer.ydoc.getMap("threads"))[0].meta).toMatchObject({ scope: "document", documentAction: "remove-watermark" });
+  await act(async () => { expect(agent.undoLast(a.peer.docKey)).toBe(true); });
+  await settle();
+  expect(texts(a.editor).filter(Boolean)).toEqual(original.filter(Boolean));
+  expect(a.editor.getBlock("nested")!.content).toContainEqual({ type: "text", text: "Nested\u200B prose.", styles: {} });
+
+  agent.setPaused(true);
+  await act(async () => {
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textStart, textStart + 2)));
+    items.find(item => item.title === "Humanize")!.onItemClick();
+  });
+  await settle();
+  expect(readThreads(a.peer.ydoc.getMap("threads")).find(thread => thread.meta.documentAction === "humanize")?.meta.scope).toBe("document");
+  expect(view.state.selection.from).toBe(textStart);
+  expect(view.state.selection.to).toBe(textStart + 2);
+  expect(view.state.doc.textContent).toBe(a.editor.prosemirrorState.doc.textContent);
+  } finally {
+  agent.dispose();
+  await act(async () => { a.root.unmount(); b.root.unmount(); });
+  a.peer.destroy(); b.peer.destroy();
+  await settle();
+  }
+});
 
 test("editors seed once, stay in sync through Bun, and see Bun-side edits", async () => {
   const a = await mountPeer("A");

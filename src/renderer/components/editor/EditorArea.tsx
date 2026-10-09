@@ -26,7 +26,7 @@ import {
 } from "@blocknote/react";
 import { CommentsExtension } from "@blocknote/core/comments";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
-import { requestHumanizeManuscript, ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
+import { requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
@@ -719,7 +719,8 @@ function CollabEditorArea({
       editor as Parameters<typeof getScholarSlashMenuItems>[0],
       () => setDoiDialogOpen(true),
       () => startCommentAtCursor(editor),
-      () => requestHumanizeManuscript(editor),
+      () => { requestHumanizeManuscript(editor); onReviewChanges(); },
+      () => { requestRemoveWatermarkManuscript(editor); onReviewChanges(); },
     );
     const headings = getCustomHeadingSlashMenuItems(
       editor as Parameters<typeof getCustomHeadingSlashMenuItems>[0]
@@ -727,7 +728,7 @@ function CollabEditorArea({
     const defaults = filterDefaultSlashMenuItems(getDefaultReactSlashMenuItems(editor));
     const aiItems = ollamaStatus.connected ? getAISlashMenuItemsFixed(editor) : [];
     return [...scholar, ...headings, ...defaults, ...aiItems];
-  }, [editor, ollamaStatus.connected]);
+  }, [editor, ollamaStatus.connected, onReviewChanges]);
 
   return (
     <FigureDocumentContext.Provider value={{ projectPath: project.path,

@@ -18,7 +18,9 @@ import {
 } from "@blocknote/react";
 import { flip, offset, shift } from "@floating-ui/react";
 import { TextSelection } from "prosemirror-state";
-import type { ThreadMeta } from "../../shared/collab/threads";
+import { createThread, LOCAL_USER_ID, type ThreadMeta } from "../../shared/collab/threads";
+import { COLLAB_THREADS_MAP } from "../../shared/collab/protocol";
+import { getEditorCollab } from "./editor-collab";
 
 // Same schema BlockNote uses for comment bodies: paragraphs without colors.
 const { textColor: _textColor, backgroundColor: _backgroundColor, ...commentStyleSpecs } = defaultStyleSpecs;
@@ -233,16 +235,21 @@ export function startCommentAtCursor(editor: BlockNoteEditor<any, any, any>) {
  * manuscript (slash menu): saves the request as a comment right away.
  */
 export function requestHumanizeManuscript(editor: BlockNoteEditor<any, any, any>) {
-  const comments = editor.getExtension(CommentsExtension);
-  if (!comments) return;
-  const text = "/humanize — 원고 전체의 우세 언어에 맞춰 문체를 자연스럽게 다듬어 주세요. 한국어는 기존 Humanize, 영어는 blader/humanizer를 사용해 주세요.";
-  // Deferred like startCommentAtCursor, so the slash menu has removed its query text first.
-  requestAnimationFrame(() => {
-    if (!selectManuscriptCommentAnchor(editor)) return;
-    const metadata: ThreadMeta = { assignee: "ai", status: "open", requestedAt: Date.now(), scope: "document" };
-    void comments.createThread({
-      initialComment: { body: [{ type: "paragraph", content: [{ type: "text", text, styles: {} }] }] },
-      metadata,
+  requestDocumentAction(editor, "humanize", "/humanize: 현재 열린 문서 전체의 우세 언어에 맞춰 문체를 자연스럽게 다듬어 주세요. 한국어는 기존 Humanize, 영어는 blader/humanizer를 사용해 주세요.");
+}
+
+export function requestRemoveWatermarkManuscript(editor: BlockNoteEditor<any, any, any>) {
+  requestDocumentAction(editor, "remove-watermark", "/remove-watermark: 현재 열린 문서 전체의 숨은 유니코드 문자와 특수 공백을 정리해 주세요. 문체는 재작성하지 마세요.");
+}
+
+function requestDocumentAction(editor: BlockNoteEditor<any, any, any>, action: NonNullable<ThreadMeta["documentAction"]>, text: string) {
+  const peer = getEditorCollab(editor);
+  if (!peer) return;
+  // Document actions need no inline anchor. Selecting a paragraph here both
+  // surprised the author and made the agent wait for that cursor to leave.
+  peer.ydoc.transact(() => {
+    createThread(peer.ydoc.getMap(COLLAB_THREADS_MAP), LOCAL_USER_ID, text, {
+      assignee: "ai", status: "open", requestedAt: Date.now(), scope: "document", documentAction: action,
     });
-  });
+  }, "document-action");
 }

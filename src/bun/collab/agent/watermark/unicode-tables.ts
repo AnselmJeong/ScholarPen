@@ -1,0 +1,9 @@
+// Default cleaning tables from guillaumemeyer/watermarks-remover (MIT).
+// Pinned commit: c5297e9e69fec0779c29127c7892427e673fafd9. See LICENSE.watermarks-remover.
+export const STRIP_CODEPOINTS = new Set<number>([173, 847, 1564, 4447, 4448, 6068, 6069, 6155, 6156, 6157, 6158, 6159, 8203, 8204, 8205, 8206, 8207, 8234, 8235, 8236, 8237, 8238, 8288, 8289, 8290, 8291, 8292, 8294, 8295, 8296, 8297, 8298, 8299, 8300, 8301, 8302, 8303, 12644, 65024, 65025, 65026, 65027, 65028, 65029, 65030, 65031, 65032, 65033, 65034, 65035, 65036, 65037, 65038, 65039, 65279, 65440, 65529, 65530, 65531]);
+export const SPACE_HOMOGLYPHS = new Set<number>([160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8239, 8287, 12288]);
+export const PRESERVABLE_BIDI_CPS = new Set<number>([1564, 8206, 8207, 8294, 8295, 8296, 8297]);
+export const ORTHOGRAPHIC_CF = new Set<number>([1536, 1537, 1538, 1539, 1540, 1541, 1757, 1807, 2274, 69821, 69837]);
+export const MONGOLIAN_FVS = new Set<number>([6155, 6156, 6157, 6159]);
+export const KHMER_VOWELS = new Set<number>([6068, 6069]);
+export const HANGUL_FILLERS = new Set<number>([4447, 4448, 12644, 65440]);

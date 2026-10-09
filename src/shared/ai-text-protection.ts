@@ -52,6 +52,11 @@ export const ACADEMIC_HUMANIZER_INSTRUCTIONS =
 const PROTECTED_LITERAL_PATTERN =
   /(`{1,3}[^`\n]*`{1,3}|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^$\n]+\$|!\[[^\]\n]*\]\([^\n)]+\)|\[[^\]\n]+\]\([^\n)]+\)|\[@[^\]\n]+\]|\[\^[^\]\n]+\]|\\(?:cite|citep|citet|autocite|parencite|textcite|ref|eqref|label)\*?(?:\[[^\]\n]*\])?\{[^}\n]+\}|(?<![\w@])@[A-Za-z][\w:.-]*|[*_~]{2,}|[*_]|^(?:#{1,6}|>|(?:[-+] |\d+\. ))(?=\s?))/gm;
 
+/** Literal markup/code spans whose bytes must survive text-only cleanup. */
+export function protectedLiteralRanges(text: string) {
+  return [...text.matchAll(PROTECTED_LITERAL_PATTERN)].map(match => ({ from: match.index!, to: match.index! + match[0].length }));
+}
+
 function createNamespace() {
   const uuid = globalThis.crypto?.randomUUID?.();
   return (uuid ?? `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9]/g, "");
