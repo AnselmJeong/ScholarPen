@@ -160,3 +160,63 @@ test("a humanize comment diagnoses once and rewrites every Korean paragraph, gat
   expect(reply).toMatch(/Change rate \d+% on average/);
   expect(threadOf().meta).toMatchObject({ status: "proposed", assignee: "me" });
 });
+
+test("English-majority Humanize uses blader rules and preserves Korean paragraphs, citations and formatting", async () => {
+  const original = "These results play a crucial role in our understanding of the sample. We analysed participant responses and measured changes over time. The evidence supports further research and does not establish a causal link. ";
+  const seeded = blocksToYDoc(editor, [
+    { id: "heading", type: "heading", content: "Study findings" },
+    { id: "english", type: "paragraph", content: [
+      { type: "text", text: original, styles: { bold: true } },
+      { type: "citation", props: { citekey: "smith2026" } },
+    ] },
+    ...Array.from({ length: 5 }, (_, i) => ({ id: `kr${i}`, type: "paragraph", content: "연구 결과를 설명한다." })),
+  ] as any, "document-store");
+  registry = new CollabRegistry({
+    read: async () => ({ state: Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
+    write: async () => {}, jsonHash: async () => "h",
+  }, { update: () => {}, awareness: () => {} });
+  await registry.open({ projectPath: "/p", filename: "english.scholarpen.json", peerId: "editor", schema: schemaToSpecJSON(editor.pmSchema) });
+  const session = registry.get("/p::english.scholarpen.json")!;
+  const prompts: OllamaMessage[][] = [];
+  agent = new CollabAgent(registry, {
+    complete: async messages => {
+      prompts.push(messages);
+      const passage = (messages[1].content as string).match(/<passage_to_edit>\n([\s\S]*?)\n<\/passage_to_edit>/)![1];
+      expect(passage).not.toContain("연구 결과");
+      expect(passage).not.toContain("Study findings");
+      return `<reply>Removed inflated significance.</reply><passage>${passage.replace("play a crucial role in our understanding of", "help explain")}</passage>`;
+    }, onActivity: () => {}, pollMs: 10,
+  });
+  const id = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "/humanize", { assignee: "ai", status: "open", scope: "document" });
+  const threadOf = () => readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find(t => t.id === id)!;
+  for (let i = 0; i < 300 && threadOf().comments.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  expect(prompts).toHaveLength(1);
+  expect(prompts[0][0].content).toContain("blader/humanizer");
+  expect(prompts.some(isDiagnosis)).toBe(false);
+  const { EditorState } = await import("prosemirror-state");
+  const { applySuggestions, revertSuggestions } = await import("@handlewithcare/prosemirror-suggest-changes");
+  let accepted = readDoc(session), rejected = accepted;
+  applySuggestions(EditorState.create({ schema: session.schema, doc: accepted }), tr => { accepted = tr.doc; });
+  revertSuggestions(EditorState.create({ schema: session.schema, doc: rejected }), tr => { rejected = tr.doc; });
+  const revised = blockContent(findBlock(accepted, "english")!).node;
+  expect(revised.textContent).toContain("These results help explain the sample.");
+  expect(revised.firstChild!.marks.some(mark => mark.type.name === "bold")).toBe(true);
+  expect(revised.lastChild!.attrs.citekey).toBe("smith2026");
+  expect(blockContent(findBlock(rejected, "english")!).node.firstChild!.text).toBe(original);
+  expect(blockContent(findBlock(accepted, "kr0")!).node.textContent).toBe("연구 결과를 설명한다.");
+  expect(threadOf().meta).toMatchObject({ status: "proposed", changeSet: expect.any(Number) });
+  expect(threadOf().comments[1].text).toContain("English manuscript detected");
+});
+
+test("the slash menu keeps Humanize independent from watermark removal", async () => {
+  const { getScholarSlashMenuItems } = await import("../../../../renderer/blocks/slash-menu-items");
+  let requested = false;
+  const items = getScholarSlashMenuItems(editor as any, () => {}, () => {}, () => { requested = true; });
+  const action = items.find(item => item.title === "Humanize")!;
+  expect(action.aliases).toContain("humanize");
+  expect(action.aliases).not.toContain("watermark");
+  expect(action.subtext).toContain("영어");
+  action.onItemClick();
+  expect(requested).toBe(true);
+  expect(asksForHumanize(author("/remove watermark"))).toBe(false);
+});

@@ -29,6 +29,8 @@ export interface ThreadMeta {
   severity?: "low" | "medium" | "high";
   /** The block the thread was anchored to when the AI opened it. */
   blockId?: string;
+  /** Paragraphs changed while answering this thread; resolving it retires their automatic review. */
+  editedBlockIds?: string[];
   /** User feedback: hide this kind of finding in future reviews. */
   muted?: boolean;
   /** Identity of a review finding, so a dismissed finding is not raised again. */

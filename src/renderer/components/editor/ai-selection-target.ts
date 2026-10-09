@@ -1,5 +1,11 @@
-import { createExtension } from "@blocknote/core";
-import type { Slice } from "prosemirror-model";
+import { createExtension, type BlockNoteEditor } from "@blocknote/core";
+import { transformToSuggestionTransaction } from "@handlewithcare/prosemirror-suggest-changes";
+import { nextSuggestionId, readableHunks } from "../../../shared/collab/suggested-edits";
+import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../../shared/collab/change-sets";
+import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
+import { getEditorCollab } from "../../collab/editor-collab";
+import { listChangeSets } from "../../collab/suggestions";
+import type { Mark, Slice } from "prosemirror-model";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { restoreProtectedSelection, type ProtectedSelection } from "./ai-inline-edit-protection";
@@ -47,18 +53,45 @@ export function releaseAISelection(view: EditorView | undefined, protection: Pro
   view.dispatch(view.state.tr.setMeta(targetKey, { id: protection.namespace } satisfies TargetAction));
 }
 
-/** Used by both popup Accept and automatically completed selection reviews. */
-export function applyAISelection(view: EditorView | undefined, protection: ProtectedSelection, response: string): string | null {
+/** Apply an explicitly accepted edit, or stage a protected rewrite for collaborative review. */
+export function applyAISelection(view: EditorView | undefined, protection: ProtectedSelection, response: string, suggestionId?: number): string | null {
   if (!view || view.isDestroyed) return "원래 편집기가 닫혀 문서를 변경하지 않았습니다.";
   try {
     const target = targetKey.getState(view.state)?.get(protection.namespace);
     if (!target) return "원래 선택 영역을 찾을 수 없어 문서를 변경하지 않았습니다. 다시 선택해 실행해 주세요.";
     if (target.invalid || !view.state.doc.slice(target.from, target.to).eq(target.slice)) {
-      return "AI 응답을 기다리는 동안 선택 영역의 내용이나 서식이 변경되어 자동 교체를 중단했습니다. 해당 부분을 다시 선택해 실행해 주세요.";
+      return "AI 응답을 기다리는 동안 선택 영역의 내용이나 서식이 변경되어 수정안 적용을 중단했습니다. 해당 부분을 다시 선택해 실행해 주세요.";
     }
     const replacement = restoreProtectedSelection(view.state.schema, protection, response);
-    const tr = view.state.tr.replace(target.from, target.to, replacement);
-    const end = target.from + replacement.size;
+    let tr = view.state.tr;
+    let end: number;
+    if (suggestionId === undefined) {
+      tr.replace(target.from, target.to, replacement);
+      end = target.from + replacement.size;
+    } else {
+      let pending = false;
+      target.slice.content.descendants((node) => {
+        if (node.marks.some(mark => ["insertion", "deletion", "modification"].includes(mark.type.name))) pending = true;
+      });
+      if (pending) return "선택 영역에 검토 중인 수정안이 있습니다. 먼저 Accept 또는 Reject로 결정한 뒤 다시 실행해 주세요.";
+      const revisedTexts: string[] = [];
+      replacement.content.descendants(node => { if (node.isText) revisedTexts.push(node.text!); });
+      const edits: Array<{ from: number; to: number; insert: string; marks: readonly Mark[] }> = [];
+      let index = 0;
+      target.slice.content.descendants((node, pos) => {
+        if (!node.isText) return;
+        const offset = target.from + pos - target.slice.openStart;
+        for (const hunk of readableHunks(node.text!, revisedTexts[index++])) {
+          edits.push({ from: offset + hunk.from, to: offset + hunk.to, insert: hunk.insert, marks: node.marks });
+        }
+      });
+      for (const edit of edits.reverse()) {
+        if (edit.insert) tr.replaceWith(edit.from, edit.to, view.state.schema.text(edit.insert, edit.marks));
+        else tr.delete(edit.from, edit.to);
+      }
+      if (tr.docChanged) tr = transformToSuggestionTransaction(tr, view.state, () => suggestionId);
+      end = tr.mapping.map(target.to, 1);
+    }
     tr.setSelection(TextSelection.between(tr.doc.resolve(target.from), tr.doc.resolve(end)));
     tr.setMeta(targetKey, { id: protection.namespace } satisfies TargetAction);
     view.dispatch(tr.scrollIntoView());
@@ -70,4 +103,18 @@ export function applyAISelection(view: EditorView | undefined, protection: Prote
   } catch (error) {
     return error instanceof Error ? error.message : "AI 수정안을 적용하지 못했습니다.";
   }
+}
+
+/** Same marks, metadata and Accept/Reject controls as edits from the AI collaborator. */
+export function suggestAISelection(editor: BlockNoteEditor<any, any, any>, protection: ProtectedSelection, response: string, label: string) {
+  const view = editor.prosemirrorView;
+  if (!view || view.isDestroyed) return "원래 편집기가 닫혀 문서를 변경하지 않았습니다.";
+  const id = nextSuggestionId(view.state.doc);
+  const error = applyAISelection(view, protection, response, id);
+  if (!error && listChangeSets(view.state.doc).some(set => set.id === id)) {
+    getEditorCollab(editor)?.ydoc.getMap<ChangeSetInfo>(CHANGE_SETS_MAP).set(String(id), {
+      id, label, persona: SCHOLARPEN_AI.id, createdAt: Date.now(),
+    });
+  }
+  return error;
 }

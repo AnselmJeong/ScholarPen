@@ -162,7 +162,7 @@ function makeProtection() {
 }
 
 describe("Deepen analysis request", () => {
-  test("builds a critique request that automatically applies only the protected revision", () => {
+  test("builds a critique request whose protected revision is reviewed as tracked changes", () => {
     const protection = makeProtection();
     const request = createDeepenAnalysisRequest("선택된 핵심 주장", {
       beforeSelection: "문서 앞부분",
@@ -172,14 +172,14 @@ describe("Deepen analysis request", () => {
 
     expect(isDeepenAnalysisMessage(message)).toBe(true);
     expect(message).toContain("선택된 핵심 주장");
-    expect(message).toContain("안전하게 자동 반영");
+    expect(message).toContain("검토 가능한 수정안");
     expect(message).toContain("비판, 반론");
     expect(message).toContain("비약, 모순");
     expect(message).toContain("## 통합 개선문");
     expect(message).toContain("선택문 전체를 다시 작성");
     expect(message).toContain("원문의 언어");
     expect(message).toContain("보호 마커를 정확히 유지");
-    expect(message).toContain("자동 반영됩니다");
+    expect(message).toContain("Accept 또는 Reject");
     expect(message).not.toContain(protection.protectedText);
     expect(message).not.toContain("문서 앞부분");
     expect(message).not.toContain("문서 뒷부분");

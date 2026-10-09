@@ -34,7 +34,7 @@ export function applySelectionReviewResult(
     if (error) return { kind: "error", message: error };
     return { kind: "success", message: isValidate
       ? "검색 근거에 따른 수정안을 선택 영역에 반영했습니다."
-      : "통합 개선문을 선택 영역에 반영했습니다." };
+      : "통합 개선문의 변경 부분을 표시했습니다. 협업 편집의 Accept 또는 Reject로 결정해 주세요." };
   } catch (error) {
     applyRevision?.(request.id, null);
     return { kind: "error", message: error instanceof Error

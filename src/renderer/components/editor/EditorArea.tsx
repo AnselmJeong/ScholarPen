@@ -52,7 +52,7 @@ import {
   buildInlineEditDocumentContext,
   protectSelectionSlice,
 } from "./ai-inline-edit-protection";
-import { AISelectionTargetExtension, applyAISelection, trackAISelection, releaseAISelection } from "./ai-selection-target";
+import { AISelectionTargetExtension, applyAISelection, suggestAISelection, trackAISelection, releaseAISelection } from "./ai-selection-target";
 import { DOIInputDialog } from "./DOIInputDialog";
 import { FindReplacePanel } from "./FindReplacePanel";
 import { setCitationHoverMetadata, type CitationHoverMetadata } from "../../blocks/citation-inline";
@@ -132,6 +132,7 @@ interface EditorAreaProps {
     applyRevision: (protectedRevision: string | null) => string | null,
   ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
+  onReviewChanges: () => void;
   getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
   saveAllOpenDocuments?: () => Promise<void>;
   navigationRequest?: DocumentFindRequest;
@@ -209,6 +210,7 @@ function CollabEditorArea({
   onSaveStatusChange,
   onDeepenAnalysis,
   onFindCitation,
+  onReviewChanges,
   getOpenDocumentSnapshots,
   saveAllOpenDocuments,
   navigationRequest,
@@ -646,6 +648,18 @@ function CollabEditorArea({
     [editor]
   );
 
+  const handleAIEditSuggest = useCallback(
+    (snapshot: SelectionSnapshot, newText: string, label: string) => {
+      const error = suggestAISelection(editor, snapshot.protection, newText, label);
+      if (!error) {
+        setAiEditSnapshot(null);
+        onReviewChanges();
+      }
+      return error;
+    },
+    [editor, onReviewChanges]
+  );
+
   const handleChange = useCallback(() => {
     if (deletingRef.current) return;
     if (Date.now() < suppressSaveUntilRef.current) return;
@@ -901,6 +915,7 @@ function CollabEditorArea({
           snapshot={aiEditSnapshot}
           model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b"}
           onAccept={handleAIEditAccept}
+          onSuggest={handleAIEditSuggest}
           onValidate={(snapshot) => {
             onDeepenAnalysis(
               createDeepenAnalysisRequest(
@@ -925,7 +940,7 @@ function CollabEditorArea({
                 snapshot.protection,
               ),
               (protectedRevision) => {
-                const error = protectedRevision === null ? null : handleAIEditAccept(snapshot, protectedRevision);
+                const error = protectedRevision === null ? null : handleAIEditSuggest(snapshot, protectedRevision, "Deepen");
                 releaseAISelection(editor.prosemirrorView, snapshot.protection);
                 return error;
               },

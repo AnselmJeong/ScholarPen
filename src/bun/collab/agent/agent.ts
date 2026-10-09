@@ -28,6 +28,7 @@ import {
   type BlockRef,
 } from "./doc-model";
 import { PresenceTracker } from "./presence";
+import { rememberResolvedReviewBlocks } from "./resolved-review";
 import { buildCommentEditMessages, buildDocumentPlanMessages, clip, parseCommentEditResponse, parseDocumentPlan } from "./prompts";
 import {
   asksForHumanize,
@@ -40,6 +41,8 @@ import {
   parseHumanizeDiagnosis,
   sampleParagraphs,
 } from "./humanize/humanize";
+import { manuscriptLanguage } from "./humanize/language";
+import { englishHumanizeGuidance } from "./humanize/english";
 import { protectedRewritePreview } from "../../../shared/ai-text-protection";
 import type { Node as PMNode } from "prosemirror-model";
 
@@ -151,6 +154,8 @@ export class CollabAgent {
     const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
     let timer: ReturnType<typeof setTimeout> | null = null;
     const onThreads = () => {
+      // Record resolution synchronously, before another review or thread deletion.
+      rememberResolvedReviewBlocks(session, AI_META_ORIGIN);
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => this.scanThreads(attachment), 250);
     };
@@ -191,6 +196,7 @@ export class CollabAgent {
   }
 
   private scanThreads(attachment: Attachment) {
+    rememberResolvedReviewBlocks(attachment.session, AI_META_ORIGIN);
     const threads = readThreads(attachment.session.ydoc.getMap(COLLAB_THREADS_MAP));
     for (const thread of threads) {
       if (!threadWantsAI(thread)) continue;
@@ -333,6 +339,9 @@ export class CollabAgent {
         `This comment spans ${blocks.length} paragraphs. Comment on ${MAX_DOCUMENT_BLOCKS} or fewer at a time so I can edit them safely.`);
       return;
     }
+    if (asksForHumanize(conversationOf(thread)) && manuscriptLanguage(doc) !== "korean") {
+      return this.runHumanizeRequest(job, attachment, thread, doc, blocks, reply, signal);
+    }
     const humanize = asksForHumanize(conversationOf(thread))
       ? await this.diagnoseHumanize(job, attachment, thread, doc, blocks, signal)
       : undefined;
@@ -408,11 +417,18 @@ export class CollabAgent {
   }
 
   /**
-   * The im-not-ai humanizer over the whole manuscript: no planning call, every
-   * Korean paragraph is a target; one diagnosis, then the batched rewrite.
+   * Choose one humanizer from the whole manuscript, then edit prose in that language.
+   * Korean retains its diagnosis and change-rate gates; English uses blader/humanizer.
    */
   private async runHumanizeRequest(job: Job, attachment: Attachment, thread: ThreadSnapshot, doc: PMNode, prose: BlockRef[],
     reply: (patch: Partial<ThreadMeta>, text?: string) => void, signal: AbortSignal) {
+    const language = manuscriptLanguage(doc);
+    if (language === "undetermined") {
+      reply({ assignee: "me", status: "open", statusNote: undefined },
+        "한국어 또는 영어가 본문 단어의 과반을 차지하지 않아 Humanize 처리 방식을 선택하지 않았습니다. 원문을 유지했습니다.");
+      return;
+    }
+    if (language === "english") return this.runEnglishHumanizeRequest(job, attachment, thread, prose, reply, signal);
     const targets = prose.filter((block) => {
       const content = blockContent(block).node;
       // Headings are section titles (kept by the rulebook); paragraphs with pending suggestions are left for the author.
@@ -437,6 +453,29 @@ export class CollabAgent {
     this.finishEdit(job, attachment, thread, result, reply);
   }
 
+  private async runEnglishHumanizeRequest(job: Job, attachment: Attachment, thread: ThreadSnapshot, prose: BlockRef[],
+    reply: (patch: Partial<ThreadMeta>, text?: string) => void, signal: AbortSignal) {
+    const targets = prose.filter(block => {
+      const content = blockContent(block).node;
+      return content.type.name !== "heading" && content.type.name !== "codeBlock" && !content.type.spec.code
+        && !hasSuggestionMarks(content) && manuscriptLanguage(content) === "english";
+    });
+    if (!targets.length) {
+      reply({ assignee: "me", status: "open", statusNote: undefined },
+        "English manuscript detected, but no English prose is available to humanize. Headings, code and paragraphs with pending suggestions are skipped.");
+      return;
+    }
+    this.update(job, { detail: "Humanizing English (blader/humanizer)" });
+    const result = await this.editBlocks(job, attachment, thread, targets.map(block => block.id), {
+      guidance: englishHumanizeGuidance(),
+      suggestOnly: true,
+    }, signal);
+    if (result !== "document") {
+      result.notes.unshift("English manuscript detected; used blader/humanizer for style editing.");
+      this.finishEdit(job, attachment, thread, result, reply);
+    }
+  }
+
   /** One diagnosis call over the text: which AI tells dominate it. Null when the answer could not be read. */
   private async diagnoseHumanize(job: Job, attachment: Attachment, thread: ThreadSnapshot, doc: PMNode, blocks: BlockRef[],
     signal: AbortSignal) {
@@ -459,13 +498,13 @@ export class CollabAgent {
    * needs the whole manuscript (only when `allowWiderScope` is set).
    */
   private async editBlocks(job: Job, attachment: Attachment, thread: ThreadSnapshot, blockIds: string[],
-    options: { quoted?: string; summary?: string; allowWiderScope?: boolean; guidance?: string; gateChangeRate?: boolean },
+    options: { quoted?: string; summary?: string; allowWiderScope?: boolean; guidance?: string; gateChangeRate?: boolean; suggestOnly?: boolean },
     signal: AbortSignal): Promise<EditResult | "document"> {
     const { session } = attachment;
     const batches: string[][] = [];
     for (let index = 0; index < blockIds.length; index += MAX_BLOCKS_PER_CALL) batches.push(blockIds.slice(index, index + MAX_BLOCKS_PER_CALL));
     const result: EditResult = {
-      outcomes: [], replies: [], notes: [], changeRates: [], summary: options.summary,
+      outcomes: [], replies: [], notes: [], changeRates: [], editedBlockIds: [], summary: options.summary,
       // Everything this request changes is one change set, accepted or rejected together.
       changeSetId: nextSuggestionId(readDoc(session)),
       paragraphs: blockIds.length,
@@ -524,9 +563,11 @@ export class CollabAgent {
             continue;
           }
         }
+        const mode = this.modeFor(attachment, bases[at].blockId);
         const outcome = applyBlockRewrite(session, bases[at], parts[at],
-          this.modeFor(attachment, bases[at].blockId), AI_ORIGIN, result.changeSetId);
+          options.suggestOnly && mode !== "observe" ? "suggest" : mode, AI_ORIGIN, result.changeSetId);
         result.outcomes.push(outcome);
+        if (outcome.kind === "applied") result.editedBlockIds.push(bases[at].blockId);
         if (rate !== undefined && outcome.kind === "applied") result.changeRates.push(rate);
         if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[at].blockId, `comment:${thread.id}`);
       }
@@ -561,13 +602,17 @@ export class CollabAgent {
         (high ? `; ${high} changed by ${percent(CHANGE_RATE_WARN)} or more, so check those first.` : "."));
     }
     const { text, meta } = summarize(lead, result.outcomes, notes);
-    reply(suggested ? { ...meta, changeSet: result.changeSetId } : meta, text);
+    reply({ ...meta,
+      editedBlockIds: [...new Set([...(thread.meta.editedBlockIds ?? []), ...result.editedBlockIds])],
+      ...(suggested ? { changeSet: result.changeSetId } : {}),
+    }, text);
     this.update(job, { detail: meta.statusNote ?? undefined });
   }
 }
 
 interface EditResult {
   outcomes: EditOutcome[];
+  editedBlockIds: string[];
   replies: string[];
   notes: string[];
   /** Change rate of each applied paragraph, when the request gates it (the humanizer). */

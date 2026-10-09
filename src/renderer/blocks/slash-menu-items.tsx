@@ -51,13 +51,13 @@ export function getScholarSlashMenuItems(
       subtext: "Ask ScholarPen AI to change the whole manuscript",
       onItemClick: onAddComment,
     },
-    // The built-in im-not-ai humanizer over the whole manuscript
+    // Humanize the manuscript with the rulebook for its dominant language
     {
-      title: "Humanize Korean",
+      title: "Humanize",
       aliases: ["humanize", "im-not-ai", "윤문", "어투", "자연스럽게", "ai티"],
       group: "Scholar",
       icon: <Sparkles size={18} />,
-      subtext: "AI 티 제거 · 원고 전체를 자연스러운 한국어로 (im-not-ai)",
+      subtext: "문서 언어 자동 감지 · 한국어 / 영어 문체 다듬기",
       onItemClick: onHumanize,
     },
     // Figure block

@@ -795,6 +795,11 @@ export function App() {
               });
               deepenRevisionAppliersRef.current.set(request.id, applyRevision);
               setPendingFindCitationRequest(null);
+              setRightPanelTab("assistant");
+              setAiSidebarOpen(true);
+            }}
+            onReviewChanges={() => {
+              setRightPanelTab("activity");
               setAiSidebarOpen(true);
             }}
             onFindCitation={(request) => {

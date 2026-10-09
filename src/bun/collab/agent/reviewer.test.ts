@@ -23,10 +23,10 @@ const Y = await import("yjs");
 const { CollabRegistry } = await import("../registry");
 const { CollabAgent } = await import("./agent");
 const { Reviewer } = await import("./reviewer");
-const { readDoc, findBlock, blockContent, writeBlock, threadRange } = await import("./doc-model");
+const { anchorThread, readDoc, findBlock, blockContent, writeBlock, threadRange } = await import("./doc-model");
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
-const { readThreads, updateThreadMeta, AI_USER_ID } = await import("../../../shared/collab/threads");
+const { createThread, readThreads, updateThreadMeta, AI_USER_ID } = await import("../../../shared/collab/threads");
 const { REVIEW_MAP, PROJECT_REVIEW_SETTINGS_KEY, REVIEW_CATEGORIES } = await import("../../../shared/collab/review");
 
 const editor = getHeadlessEditor();
@@ -440,4 +440,166 @@ test("a resolved legacy Needs citation finding stays deduplicated after category
   reviewer.reviewSection(session.docKey, "p1");
   await idle();
   expect(threads(session).filter(t => t.comments[0].text === "Needs a source.")).toHaveLength(1);
+});
+
+test("resolving and editing a paragraph does not restart its section; other paragraphs remain reviewable", async () => {
+  const clock = { now: 1_000_000 };
+  const { session, prompts } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "logic", severity: "high", comment: "Check the logic." },
+  ]), clock, BLOCKS.slice(0, 3));
+  reviewer.tick();
+  await idle();
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const finding = threads(session).find(t => t.meta.blockId === "p1")!;
+  updateThreadMeta(map, finding.id, { status: "resolved" });
+  authorEdit(session, "p1");
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(1);
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
+
+  authorEdit(session, "p2");
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(reviewedTarget(prompts[1])).toContain("Prior work agrees");
+  // Resolved text is excluded even from the reference context, not just posting.
+  expect(String(prompts[1][1].content)).not.toContain("Our findings");
+});
+
+test("manual review revisits resolved paragraphs once without re-enabling automatic scans", async () => {
+  const clock = { now: 1_000_000 };
+  let call = 0;
+  const { session, prompts } = await setup(async () => JSON.stringify({ findings: [
+    { paragraph: 1, quote: ++call === 1 ? "Our findings" : "every patient", category: "logic", severity: "high", comment: `Issue ${call}.` },
+  ] }), clock, BLOCKS.slice(0, 2));
+  reviewer.tick();
+  await idle();
+  updateThreadMeta(session.ydoc.getMap(COLLAB_THREADS_MAP), threads(session)[0].id, { status: "resolved" });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(threads(session)).toHaveLength(2);
+  expect(reviewedTarget(prompts[1])).toContain("Our findings");
+  authorEdit(session, "p1");
+  session.ydoc.getMap(REVIEW_MAP).set("minSeverity", "low");
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+});
+
+test("native thread resolution remains excluded after reopening, deleting the thread, and restarting", async () => {
+  const clock = { now: 1_000_000 };
+  let { session, prompts } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "logic", severity: "high", comment: "Check this." },
+  ]), clock, BLOCKS.slice(0, 2));
+  reviewer.tick();
+  await idle();
+  const map = session.ydoc.getMap<InstanceType<typeof Y.Map>>(COLLAB_THREADS_MAP);
+  const id = threads(session)[0].id;
+  // BlockNote's native resolve changes the raw flag without ScholarPen metadata.
+  map.get(id)!.set("resolved", true);
+  map.get(id)!.set("resolved", false);
+  map.delete(id);
+  authorEdit(session, "p1");
+  const saved = Y.encodeStateAsUpdate(session.ydoc);
+  reviewer.dispose();
+  agent.dispose();
+  await registry.dispose();
+  ({ session, prompts } = await setup(findings([]), clock, BLOCKS.slice(0, 2), saved));
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(0);
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
+});
+
+test("older resolved AI comments are backfilled, while resolved human comments do not suppress review", async () => {
+  let { session, prompts } = await setup(findings([]), undefined, BLOCKS.slice(0, 3));
+  reviewer.dispose();
+  agent.dispose();
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const aiId = createThread(map, "scholarpen-reviewer2", "Old review.", { blockId: "p1" });
+  (map.get(aiId) as InstanceType<typeof Y.Map>).set("resolved", true);
+  const humanId = createThread(map, "me", "My note.", { blockId: "p2", manual: true });
+  updateThreadMeta(map, humanId, { status: "resolved" });
+  const saved = Y.encodeStateAsUpdate(session.ydoc);
+  await registry.dispose();
+  ({ session, prompts } = await setup(findings([]), undefined, BLOCKS.slice(0, 3), saved));
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(1);
+  expect(String(prompts[0][1].content)).not.toContain("Our findings");
+  expect(reviewedTarget(prompts[0])).toContain("Prior work agrees");
+  expect(threads(session).some(t => t.meta.blockId === "p2" && t.meta.category === "citation")).toBe(true);
+});
+
+test("resolution during inference discards new model issues and pending bibliography findings", async () => {
+  let resolveDuringInference = () => {};
+  const { session } = await setup(async () => {
+    resolveDuringInference();
+    return JSON.stringify({ findings: [
+      { paragraph: 1, quote: "every patient", category: "overclaim", severity: "high", comment: "A different issue." },
+    ] });
+  }, undefined, BLOCKS.slice(0, 3));
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const ids = ["p1", "p2"].map(blockId => createThread(map, AI_USER_ID, "Existing review.", { blockId, assignee: "me" }));
+  resolveDuringInference = () => {
+    for (const id of ids) updateThreadMeta(map, id, { status: "resolved" });
+  };
+  reviewer.tick();
+  await idle();
+  expect(threads(session)).toHaveLength(2);
+  expect(threads(session).every(t => t.resolved)).toBe(true);
+});
+
+test("later batches skip paragraphs resolved while an earlier batch was running", async () => {
+  const blocks = [BLOCKS[0], ...Array.from({ length: 10 }, (_, i) => ({
+    id: `batch-${i}`, type: "paragraph", content: `Passage ${i}. Review this claim.`,
+  }))];
+  let resolveDuringInference = () => {};
+  const { session, prompts } = await setup(async () => {
+    resolveDuringInference();
+    return '{"findings":[]}';
+  }, undefined, blocks);
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const id = createThread(map, AI_USER_ID, "Earlier finding.", { blockId: "batch-8", assignee: "me" });
+  resolveDuringInference = () => updateThreadMeta(map, id, { status: "resolved" });
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(String(prompts[1][1].content)).not.toContain("Passage 8.");
+  expect(reviewedTarget(prompts[1])).toContain("Passage 9.");
+});
+
+test("AI-resolved document edits exclude all fixed paragraphs without suppressing untouched sections", async () => {
+  const { session, prompts } = await setup(findings([]));
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const id = createThread(map, "me", "Fix these claims.", {
+    agent: AI_USER_ID, scope: "document", editedBlockIds: ["p1", "p2"], assignee: "me",
+  });
+  session.ydoc.transact(() => updateThreadMeta(map, id, { status: "resolved" }), "ai-meta");
+  authorEdit(session, "p1");
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(1);
+  expect(reviewedTarget(prompts[0])).toContain("This is a separate section");
+  expect(String(prompts[0][1].content)).not.toContain("Our findings");
+  expect(String(prompts[0][1].content)).not.toContain("Prior work agrees");
+  // The missing bibliography entry in the resolved paragraph is not raised either.
+  expect(threads(session)).toHaveLength(1);
+});
+
+test("legacy AI-assisted passage threads can retire paragraphs using their comment anchor", async () => {
+  const { session, prompts } = await setup(findings([]), undefined, BLOCKS.slice(0, 2));
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const id = createThread(map, AI_USER_ID, "Fixed this passage.", { assignee: "me" });
+  anchorThread(session, "p1", id, "ai-meta");
+  updateThreadMeta(map, id, { status: "resolved" });
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(0);
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
 });

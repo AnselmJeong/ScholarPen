@@ -106,7 +106,7 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
         </span>
         <div className="ml-auto flex gap-1">
           <IconButton
-            label="Review the section at the cursor"
+            label="Review the section at the cursor, including resolved paragraphs"
             disabled={!collab}
             onClick={reviewSection}
             icon={<ScanSearch className="h-3 w-3" />}
@@ -140,6 +140,11 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
             <option value="high">High only</option>
           </select>
         </div>
+      )}
+      {review && (
+        <p className="px-3 pb-1.5 text-[11px] text-muted-foreground">
+          Resolved paragraphs stay excluded from automatic review. Use the review button to check them again.
+        </p>
       )}
       {reviewProgress && reviewProgress.totalSections > 0 && (
         <p className="px-3 pb-1.5 text-[11px] text-muted-foreground" role="status">

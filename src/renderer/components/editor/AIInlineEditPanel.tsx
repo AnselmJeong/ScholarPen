@@ -32,6 +32,7 @@ interface AIInlineEditPanelProps {
   snapshot: SelectionSnapshot;
   model: string;
   onAccept: (snapshot: SelectionSnapshot, newText: string) => string | null;
+  onSuggest: (snapshot: SelectionSnapshot, newText: string, label: string) => string | null;
   onDeepen: (snapshot: SelectionSnapshot) => void;
   onValidate: (snapshot: SelectionSnapshot) => void;
   onFindCitation: (snapshot: SelectionSnapshot) => void;
@@ -71,6 +72,7 @@ export function AIInlineEditPanel({
   snapshot,
   model,
   onAccept,
+  onSuggest,
   onDeepen,
   onValidate,
   onFindCitation,
@@ -83,6 +85,8 @@ export function AIInlineEditPanel({
   const [translateOpen, setTranslateOpen] = useState(false);
   const activeRef = useRef(false);
   const accumulatedRef = useRef("");
+  const workflowRef = useRef<InlineEditWorkflow>("general");
+  const streamFailedRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const translateRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startX: number; startY: number; startTop: number; startLeft: number } | null>(null);
@@ -197,9 +201,16 @@ export function AIInlineEditPanel({
       if (done) {
         setLoading(false);
         activeRef.current = false;
+        if (workflowRef.current === "academic-improve" && !streamFailedRef.current) {
+          const suggestionError = accumulatedRef.current
+            ? onSuggest(snapshot, accumulatedRef.current, "Improve")
+            : "AI가 수정안을 반환하지 않았습니다. 다시 실행해 주세요.";
+          if (suggestionError) setError(suggestionError);
+        }
         return;
       }
       if (content.startsWith("\n\n❌ ")) {
+        streamFailedRef.current = true;
         setError(content.replace(/^\n\n❌\s*/, ""));
         return;
       }
@@ -208,7 +219,7 @@ export function AIInlineEditPanel({
         setResult(accumulatedRef.current);
       }
     });
-  }, []);
+  }, [onSuggest, snapshot]);
 
   const run = useCallback(
     async (instruction: string, workflow: InlineEditWorkflow = "general") => {
@@ -217,6 +228,8 @@ export function AIInlineEditPanel({
       setError("");
       setLoading(true);
       accumulatedRef.current = "";
+      workflowRef.current = workflow;
+      streamFailedRef.current = false;
       activeRef.current = true;
 
       try {
@@ -245,7 +258,9 @@ export function AIInlineEditPanel({
 
   const handleAccept = () => {
     if (!result) return;
-    const acceptError = onAccept(snapshot, result);
+    const acceptError = workflowRef.current === "academic-improve"
+      ? onSuggest(snapshot, result, "Improve")
+      : onAccept(snapshot, result);
     if (acceptError) setError(acceptError);
   };
 
@@ -328,7 +343,7 @@ export function AIInlineEditPanel({
                     <button
                       onClick={() => onDeepen(snapshot)}
                       className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-                      title="Deeply review the selection and apply the integrated revision safely"
+                      title="Deeply review the selection and show tracked changes for Accept or Reject"
                     >
                       Deepen
                     </button>
@@ -401,7 +416,7 @@ export function AIInlineEditPanel({
           </div>
 
           <p className="text-[11px] text-muted-foreground">
-            Enter to submit · Esc to close
+            Improve and Deepen show tracked changes for review · Esc to close
           </p>
         </>
       )}
@@ -421,6 +436,9 @@ export function AIInlineEditPanel({
                 activeRef.current = false;
                 rpc.abortAiStream().catch(() => {});
                 setLoading(false);
+                if (workflowRef.current === "academic-improve") {
+                  setError("생성이 중단되어 수정안을 추가하지 않았습니다. 다시 실행해 주세요.");
+                }
               }}
               className="text-xs text-muted-foreground gap-1"
             >
@@ -451,7 +469,7 @@ export function AIInlineEditPanel({
               </Button>
               <Button size="sm" onClick={handleAccept} className="gap-1">
                 <Check className="h-3.5 w-3.5" />
-                Accept
+                {workflowRef.current === "academic-improve" ? "Review changes" : "Accept"}
               </Button>
             </div>
           </div>

@@ -229,13 +229,13 @@ export function startCommentAtCursor(editor: BlockNoteEditor<any, any, any>) {
 }
 
 /**
- * Asks ScholarPen AI to run the built-in im-not-ai humanizer over the whole
+ * Asks ScholarPen AI to humanize the whole
  * manuscript (slash menu): saves the request as a comment right away.
  */
 export function requestHumanizeManuscript(editor: BlockNoteEditor<any, any, any>) {
   const comments = editor.getExtension(CommentsExtension);
   if (!comments) return;
-  const text = "/humanize — 원고 전체의 AI 티를 없애고 어투를 자연스럽게 다듬어 주세요 (im-not-ai).";
+  const text = "/humanize — 원고 전체의 우세 언어에 맞춰 문체를 자연스럽게 다듬어 주세요. 한국어는 기존 Humanize, 영어는 blader/humanizer를 사용해 주세요.";
   // Deferred like startCommentAtCursor, so the slash menu has removed its query text first.
   requestAnimationFrame(() => {
     if (!selectManuscriptCommentAnchor(editor)) return;

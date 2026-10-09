@@ -27,6 +27,7 @@ import {
   type BlockRef,
 } from "./doc-model";
 import { clip } from "./prompts";
+import { RESOLVED_REVIEW_BLOCKS_MAP } from "./resolved-review";
 
 export interface ReviewerDeps {
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
@@ -52,6 +53,9 @@ interface SectionReview {
   added: number;
   version?: number;
   settings?: string;
+  /** Per-paragraph snapshots let resolution remove a target without restarting its section. */
+  paragraphs?: Record<string, string>;
+  heading?: string;
 }
 
 function settingsFingerprint(settings: ReviewSettings) {
@@ -94,6 +98,11 @@ function sectionTitle(section: Section) {
 
 function sectionFingerprint(doc: ReturnType<typeof readDoc>, section: Section) {
   return section.blocks.map((block) => readableText(doc, block.pos, block.pos + block.node.nodeSize)).join("\n");
+}
+
+function paragraphFingerprint(doc: ReturnType<typeof readDoc>, block: BlockRef) {
+  const { from, to } = blockContent(block);
+  return hashText(readableText(doc, from, to));
 }
 
 function normalize(text: string) {
@@ -231,6 +240,7 @@ export class Reviewer {
       const settings = reviewSettingsOf(map);
       const doc = readDoc(session);
       const reviewed = (map.get("sections") as Record<string, SectionReview> | undefined) ?? {};
+      const resolved = session.ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
       const settingsHash = settingsFingerprint(settings);
       const seen = new Set<string>();
       const sections: Array<{ key: string; current: boolean }> = [];
@@ -241,9 +251,13 @@ export class Reviewer {
         if (seen.has(key)) continue;
         seen.add(key);
         if (!proseOf(section).length) continue;
+        const eligible = proseOf(section).filter(block => !resolved.has(block.id));
         const previous = reviewed[key];
-        sections.push({ key, current: previous?.version === REVIEW_VERSION &&
-          previous.settings === settingsHash && previous.hash === hashText(sectionFingerprint(doc, section)) });
+        sections.push({ key, current: !eligible.length || (previous?.version === REVIEW_VERSION &&
+          previous.settings === settingsHash && (previous.paragraphs
+            ? previous.heading === sectionTitle(section) && eligible.every(block =>
+              previous.paragraphs![block.id] === paragraphFingerprint(doc, block))
+            : previous.hash === hashText(sectionFingerprint(doc, section)))) });
       }
       const progress: ReviewProgress = {
         reviewedSections: sections.filter((section) => section.current).length,
@@ -282,8 +296,11 @@ export class Reviewer {
     let doc = readDoc(session);
     const section = sectionOf(doc, key);
     if (!section) return;
+    const resolved = session.ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
+    const eligible = (block: BlockRef) => reason === "manual" || !resolved.has(block.id);
     const originalHash = hashText(sectionFingerprint(doc, section));
-    const prose = proseOf(section);
+    const prose = proseOf(section).filter(eligible);
+    if (!prose.length) return;
     const originalText = new Map(prose.map((block) => [block.id,
       readableText(doc, blockContent(block).from, blockContent(block).to)]));
     const findings: Array<ReviewFinding & { blockId: string }> = [];
@@ -292,6 +309,7 @@ export class Reviewer {
     const keys = allowed.includes("citation") ? await this.deps.citekeys(session.projectPath) : null;
     if (keys) {
       for (const block of prose) {
+        if (!eligible(block)) continue;
         blockContent(block).node.descendants((node) => {
           if (node.type.name !== "citation") return true;
           const citekey = String(node.attrs.citekey ?? "");
@@ -307,14 +325,24 @@ export class Reviewer {
     }
 
     const batches = paragraphBatches(prose, doc);
-    for (const batch of batches) {
+    for (const plannedBatch of batches) {
       if (signal.aborted) throw new Error("Cancelled");
       if (reason === "auto" && !reviewSettingsOf(reviewMap).autoReview) return;
+      // Resolution may arrive while an earlier batch or bibliography lookup runs.
+      const batch = plannedBatch.filter(eligible);
+      if (!batch.length) continue;
       const paragraphs = batch.map((block) => originalText.get(block.id)!);
       const first = batch[0];
       const last = batch[batch.length - 1];
-      const context = clip(readableText(doc, 0, first.pos), 3000, "end") + "\n[…reviewed paragraphs…]\n" +
-        clip(readableText(doc, last.pos + last.node.nodeSize, doc.content.size), 2000, "start");
+      const contextBlocks = [...iterateTop(doc)].flatMap(flatten)
+        .filter(block => hasInlineContent(block) && eligible(block));
+      const contextText = (blocks: BlockRef[]) => blocks.map(block => {
+        const { from, to } = blockContent(block);
+        return readableText(doc, from, to);
+      }).join("\n");
+      const context = clip(contextText(contextBlocks.filter(block => block.pos < first.pos)), 3000, "end") +
+        "\n[…reviewed paragraphs…]\n" +
+        clip(contextText(contextBlocks.filter(block => block.pos > last.pos)), 2000, "start");
       attachment.presence.claim(first.id, "reviewing");
       const response = await this.deps.complete(
         buildReviewMessages(sectionTitle(section), paragraphs, context, allowed), signal);
@@ -335,6 +363,8 @@ export class Reviewer {
 
     doc = readDoc(session);
     for (const finding of findings) {
+      // Discard even a different issue if the author resolved this paragraph in flight.
+      if (reason === "auto" && resolved.has(finding.blockId)) continue;
       if (SEVERITY_RANK[finding.severity] < SEVERITY_RANK[currentSettings.minSeverity]) continue;
       if (currentSettings.muted.includes(finding.category)) continue;
       const fingerprint = `${SCHOLARPEN_AI.id}:${finding.blockId}:${finding.category}:${normalize(finding.quote || finding.comment)}`;
@@ -365,7 +395,10 @@ export class Reviewer {
       const sections = { ...((reviewMap.get("sections") as Record<string, unknown> | undefined) ?? {}) };
       // Record the version we actually read, not a newer edit made during inference.
       sections[key] = { hash: originalHash, at: this.now(), reason, added,
-        version: REVIEW_VERSION, settings: settingsFingerprint(settings) } satisfies SectionReview;
+        version: REVIEW_VERSION, settings: settingsFingerprint(settings),
+        heading: sectionTitle(section),
+        paragraphs: Object.fromEntries([...originalText].map(([id, text]) => [id, hashText(text)])),
+      } satisfies SectionReview;
       reviewMap.set("sections", sections);
     }, AI_META_ORIGIN);
   }

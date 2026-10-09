@@ -79,6 +79,9 @@ const { resolveCollabUsers } = await import("./users");
 const { setEditorCollab } = await import("./editor-collab");
 const { ActivityPanel } = await import("../components/sidebar/ActivityPanel");
 const { readThreads, threadWantsAI } = await import("../../shared/collab/threads");
+const { AISelectionTargetExtension, suggestAISelection, trackAISelection } = await import("../components/editor/ai-selection-target");
+const { protectSelectionSlice } = await import("../../shared/ai-text-protection");
+const { CHANGE_SETS_MAP } = await import("../../shared/collab/change-sets");
 
 async function settle() {
   for (let i = 0; i < 5; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -93,7 +96,7 @@ async function mountPeer(name: string, filename = "doc.scholarpen.json") {
       user: { name, color: "#000" },
       provider: { awareness: peer.awareness },
     },
-    extensions: [CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
+    extensions: [AISelectionTargetExtension(), CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
   });
   setEditorCollab(editor, peer);
   let changes = 0;
@@ -194,6 +197,7 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
 
 test("a comment for the AI comes back as a suggestion the author can accept", async () => {
   const { CollabAgent } = await import("../../bun/collab/agent/agent");
+  const { Reviewer } = await import("../../bun/collab/agent/reviewer");
   const { AIActivitySection } = await import("../components/sidebar/AIActivitySection");
   const { acceptedDocument } = await import("./suggestions");
   const agent = new CollabAgent(registry, {
@@ -254,8 +258,72 @@ test("a comment for the AI comes back as a suggestion the author can accept", as
   const bunDoc = (await import("../../bun/collab/agent/doc-model")).readDoc(registry.get("/p::agent.scholarpen.json")!);
   expect(bunDoc.textContent).toContain("These data support the hypothesis.");
 
+  // A real Accept click resolves an author-created thread with no review blockId.
+  // Its AI-rewritten paragraph must not immediately start another automatic review.
+  let reviewCalls = 0;
+  const reviewer = new Reviewer(agent, {
+    complete: async () => { reviewCalls++; return '{"findings":[]}'; },
+    citekeys: async () => null,
+    tickMs: 0,
+  });
+  await act(async () => { reviewer.tick(); });
+  await settle();
+  expect(reviewCalls).toBe(0);
+  expect(registry.get("/p::agent.scholarpen.json")!.ydoc.getMap("review").get("progress"))
+    .toEqual({ reviewedSections: 1, totalSections: 1 });
+  reviewer.dispose();
+
   await act(async () => { panelRoot.unmount(); a.root.unmount(); });
   agent.dispose();
   a.peer.destroy();
   await settle();
+});
+
+test("selection suggestions sync metadata and support per-paragraph Accept/Reject in the existing activity panel", async () => {
+  jsonFiles.set("/p/selection.scholarpen.json", [
+    { id: "one", type: "paragraph", content: "A strong claim." },
+    { id: "two", type: "paragraph", content: "Another strong claim." },
+  ]);
+  const a = await mountPeer("A", "selection.scholarpen.json");
+  const b = await mountPeer("B", "selection.scholarpen.json");
+  await settle();
+  const { AIActivitySection } = await import("../components/sidebar/AIActivitySection");
+  const { acceptedDocument, listChangeSets } = await import("./suggestions");
+  const view = a.editor.prosemirrorView;
+  let from = -1, to = -1;
+  view.state.doc.descendants((node, pos) => {
+    if (node.isText) { if (from < 0) from = pos; to = pos + node.nodeSize; }
+  });
+  const protection = protectSelectionSlice(view.state.doc.slice(from, to), "A strong claim. Another strong claim.");
+  await act(async () => {
+    trackAISelection(view, from, to, protection);
+    expect(suggestAISelection(a.editor, protection, protection.protectedText.replaceAll("strong", "qualified"), "Deepen")).toBeNull();
+  });
+  await settle();
+  const sets = listChangeSets(b.editor.prosemirrorView.state.doc, b.peer.ydoc.getMap(CHANGE_SETS_MAP));
+  expect(sets).toHaveLength(1);
+  expect(sets[0].info?.label).toBe("Deepen");
+  expect(JSON.stringify(acceptedDocument(b.editor))).not.toContain("qualified");
+  expect(b.editor.prosemirrorView.dom.querySelector("ins")?.textContent).toBe("qualified");
+  const panel = document.createElement("div");
+  document.body.append(panel);
+  const panelRoot = createRoot(panel);
+  try {
+    await act(async () => { panelRoot.render(<AIActivitySection editor={b.editor} />); });
+    expect(panel.textContent).toContain("Deepen");
+    await act(async () => { (panel.querySelector('[aria-label="Review paragraph by paragraph"]') as HTMLButtonElement).click(); });
+    await act(async () => { (panel.querySelector('[aria-label="Accept this paragraph"]') as HTMLButtonElement).click(); });
+    await settle();
+    expect(texts(a.editor)[0]).toBe("A qualified claim.");
+    expect(listChangeSets(a.editor.prosemirrorView.state.doc)[0].paragraphs).toHaveLength(1);
+    await act(async () => { (panel.querySelector('[aria-label="Reject this paragraph"]') as HTMLButtonElement).click(); });
+    await settle();
+    expect(texts(a.editor)[1]).toBe("Another strong claim.");
+    expect(listChangeSets(a.editor.prosemirrorView.state.doc)).toHaveLength(0);
+    expect(a.peer.ydoc.getMap(CHANGE_SETS_MAP).size).toBe(0);
+  } finally {
+    await act(async () => { panelRoot.unmount(); a.root.unmount(); b.root.unmount(); });
+    panel.remove(); a.peer.destroy(); b.peer.destroy();
+    await settle();
+  }
 });

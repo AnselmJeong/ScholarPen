@@ -63,6 +63,7 @@ interface EditorPaneGroupProps {
     applyRevision: (protectedRevision: string | null) => string | null,
   ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
+  onReviewChanges: () => void;
 }
 
 // ── Drag tracking (outside React — never causes stale closures) ────────────
@@ -93,6 +94,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       onBibtexSaved,
       onDeepenAnalysis,
       onFindCitation,
+      onReviewChanges,
     },
     ref
   ) {
@@ -593,6 +595,9 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         }}
                         onDeepenAnalysis={onDeepenAnalysis}
                         onFindCitation={onFindCitation}
+                        onReviewChanges={() => {
+                          if (isCurrentActiveTab(tab.id)) onReviewChanges();
+                        }}
                         getOpenDocumentSnapshots={getOpenDocumentSnapshots}
                         saveAllOpenDocuments={saveAllOpenDocuments}
                         navigationRequest={findRequests[tab.id]}
