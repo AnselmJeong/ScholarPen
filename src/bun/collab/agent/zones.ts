@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { AI_WRITING_STYLE } from "../../../shared/ai-writing-style";
 import { Fragment, Slice, type Node as PMNode, type Schema } from "prosemirror-model";
 import { updateYFragment } from "y-prosemirror";
 import * as Y from "yjs";
@@ -53,6 +54,7 @@ function draftMessages(title: string, brief: string, notes: string, context: str
     "Use only facts in the notes and the rest of the manuscript; when something is missing, write a clearly marked placeholder such as [TODO: sample size]. " +
     "Keep every citation exactly as written in the notes, in the form [@citekey]; never invent citations. " +
     "Match the voice and terminology of the rest of the manuscript. " +
+    AI_WRITING_STYLE + "\n\n" +
     "Return only the paragraphs, separated by blank lines: no heading, no lists, no commentary.";
   const user =
     `<section_title>${title}</section_title>\n\n` +

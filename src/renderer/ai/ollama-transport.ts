@@ -4,6 +4,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { ClientSideTransport } from "@blocknote/xl-ai/server";
 import { onOllamaProxyChunk, rpc } from "../rpc";
+import { AI_WRITING_STYLE } from "../../shared/ai-writing-style";
 
 /**
  * Streams the OpenAI-compatible request through Bun. The Bun proxy injects
@@ -95,7 +96,7 @@ export function createOllamaTransport(modelName: string) {
 
   const transport = new ClientSideTransport({
     model,
-    systemPrompt: "You are a helpful academic writing assistant. Help the user with their research writing tasks.",
+    systemPrompt: "You are a helpful academic writing assistant. Help the user with their research writing tasks. " + AI_WRITING_STYLE,
     stream: true,
   });
   console.log("[ollama-transport] Transport created");
@@ -118,7 +119,7 @@ export function createOllamaTransportWithSystemPrompt(
   const model = ollama(modelName);
   return new ClientSideTransport({
     model,
-    systemPrompt,
+    systemPrompt: systemPrompt + "\n\n" + AI_WRITING_STYLE,
     stream: true,
   });
 }

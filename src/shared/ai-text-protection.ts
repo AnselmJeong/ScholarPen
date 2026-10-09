@@ -1,4 +1,5 @@
 import { Slice, type Node as ProseMirrorNode, type Schema } from "prosemirror-model";
+import { AI_WRITING_STYLE } from "./ai-writing-style";
 
 type SourceLanguage = "Korean" | "English" | "the original language";
 
@@ -46,7 +47,6 @@ export const ACADEMIC_HUMANIZER_INSTRUCTIONS =
   "Remove chatbot artifacts, sycophancy, knowledge-cutoff disclaimers, and speculative gap-filling. Prefer plain, precise constructions and varied sentence rhythm. " +
   "Preserve the author's real voice, disciplinary vocabulary, technical terms, specific details, quotations, titles, proper names, citations, argumentative role, and epistemic calibration. Do not flatten formal academic prose merely because it is polished, and do not change a passage based on a single possible tell. " +
   "Do not invent, strengthen, generalize, or delete any substantive claim, fact, name, number, date, quotation, or citation. Preserve all source information even when changing sentence shape within the protected text boundaries. " +
-  "Unless the surrounding manuscript clearly establishes em or en dashes as part of the author's own punctuation style, replace prose dashes with an appropriate period, comma, colon, parenthesis, or recast sentence. Never alter a protected control marker or protected literal to enforce this preference. " +
   "Work in embedded mode. Internally produce an academic draft, then ask: 'What still makes this sound obviously AI-generated?' and 'Does the rewrite introduce or remove any fact, name, number, date, quotation, citation, claim, or degree of certainty?' Revise once more from that audit. Output only the final protected passage, never the draft, audit, or commentary.";
 
 const PROTECTED_LITERAL_PATTERN =
@@ -225,7 +225,7 @@ export function buildInlineEditMessages(
     "Compare the selected passage with the complete document and notice internal contradictions, inconsistent terminology, scope, or claims. If the intended resolution is clear from the document, align the selected passage with it. If it is not clear, make the tension or uncertainty explicit in the wording rather than inventing a resolution. " +
     "Do not introduce new facts, evidence, quotations, citations, references, causal claims, or conclusions. Do not add a citation that is not already present. " +
     workflowInstructions +
-    " " +
+    " " + AI_WRITING_STYLE + " " +
     "The passage contains ScholarPen control markers beginning with ⟦SP:. They encode text-node boundaries, " +
     "rich-text marks, Markdown or Quarto typesetting, citations, footnotes, inline math, links, and other custom inline nodes. " +
     "Copy every control marker exactly once and in exactly the same order. Never add, delete, edit, translate, reorder, or move a marker. " +

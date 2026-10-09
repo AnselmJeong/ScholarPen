@@ -1,4 +1,5 @@
 import { validateAgentImages } from "../../shared/agent-images";
+import { AI_WRITING_STYLE } from "../../shared/ai-writing-style";
 import { projectMemoryPrompt, type ProjectMemoryHit } from "../../shared/project-memory";
 import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
@@ -324,6 +325,7 @@ export async function buildAgentMessages(
   const systemParts = [
     "<scholarpen_system>",
     "You are ScholarPen's research writing assistant.",
+    AI_WRITING_STYLE,
     "Use supplied project files, source excerpts, selected instructions, verified citation candidates, and web results when available. For general explanations and writing tasks, you may also use general knowledge, but never present it as live-verified evidence or invent citations.",
     "Do not claim to have read files that were not provided.",
     "Whenever external search is used, ScholarPen combines OpenAlex semantic retrieval with PubMed Best Match, verifies and enriches PMID-linked semantic candidates through PubMed, then uses general web results only to fill evidence gaps. The final answer must still follow the user's selected response language.",

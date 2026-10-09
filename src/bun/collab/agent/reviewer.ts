@@ -1,4 +1,5 @@
 import type { OllamaMessage } from "../../../shared/rpc-types";
+import { AI_WRITING_STYLE } from "../../../shared/ai-writing-style";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import { createThread, readThreads, type ThreadMeta } from "../../../shared/collab/threads";
 import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
@@ -155,6 +156,7 @@ function buildReviewMessages(title: string, paragraphs: string[], context: strin
     `Only report these enabled categories: ${allowed.join(", ")}. Do not invent categories or rename disabled issues to an enabled type. ` +
     REVIEW_CATEGORIES.filter(category => allowed.includes(category.id)).map(category => `${category.id}: ${category.description}`).join("\n") + "\n" +
     "Write each comment in the language of the manuscript, in one or two sentences, and say what to check or change. " +
+    AI_WRITING_STYLE + "\n\n" +
     "Return JSON only, in this shape:\n" +
     `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${allowed.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
     `Report at most ${MAX_FINDINGS_PER_BATCH} findings, most important first. The quote must be copied exactly from the paragraph and be at most 25 words.`;
