@@ -10,7 +10,8 @@
     "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
     "hmr": "vite --port 5173",
     "build:release": "vite build && electrobun build --env=stable",
-    "sync:im-not-ai": "bun scripts/sync-im-not-ai.ts"
+    "sync:im-not-ai": "bun scripts/sync-im-not-ai.ts",
+    "setup:ai-detector": "bun scripts/setup-ai-detector.ts"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.38",

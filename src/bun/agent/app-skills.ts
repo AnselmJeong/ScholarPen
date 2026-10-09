@@ -10,6 +10,15 @@ const CLAUDE_COMMANDS_DIR = join(homedir(), ".claude", "commands");
 
 const DEFAULT_APP_SKILLS: Array<{ name: string; content: string }> = [
   {
+    name: "ai-score",
+    content: `# AI Writing Score
+
+description: 로컬 모델로 현재 문서 또는 선택한 텍스트의 AI 작성 가능성 점수를 계산합니다. 확률(%)이 아닙니다.
+
+The /ai-score command is handled by ScholarPen's local detector. Never invent a score or percentage.
+`,
+  },
+  {
     name: "academic-review",
     content: `# Academic Review
 

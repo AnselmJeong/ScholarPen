@@ -48,6 +48,8 @@ import { editableSegments, parseTextEdits } from "./text-edits";
 import { completeWithDeadline } from "./completion";
 import { protectedRewritePreview, restoreProtectedSelection } from "../../../shared/ai-text-protection";
 import type { Node as PMNode } from "prosemirror-model";
+import { asksForAIScore, formatAIDetectionReport, type AIDetectionReport } from "../../../shared/ai-detection";
+import { analyzeAIText } from "../../ai-detector/service";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
@@ -56,6 +58,7 @@ export const AI_META_ORIGIN = "ai-meta";
 export const AI_EDITS_MAP = "aiEdits";
 
 export interface CollabAgentDeps {
+  analyzeAIText?: (text: string, signal: AbortSignal) => Promise<AIDetectionReport>;
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
   onActivity(docKey: string, jobs: AgentJobView[]): void;
   now?: () => number;
@@ -334,6 +337,25 @@ export class CollabAgent {
     if (!thread || !threadWantsAI(thread)) return;
     const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text);
     reply({ assignee: "ai", agent: SCHOLARPEN_AI.id, status: "in-progress", statusNote: undefined });
+    const latestRequest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
+    if (thread.meta.documentAction === "ai-score" || asksForAIScore(latestRequest)) {
+      const doc = readDoc(session);
+      const whole = thread.meta.scope === "document" || thread.meta.documentAction === "ai-score";
+      const range = whole ? null : threadRange(doc, threadId);
+      if (!whole && !range) throw new Error("분석할 선택 영역이 없습니다. 텍스트를 다시 선택해 요청해 주세요.");
+      const blocks = (range ? blocksInRange(doc, range.from, range.to) : listBlocks(doc))
+        .filter(block => hasInlineContent(block) && blockContent(block).node.type.name !== "codeBlock");
+      const text = blocks.map(block => {
+        const content = blockContent(block);
+        return readableText(doc, Math.max(content.from, range?.from ?? content.from), Math.min(content.to, range?.to ?? content.to));
+      }).join("\n\n");
+      this.update(job, { detail: "로컬 모델로 AI 작성 가능성 분석 중" });
+      const result = await (this.deps.analyzeAIText ?? analyzeAIText)(text, signal);
+      signal.throwIfAborted();
+      reply({ assignee: "me", status: "open", statusNote: "AI 작성 가능성 분석 완료" },
+        formatAIDetectionReport(result, whole ? "현재 문서의 본문" : "댓글의 선택 영역"));
+      return;
+    }
     if (thread.meta.documentAction === "remove-watermark") {
       if (signal.aborted) throw new Error("Cancelled");
       const result = cleanDocumentWatermarks(session, AI_ORIGIN);

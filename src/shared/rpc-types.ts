@@ -249,6 +249,8 @@ export type AgentThinkingLevel = "none" | "low" | "medium" | "high";
 
 export interface AgentStreamParams {
   message: string;
+  /** Full prose snapshot for explicit local detection, separate from bounded LLM context. */
+  detectionInput?: { text: string; scope: "selection" | "document" };
   images?: AgentImage[];
   activeDocument?: ActiveDocumentContext;
   projectPath: string | null;

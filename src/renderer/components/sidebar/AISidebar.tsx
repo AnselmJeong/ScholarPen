@@ -61,6 +61,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { ProjectMemoryPanel } from "./ProjectMemoryPanel";
+import { asksForAIScore, detectionTextFromBlocks } from "@shared/ai-detection";
 
 interface AISidebarProps {
   responsePreferences: AIResponsePreferences;
@@ -1055,6 +1056,12 @@ export function AISidebar({
           message === buildFindCitationMessage(findCitation);
         if (isFindCitation) findCitationRequestRef.current = null;
         const isPreparedRequest = isDeepen || isFindCitation;
+        const wantsDetection = !isPreparedRequest && asksForAIScore(message);
+        const selection = wantsDetection ? editor?.getSelectedText().trim() : "";
+        const detectionInput = wantsDetection && editor ? {
+          text: selection || detectionTextFromBlocks(editor.document),
+          scope: selection ? "selection" as const : "document" as const,
+        } : undefined;
         if (!isDeepen) setDeepenApplyNotice(null);
         // Snapshot the user's persistent choices before any awaits. Mandatory
         // search for a review affects this request, never the saved preference.
@@ -1121,6 +1128,7 @@ export function AISidebar({
         return {
           ...requestOptions,
           activeDocument: isPreparedRequest ? undefined : activeDocument,
+          detectionInput,
           projectPath,
           provider: activeProvider,
           model: activeModel,
@@ -1172,6 +1180,7 @@ export function AISidebar({
       }),
     [
       getActiveDocumentContext,
+      editor,
       activeProvider,
       activeModel,
       activeThread,

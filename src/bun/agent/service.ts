@@ -9,6 +9,8 @@ import {
 import { fileSystem } from "../fs/manager";
 import { buildAgentMessages } from "./context-builder";
 import { streamAgentModel } from "./providers";
+import { asksForAIScore, detectionInputForRequest, formatAIDetectionReport } from "../../shared/ai-detection";
+import { analyzeAIText } from "../ai-detector/service";
 
 export async function streamScholarAgent(
   params: AgentStreamParams,
@@ -25,6 +27,20 @@ export async function streamScholarAgent(
   else signal?.addEventListener("abort", abortRequest, { once: true });
 
   try {
+    if (!params.analysisMode && asksForAIScore(params.message)) {
+      requestController.signal.throwIfAborted();
+      const { text, scope } = detectionInputForRequest(params);
+      callbacks.onChunk("로컬 모델로 AI 작성 가능성을 계산하고 있습니다…\n\n");
+      // Keep the renderer stream alive while local inference is running.
+      const heartbeat = setInterval(() => callbacks.onChunk(""), 15_000);
+      try {
+        const result = await analyzeAIText(text, requestController.signal);
+        requestController.signal.throwIfAborted();
+        callbacks.onChunk(formatAIDetectionReport(result, scope));
+        callbacks.onDone();
+      } finally { clearInterval(heartbeat); }
+      return;
+    }
     let references = "";
     const firstResult = await withAgentStreamTimeout(
       (async () => {

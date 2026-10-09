@@ -26,7 +26,7 @@ import {
 } from "@blocknote/react";
 import { CommentsExtension } from "@blocknote/core/comments";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
-import { requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
+import { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
@@ -721,6 +721,7 @@ function CollabEditorArea({
       () => startCommentAtCursor(editor),
       () => { requestHumanizeManuscript(editor); onReviewChanges(); },
       () => { requestRemoveWatermarkManuscript(editor); onReviewChanges(); },
+      () => { requestAIScoreManuscript(editor); onReviewChanges(); },
     );
     const headings = getCustomHeadingSlashMenuItems(
       editor as Parameters<typeof getCustomHeadingSlashMenuItems>[0]

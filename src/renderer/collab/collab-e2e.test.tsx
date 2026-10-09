@@ -82,7 +82,7 @@ const { readThreads, threadWantsAI } = await import("../../shared/collab/threads
 const { AISelectionTargetExtension, suggestAISelection, trackAISelection } = await import("../components/editor/ai-selection-target");
 const { protectSelectionSlice } = await import("../../shared/ai-text-protection");
 const { CHANGE_SETS_MAP } = await import("../../shared/collab/change-sets");
-const { requestHumanizeManuscript, requestRemoveWatermarkManuscript } = await import("./comment-composer");
+const { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript } = await import("./comment-composer");
 const { getScholarSlashMenuItems } = await import("../blocks/slash-menu-items");
 
 async function settle() {
@@ -140,7 +140,7 @@ test("independent slash actions target the current document despite a partial se
   });
   try {
   const items = getScholarSlashMenuItems(a.editor, () => {}, () => {},
-    () => requestHumanizeManuscript(a.editor), () => requestRemoveWatermarkManuscript(a.editor));
+    () => requestHumanizeManuscript(a.editor), () => requestRemoveWatermarkManuscript(a.editor), () => requestAIScoreManuscript(a.editor));
   const view = a.editor.prosemirrorView!;
   let textStart = 0;
   view.state.doc.descendants((node, pos) => { if (!textStart && node.isText) textStart = pos; });
@@ -171,6 +171,11 @@ test("independent slash actions target the current document despite a partial se
   expect(readThreads(a.peer.ydoc.getMap("threads")).find(thread => thread.meta.documentAction === "humanize")?.meta.scope).toBe("document");
   expect(view.state.selection.from).toBe(textStart);
   expect(view.state.selection.to).toBe(textStart + 2);
+  const beforeDetection = view.state.doc.toJSON();
+  await act(async () => { items.find(item => item.title === "AI writing score")!.onItemClick(); });
+  await settle();
+  expect(readThreads(a.peer.ydoc.getMap("threads")).find(thread => thread.meta.documentAction === "ai-score")?.meta.scope).toBe("document");
+  expect(view.state.doc.toJSON()).toEqual(beforeDetection);
   expect(view.state.doc.textContent).toBe(a.editor.prosemirrorState.doc.textContent);
   } finally {
   agent.dispose();

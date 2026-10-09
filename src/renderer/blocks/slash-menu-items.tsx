@@ -13,6 +13,7 @@ export function getScholarSlashMenuItems(
   onAddComment: () => void,
   onHumanize: () => void,
   onRemoveWatermark: () => void,
+  onAIScore?: () => void,
 ): DefaultReactSuggestionItem[] {
   // Ordered by how often each is used.
   return [
@@ -69,6 +70,14 @@ export function getScholarSlashMenuItems(
       subtext: "현재 문서 전체 · 숨은 유니코드·특수 공백 정리 · Undo 가능",
       onItemClick: onRemoveWatermark,
     },
+    ...(onAIScore ? [{
+      title: "AI writing score",
+      aliases: ["ai-score", "detect-ai", "AI검사", "AI확률", "작성가능성"],
+      group: "Scholar",
+      icon: <span className="text-xs font-mono">AI?</span>,
+      subtext: "현재 문서 · 로컬 AI 작성 가능성 점수 · 확률(%) 아님",
+      onItemClick: onAIScore,
+    }] : []),
     // Figure block
     {
       title: "Figure",

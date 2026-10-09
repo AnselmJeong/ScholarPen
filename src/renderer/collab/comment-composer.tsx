@@ -238,6 +238,10 @@ export function requestHumanizeManuscript(editor: BlockNoteEditor<any, any, any>
   requestDocumentAction(editor, "humanize", "/humanize: 현재 열린 문서 전체의 우세 언어에 맞춰 문체를 자연스럽게 다듬어 주세요. 한국어는 기존 Humanize, 영어는 blader/humanizer를 사용해 주세요.");
 }
 
+export function requestAIScoreManuscript(editor: BlockNoteEditor<any, any, any>) {
+  requestDocumentAction(editor, "ai-score", "/ai-score: 현재 열린 문서의 AI 작성 가능성을 분석해 주세요.");
+}
+
 export function requestRemoveWatermarkManuscript(editor: BlockNoteEditor<any, any, any>) {
   requestDocumentAction(editor, "remove-watermark", "/remove-watermark: 현재 열린 문서 전체의 숨은 유니코드 문자와 특수 공백을 정리해 주세요. 문체는 재작성하지 마세요.");
 }

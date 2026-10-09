@@ -41,6 +41,38 @@ const BLOCKS = [
   { id: "p3", type: "paragraph", content: "We recieve the data from three sites." },
 ];
 
+const detectionReport = { version: 1 as const, score: 0.93, perplexity: 10, tokens: 1000, windows: 4, minScore: 0.8, maxScore: 1.1, hiddenCharacters: 0, characterCounts: {}, observer: "base", performer: "instruct" };
+
+test("document AI score covers the last block and never rewrites or calls the LLM", async () => {
+  let analyzed = "";
+  const { session, prompts } = await setup(async () => { throw new Error("Must not call the LLM"); }, {
+    analyzeAIText: async text => { analyzed = text; return detectionReport; },
+  });
+  const before = readDoc(session).toJSON();
+  const id = createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), "me", "/ai-score", { assignee: "ai", scope: "document", documentAction: "ai-score" });
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "done");
+  expect(analyzed).toContain("These results prove");
+  expect(analyzed).toContain("We recieve the data from three sites.");
+  expect(readDoc(session).toJSON()).toEqual(before);
+  expect(prompts).toHaveLength(0);
+  expect(agent!.canUndo(session.docKey)).toBe(false);
+  expect(threadOf(session, id).comments.at(-1)?.text).toContain("0.9300");
+  expect(threadOf(session, id).comments.at(-1)?.text).toContain("확률(%)이 아니며");
+});
+
+test("a natural-language detection comment analyzes only its anchored passage", async () => {
+  let analyzed = "";
+  const { session, prompts } = await setup(async () => { throw new Error("Must not call the LLM"); }, {
+    analyzeAIText: async text => { analyzed = text; return detectionReport; },
+  });
+  comment(session, "p3", "@ai AI가 썼을 가능성을 계산해줘");
+  const before = readDoc(session).toJSON();
+  await waitFor(() => agent!.jobs(session.docKey)[0]?.state === "done");
+  expect(analyzed).toBe("We recieve the data from three sites.");
+  expect(readDoc(session).toJSON()).toEqual(before);
+  expect(prompts).toHaveLength(0);
+});
+
 let registry: InstanceType<typeof CollabRegistry>;
 let agent: InstanceType<typeof CollabAgent> | null = null;
 afterEach(async () => {
@@ -49,7 +81,7 @@ afterEach(async () => {
   await registry?.dispose();
 });
 
-async function setup(complete: (messages: OllamaMessage[], signal: AbortSignal) => Promise<string>, options: { waitForAuthorMs?: number; completionTimeoutMs?: number } = {}) {
+async function setup(complete: (messages: OllamaMessage[], signal: AbortSignal) => Promise<string>, options: { waitForAuthorMs?: number; completionTimeoutMs?: number; analyzeAIText?: import("./agent").CollabAgentDeps["analyzeAIText"] } = {}) {
   const seeded = blocksToYDoc(editor, BLOCKS as any, "document-store");
   registry = new CollabRegistry({
     read: async () => ({ state: Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
@@ -62,6 +94,7 @@ async function setup(complete: (messages: OllamaMessage[], signal: AbortSignal) 
   agent = new CollabAgent(registry, {
     complete: async (messages, signal) => { prompts.push([...messages]); return complete(messages, signal); },
     completionTimeoutMs: options.completionTimeoutMs,
+    analyzeAIText: options.analyzeAIText,
     onActivity: () => {},
     pollMs: 10,
     waitForAuthorMs: options.waitForAuthorMs ?? 2000,
