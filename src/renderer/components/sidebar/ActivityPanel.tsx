@@ -20,6 +20,9 @@ import { ZonesSection } from "./ZonesSection";
 import { WatermarkResultCard } from "./WatermarkResultCard";
 import { exportUnresolvedComments, unresolvedCommentsFilename } from "../../../shared/collab/comment-export";
 import { openClaimThreads, requestBulkComments, resolveAllComments } from "../../../shared/collab/bulk-comments";
+import { EditLevelControl, useEditLevel } from "./EditLevelControl";
+import { DecisionQueue } from "./DecisionQueue";
+import { RevisionHistory } from "./RevisionHistory";
 
 type Filter = "open" | "ai" | "mine" | "resolved";
 
@@ -82,6 +85,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [exportResult, setExportResult] = useState<{ message: string; error: boolean } | null>(null);
   const collab = editor ? getEditorCollab(editor) : null;
+  const [editLevel] = useEditLevel(collab?.ydoc ?? null);
   useEffect(() => { setExportResult(null); }, [editor, projectPath]);
   useEffect(() => { setBulkInstructions(""); setBulkError(null); }, [editor, projectPath]);
   const bulkTargets = openClaimThreads(threads);
@@ -177,6 +181,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
       <WatermarkResultCard threads={threads} onDismiss={threadId => setMeta(threadId, { resultDismissedAt: Date.now() })} />
       {categoryError && <p role="alert" className="px-3 py-1 text-xs text-red-600">{categoryError}</p>}
       <ZonesSection editor={editor} />
+      <RevisionHistory ydoc={collab.ydoc} documentName={documentName} projectPath={projectPath} onExported={onExported} />
       <div className="flex items-center gap-1 border-b border-border px-3 py-2">
         <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="mr-auto truncate text-xs font-medium text-foreground">
@@ -217,6 +222,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
           </button>
           <span className="text-[11px] text-muted-foreground">All comments · AI + yours</span>
         </div>
+        <EditLevelControl ydoc={collab.ydoc} />
         {!!bulkTargets.length && <input value={bulkInstructions} onInput={event => setBulkInstructions(event.currentTarget.value)}
           aria-label="Instructions for all comments" placeholder="Optional direction for the whole revision…"
           className="mt-2 w-full rounded border border-border bg-background px-2 py-1 text-xs" />}
@@ -227,6 +233,9 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
         </p>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <DecisionQueue ydoc={collab.ydoc} threads={threads} level={editLevel} reference={referenceText}
+          onSelect={threadId => editor.getExtension(CommentsExtension)?.selectThread(threadId)}
+          blocked={pendingChangeSets.size ? "Accept or reject the pending edits first, so AI can work from one settled manuscript." : null} />
         {visible.length === 0 && (
           <p className="p-4 text-xs leading-5 text-muted-foreground">
             {filter === "open"
@@ -371,14 +380,18 @@ function SmallButton({ icon, label, onClick }: { icon: React.ReactNode; label: s
   );
 }
 
+export type RightPanelTab = "activity" | "assistant" | "project";
+
+const TAB_LABEL: Record<RightPanelTab, string> = { activity: "Activity", project: "Project", assistant: "Assistant" };
+
 export function ActivityPanelHeader({ tab, onTab, onClose }: {
-  tab: "activity" | "assistant";
-  onTab: (tab: "activity" | "assistant") => void;
+  tab: RightPanelTab;
+  onTab: (tab: RightPanelTab) => void;
   onClose: () => void;
 }) {
   return (
     <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-      {(["activity", "assistant"] as const).map((value) => (
+      {(["activity", "project", "assistant"] as const).map((value) => (
         <button
           key={value}
           type="button"
@@ -386,7 +399,7 @@ export function ActivityPanelHeader({ tab, onTab, onClose }: {
           className={cn("rounded px-2 py-1 text-xs font-medium",
             tab === value ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}
         >
-          {value === "activity" ? "Activity" : "Assistant"}
+          {TAB_LABEL[value]}
         </button>
       ))}
       <button type="button" onClick={onClose} aria-label="Close panel"

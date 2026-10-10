@@ -22,7 +22,7 @@ const Y = await import("yjs");
 const { CollabRegistry } = await import("../registry");
 const { CollabAgent } = await import("./agent");
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
-const { readDoc, findBlock, blockContent, writeBlock, anchorThread } = await import("./doc-model");
+const { readDoc, findBlock, blockContent, writeBlock, anchorThread, threadRange } = await import("./doc-model");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
 const { CHANGE_SETS_MAP } = await import("../../../shared/collab/change-sets");
 const { createThread, readThreads, updateThreadMeta, addThreadComment, AI_USER_ID } = await import("../../../shared/collab/threads");
@@ -444,4 +444,60 @@ test("comments asking for evidence get searched candidates, marked when already 
   expect(searched).toEqual(["Our conclusions prove the hypothesis."]);
   const candidates = JSON.parse(String(calls[0][1].content)).citationCandidates;
   expect(candidates.map((item: { doi: string; citekey?: string }) => [item.doi, item.citekey])).toEqual([["10.1000/trial", "smith2020trial"], ["10.1000/cohort", undefined]]);
+});
+
+const { REVISIONS_MAP, readRevisions } = await import("../../../shared/collab/revision-log");
+const { WRITING_MAP } = await import("../../../shared/collab/writing");
+
+test("needs-user outcomes enter the decision queue and the revision is logged at its edit level", async () => {
+  const { session, ai, decision } = await setup();
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(threadsOf(session).find(thread => thread.id === decision)?.meta.decision?.question).toBe("Which primary endpoint do you intend?");
+  expect(threadsOf(session).find(thread => thread.id === ai)?.meta.decision).toBeUndefined();
+  const [entry] = readRevisions(session.ydoc.getMap(REVISIONS_MAP));
+  expect(entry).toMatchObject({ kind: "coordinated", status: "pending", level: "sentence" });
+  expect(entry.items.map(item => item.outcome).sort()).toEqual(["addressed", "addressed", "needs-user"]);
+  expect(entry.items.find(item => item.threadId === ai)).toMatchObject({ comment: "Qualify the causal inference.", commentBy: "ai" });
+  expect(entry.paragraphs.map(paragraph => paragraph.blockId)).toEqual(["p1", "p2"]);
+});
+
+test("the Proofread level keeps a paragraph rewrite out and the affected comment open", async () => {
+  const { session, calls, ai, human } = await setup(async messages => {
+    const payload = payloadOf(messages);
+    if (String(messages[0].content).includes("Repair only")) {
+      return JSON.stringify({ outcomes: payload.comments.filter(comment => comment.target).map(comment => comment.comments[0].text.includes("Qualify")
+        ? { threadId: comment.id, status: "addressed", reason: "Corrected the wording.", blockIds: ["P2"] }
+        : { threadId: comment.id, status: "needs-user", reason: "This needs a larger rewrite; raise the edit level?", blockIds: [] }) });
+    }
+    if (payload.candidateManuscript) return JSON.stringify({ consistent: true, outcomes: payload.proposedOutcomes });
+    return JSON.stringify({ summary: "Revise.", edits: [
+      { id: payload.editable_segments[0].id, text: "A wholly different opening statement about unrelated matters." },
+      { id: payload.editable_segments[1].id, text: payload.editable_segments[1].text.replace("prove", "suggest") },
+    ], outcomes: payload.comments.filter(comment => comment.target).map(comment => ({ threadId: comment.id, status: "addressed", reason: "Done.", blockIds: ["P1", "P2"] })) });
+  });
+  session.ydoc.getMap(WRITING_MAP).set("editLevel", "proofread");
+  const request = requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(String(calls[0][0].content)).toContain("EDIT LEVEL: PROOFREAD");
+  expect(readDoc(session).textContent).toContain("These findings prove the hypothesis.");
+  expect(readDoc(session).textContent).not.toContain("wholly different");
+  expect(threadsOf(session).find(thread => thread.id === ai)?.meta.status).toBe("proposed");
+  expect(threadsOf(session).find(thread => thread.id === human)?.meta.decision?.question).toContain("raise the edit level");
+  expect(threadsOf(session).find(thread => thread.id === request)?.comments.at(-1)?.text).toContain("exceeded the Proofread edit level");
+});
+
+const { postIssues } = await import("./project-consistency");
+
+test("consistency issues of an open document become anchored comments, never posted twice", async () => {
+  const { session } = await setup();
+  const issue = { id: "x", kind: "contradiction" as const, filename: "doc.scholarpen.json", blockId: "p1", quote: "prove the hypothesis",
+    comment: "Chapter 3 calls this preliminary.", related: { filename: "ch3.scholarpen.json", quote: "preliminary evidence" } };
+  expect(postIssues([session], [issue, { ...issue, filename: "other.scholarpen.json" }])).toBe(1);
+  expect(postIssues([session], [issue])).toBe(0);
+  const thread = threadsOf(session).find(item => item.meta.fingerprint?.startsWith("consistency:"))!;
+  expect(thread.comments[0].text).toContain('See ch3.scholarpen.json: "preliminary evidence"');
+  const range = threadRange(readDoc(session), thread.id)!;
+  expect(readDoc(session).textBetween(range.from, range.to)).toBe("prove the hypothesis");
 });

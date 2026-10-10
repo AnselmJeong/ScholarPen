@@ -43,6 +43,7 @@ import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
 import { ActivityPanel, ActivityPanelHeader } from "./components/sidebar/ActivityPanel";
+import { ProjectPanel } from "./components/sidebar/ProjectPanel";
 
 type AppView = "editor" | "settings";
 type SaveStatus = "saved" | "saving" | "unsaved";
@@ -62,7 +63,7 @@ export function App() {
   const [activeDocumentFilename, setActiveDocumentFilename] = useState<string | null>(null);
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
-  const [rightPanelTab, setRightPanelTab]             = useState<"activity" | "assistant">("activity");
+  const [rightPanelTab, setRightPanelTab]             = useState<"activity" | "assistant" | "project">("activity");
   const [activeEditor, setActiveEditor]               = useState<BlockNoteEditor<any, any, any> | null>(null);
   const [leftSidebarOpen, setLeftSidebarOpen]         = useState(true);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
@@ -848,6 +849,16 @@ export function App() {
                   onExported={refreshFileTree}
                   documentName={activeFile?.kind === "document" ? activeFile.name : null}
                 />
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "project" ? "flex" : "none" }}>
+                {rightPanelTab === "project" && (
+                  <ProjectPanel projectPath={activeProject?.path} onOpenDocument={(filename) => {
+                    if (!activeProject) return;
+                    handleFileSelect({ name: filename.split("/").at(-1) ?? filename,
+                      path: `${activeProject.path.replace(/\/$/, "")}/documents/${filename}`,
+                      kind: "document", isDirectory: false, lastModified: Date.now() });
+                  }} />
+                )}
               </div>
               <div className="flex min-h-0 flex-1 [&>*]:!border-l-0" style={{ display: rightPanelTab === "assistant" ? "flex" : "none" }}>
               <Suspense fallback={<div style={{ width: aiSidebarWidth }} className="h-full border-l border-border flex items-center justify-center text-sm text-muted-foreground">Loading AI...</div>}>

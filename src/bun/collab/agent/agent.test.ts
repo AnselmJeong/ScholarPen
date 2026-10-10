@@ -96,6 +96,7 @@ async function setup(complete: (messages: OllamaMessage[], signal: AbortSignal) 
     completionTimeoutMs: options.completionTimeoutMs,
     analyzeAIText: options.analyzeAIText,
     resolveMentionedFiles: options.resolveMentionedFiles,
+    projectGuide: options.projectGuide,
     onActivity: () => {},
     pollMs: 10,
     waitForAuthorMs: options.waitForAuthorMs ?? 2000,
@@ -488,4 +489,56 @@ test("a later batch failure leaves earlier suggestions linked for Accept/Reject"
   expect(session.ydoc.getMap("changeSets").get(String(thread.meta.changeSet))).toMatchObject({ threadId });
   expect(blockTextOf(session, "p1")).toContain("suggest");
   expect(thread.meta.statusNote).toContain("Provider disconnected");
+});
+
+const { WRITING_MAP } = await import("../../../shared/collab/writing");
+const { REVISIONS_MAP, readRevisions } = await import("../../../shared/collab/revision-log");
+
+test("the edit level, project glossary and other chapters' map reach the edit prompt", async () => {
+  const { session, prompts } = await setup(async messages => structuredRewrite(messages, text => text.replace("prove", "suggest")), {
+    projectGuide: async () => ({
+      glossary: { entries: [{ term: "randomized controlled trial", abbreviation: "RCT", avoid: ["randomised trial"] }] },
+      map: { documents: {
+        "doc.scholarpen.json": { filename: "doc.scholarpen.json", hash: "h", title: "This one", summary: "SELF SUMMARY", claims: [], terms: [], numbers: [], updatedAt: 1 },
+        "ch2.scholarpen.json": { filename: "ch2.scholarpen.json", hash: "h", title: "Chapter 2", summary: "Chapter two reports 120 patients.", claims: [], terms: [], numbers: [], updatedAt: 1 },
+      } },
+    }),
+  });
+  const threadId = comment(session, "p1", "@AI soften this");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  const system = String(prompts[0][0].content);
+  expect(system).toContain("EDIT LEVEL: SENTENCE");
+  expect(system).toContain("randomized controlled trial (RCT)");
+  expect(system).toContain("Chapter two reports 120 patients.");
+  expect(system).not.toContain("SELF SUMMARY");
+});
+
+test("at the Proofread level a rewrite of most of a paragraph is reported, not applied", async () => {
+  const { session } = await setup(async messages => structuredRewrite(messages, () => "An entirely different sentence about other matters altogether."));
+  session.ydoc.getMap(WRITING_MAP).set("editLevel", "proofread");
+  const threadId = comment(session, "p3", "@AI fix this");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  expect(blockTextOf(session, "p3")).toBe("We recieve the data from three sites.");
+  expect(threadOf(session, threadId).comments[1].text).toContain("exceeds the Proofread edit level");
+  expect(readRevisions(session.ydoc.getMap(REVISIONS_MAP))).toHaveLength(0);
+});
+
+test("a question the AI cannot settle enters the decision queue without editing", async () => {
+  const { session } = await setup(async messages => JSON.stringify({ ...JSON.parse(structuredRewrite(messages)), reply: "I need your choice.", question: "Which outcome is primary?" }));
+  const threadId = comment(session, "p1", "@AI make the conclusion match the primary outcome");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  expect(threadOf(session, threadId).meta.decision?.question).toBe("Which outcome is primary?");
+  expect(threadOf(session, threadId).comments[1].text).toContain("Question for you: Which outcome is primary?");
+  expect(blockTextOf(session, "p1")).toBe(BLOCKS[0].content as string);
+});
+
+test("each AI revision is logged with the comment, the answer and the changed text", async () => {
+  const { session } = await setup(async messages => structuredRewrite(messages, text => text.replace("prove", "suggest")));
+  const threadId = comment(session, "p1", "@AI this overclaims");
+  await waitFor(() => threadOf(session, threadId).comments.length === 2);
+  const [entry] = readRevisions(session.ydoc.getMap(REVISIONS_MAP));
+  expect(entry).toMatchObject({ kind: "comment", status: "pending", level: "sentence", changeSetId: threadOf(session, threadId).meta.changeSet,
+    items: [{ threadId, comment: "@AI this overclaims", commentBy: "author", outcome: "addressed", blockIds: ["p1"] }] });
+  expect(entry.paragraphs[0].before).toContain("These results prove");
+  expect(entry.paragraphs[0].after).toContain("These results suggest");
 });

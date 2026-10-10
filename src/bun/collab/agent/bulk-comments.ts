@@ -13,6 +13,10 @@ import type { MentionedFileContext } from "../../agent/mention-resolver";
 import { buildDoiCitationInsertionPlan, normalizeDoi, parseBibtexEntries } from "../../../shared/bibtex-utils";
 import { DOI_KEY, findCitations, rewriteCitations } from "./citation-edits";
 import { fitLibrary, fitProjectTexts, type BulkSources, type CitationCandidate, type ProjectText } from "./bulk-sources";
+import { protectedRewritePreview } from "../../../shared/ai-text-protection";
+import { DEFAULT_EDIT_LEVEL, EDIT_LEVEL_MAX_CHANGE, editLevelExceeded, editLevelLabel, type EditLevel } from "../../../shared/collab/writing";
+import { recordRevision, REVISIONS_MAP, type RevisionEntry } from "../../../shared/collab/revision-log";
+import { changeRate } from "./humanize/humanize";
 
 const AI_ORIGIN = "ai-agent";
 const AI_META_ORIGIN = "ai-meta";
@@ -114,6 +118,10 @@ export interface BulkCommentDeps {
   progress(detail: string): void;
   /** The rest of the project (other documents, references.bib) and citation lookups. */
   sources: BulkSources;
+  /** How far the revision may change each paragraph. */
+  level?: EditLevel;
+  /** Edit level, glossary and manuscript map rules for the prompts. */
+  policy?: string;
 }
 
 interface ReferenceAddition { doi: string; citekey: string; bibtex: string; title: string; authors: string[]; year: number; venue?: string }
@@ -199,6 +207,8 @@ function citedKeys(doc: ReturnType<typeof readDoc>, texts: string[]) {
 
 /** Prepare and verify off-document; publish all suggestions in one atomic update. */
 export async function runBulkComments(session: CollabSession, request: ThreadSnapshot, deps: BulkCommentDeps, signal: AbortSignal) {
+  const level = deps.level ?? DEFAULT_EDIT_LEVEL;
+  const rules = BULK_RULES + (deps.policy ? `\n${deps.policy}\n` : "");
   const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
   const all = readThreads(threads);
   const targetIds = new Set(request.meta.bulkThreadIds ?? []);
@@ -319,7 +329,7 @@ export async function runBulkComments(session: CollabSession, request: ThreadSna
   };
   const editable_segments = slots.map(slot => ({ id: slot.id, blockId: blockLabels.get(bases[slot.block].blockId), text: slot.text }));
   deps.progress(`Reconciling ${targets.length} comments across the whole manuscript`);
-  const plan = await complete(BULK_RULES + `
+  const plan = await complete(rules + `
 Return JSON only: {"summary":"coherent revision plan", "edits":[{"id":"b0s0","text":"replacement text"}], "newReferences":[{"doi":"10.xxxx/yyyy","title":"exact title of the work","reason":"claim it supports"}], "outcomes":[{"threadId":"C1","status":"addressed|needs-user","reason":"explanation or specific question","blockIds":["P1"]}]}.
 Copy each ID from targetCommentIds exactly once. Do not return outcomes for target=false context comments. Comment IDs are C1, C2, etc.; paragraph IDs are P1, P2, etc.; editable segment IDs are b0s0, b0s1, etc. Never confuse these ID types. Return exactly one outcome for EVERY target comment. Only call it addressed if the proposed edits fully resolve it. Use needs-user for unresolved or unsupported requests; do not count a promised future edit as addressed.
 Return ONLY changed editable_segments. IDs identify plain text gaps; preserve their leading/trailing spaces. Unlisted segments remain unchanged. Never emit control markers, move text between segments, or erase a segment. New citations follow the CITATIONS rules; newReferences may be []. Other blocks are read-only context.`, {
@@ -333,25 +343,39 @@ Return ONLY changed editable_segments. IDs identify plain text gaps; preserve th
     }
     replacements.set(edit.id, edit.text);
   }
-  const citations: CitationPlan = bibtex === null
+  const noCitations = bibtex === null ? "references.bib could not be read, so no citation was added"
+    : level === "proofread" ? "the Proofread edit level does not add citations" : null;
+  const citations: CitationPlan = noCitations || bibtex === null
     ? { edits: new Map([...replacements].map(([id, text]) => [id, rewriteCitations(text, () => null)])), citekeys: new Set<string>(), additions: [],
-      dropped: [...replacements.values()].some(text => findCitations(text).length) ? ["references.bib could not be read, so no citation was added"] : [] }
+      dropped: [...replacements.values()].some(text => findCitations(text).length) ? [noCitations ?? ""] : [] }
     : await planCitations(replacements, plan.newReferences, bibtex, deps.sources, signal, deps.progress);
   assertCurrent();
   const parsed = parseTextEdits(JSON.stringify({ reply: plan.summary,
     edits: slots.map(slot => ({ id: slot.id, text: citations.edits.get(slot.id) ?? slot.text })),
   }), selections);
   if (!parsed?.parts) throw new Error("The AI returned no valid revision.");
+  const levelNotes: string[] = [];
   const changed = bases.map((base, index) => ({ base, text: parsed.parts![index] }))
-    .filter(item => item.text !== item.base.protection.protectedText);
+    .filter(item => item.text !== item.base.protection.protectedText)
+    .filter(item => {
+      // A rewrite larger than the author's edit level is left out, never applied.
+      const before = protectedRewritePreview(item.base.protection.protectedText, item.base.protection);
+      if (!editLevelExceeded(level, changeRate(before, protectedRewritePreview(item.text, item.base.protection)))) return true;
+      levelNotes.push(`${blockLabels.get(item.base.blockId)} ("${before.slice(0, 40)}…")`);
+      return false;
+    });
   const changedIds = new Set(changed.map(item => item.base.blockId));
+  if (levelNotes.length) Object.assign(context, { paragraphsOverEditLevel: {
+    note: `These paragraph edits changed more than ${Math.round(EDIT_LEVEL_MAX_CHANGE[level] * 100)}% of the paragraph and were dropped (${editLevelLabel(level)} edit level). Comments that needed them are needs-user.`,
+    paragraphs: levelNotes,
+  } });
   const blockIds = new Set(blocks.map(block => block.id));
   const readOutcomes = async (value: unknown, stage: "revision" | "verification", candidateManuscript?: ReturnType<typeof manuscript>) => {
     try { return outcomesOf(value, ids, blockIds, changedIds, refs); }
     catch (error) {
       if (!(error instanceof OutcomeFormatError)) throw error;
       deps.progress(`Repairing the ${stage} result format (one automatic retry)`);
-      const repaired = await complete(BULK_RULES + `
+      const repaired = await complete(rules + `
 Repair only the per-comment outcome metadata for the FIXED proposed revision. Do not change, add, or remove edits. Do not choose an author decision just to satisfy the schema.
 Return JSON only: {"outcomes":[{"threadId":"C1","status":"addressed|needs-user","reason":"specific explanation","blockIds":["P1"]}]}.
 Copy every targetCommentIds entry exactly once; omit context-only comments. Use only listed changedParagraphIds for addressed outcomes. For needs-user, blockIds may be []. Copy paragraph IDs from the manuscript, not editable segment IDs. Preserve the meaning of the previous results; if an outcome cannot be established, use needs-user with a specific question.`, {
@@ -387,7 +411,7 @@ Copy every targetCommentIds entry exactly once; omit context-only comments. Use 
     }
     if (changed.length) {
       deps.progress("Checking the entire revision for conflicting resolutions");
-      const verification = await complete(BULK_RULES + `
+      const verification = await complete(rules + `
 You are now verifying the COMPLETE candidate manuscript against the original, every comment and prior resolution.
 Check that fixes do not contradict each other or the projectDocuments, create new unsupported claims, reverse a resolved decision, or make a choice reserved for the author.
 Check every citation the revision adds: it must name a library entry or one of newReferences (already verified with CrossRef), and the cited work, judged by its title and metadata, must plausibly support its sentence. droppedCitations were removed because they could not be verified; downgrade any outcome that relied on them to needs-user.
@@ -450,11 +474,26 @@ Copy every targetCommentIds entry exactly once and omit context-only comments. U
         statusNote: outcome.status === "addressed" ? "Addressed in the coordinated revision; awaiting your acceptance." : "Needs your decision or evidence.",
         changeSet: outcome.status === "addressed" ? changeSetId : undefined,
         editedBlockIds: outcome.status === "addressed" ? outcome.blockIds : undefined,
+        decision: outcome.status === "needs-user" ? { question: outcome.reason, askedAt: Date.now() } : undefined,
       });
     }
+    // The revision log keeps the comment, the answer and the new text, for history and the response letter.
+    const commentOf = (threadId: string) => targets.find(thread => thread.id === threadId)?.comments.find(comment => !comment.deleted);
+    if (changed.length) recordRevision(session.ydoc.getMap<RevisionEntry>(REVISIONS_MAP), {
+      createdAt: Date.now(), kind: "coordinated", label: "Coordinated comment revision",
+      changeSetId, status: "pending", level, summary: String(plan.summary),
+      items: outcomes.map(outcome => ({ threadId: outcome.threadId, comment: commentOf(outcome.threadId)?.text ?? "",
+        commentBy: isAIUser(commentOf(outcome.threadId)?.userId ?? "") ? "ai" as const : "author" as const,
+        response: outcome.reason, outcome: outcome.status, blockIds: outcome.blockIds })),
+      paragraphs: changed.map(item => ({ blockId: item.base.blockId,
+        before: protectedRewritePreview(item.base.protection.protectedText, item.base.protection),
+        after: protectedRewritePreview(item.text, item.base.protection) })),
+      references: additions.map(item => ({ citekey: item.citekey, title: item.title, doi: item.doi })),
+    });
     const referenceNotes = [
       additions.length ? `Added to references.bib before citing: ${additions.map(item => `@${item.citekey} (${item.title}, doi:${item.doi})`).join("; ")}.` : "",
       citations.dropped.length ? `Removed citations that could not be verified: ${citations.dropped.join("; ")}.` : "",
+      levelNotes.length ? `Left unchanged because the edit exceeded the ${editLevelLabel(level)} edit level: ${levelNotes.join("; ")}. Raise the level to allow larger rewrites.` : "",
     ].filter(Boolean).join("\n");
     addThreadComment(threads, request.id, SCHOLARPEN_AI.userId,
       `${plan.summary}\n\n${addressed.length} comments addressed in one proposed revision; ${outcomes.length - addressed.length} remain open for your decision or evidence.` +

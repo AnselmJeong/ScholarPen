@@ -437,6 +437,11 @@ class FileSystemManager {
     catch (error) { console.warn("[Hindsight] Project memory initialization failed:", error); }
   }
 
+  /** The canonical path of a project the user opened or that lives under the projects root. */
+  async resolveProjectPath(projectPath: string): Promise<string> {
+    return this.assertKnownProjectPath(projectPath);
+  }
+
   async getProjectMemoryStatus(projectPath: string) {
     return projectMemory.status(await this.assertKnownProjectPath(projectPath));
   }

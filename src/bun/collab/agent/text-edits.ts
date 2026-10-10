@@ -25,8 +25,8 @@ export function editableSegments(selections: ProtectedSelection[]) {
 export function parseTextEdits(response: string, selections: ProtectedSelection[]) {
   const cleaned = response.replace(/<think>[\s\S]*?<\/think>/g, "").trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, "$1");
   if (!cleaned.startsWith("{")) return null; // Legacy annotated responses still pass the original strict validator.
-  const data = JSON.parse(cleaned) as { reply?: unknown; edits?: unknown; scope?: unknown };
-  if (data.scope === "document") return { reply: "", parts: null, wantsDocument: true };
+  const data = JSON.parse(cleaned) as { reply?: unknown; edits?: unknown; scope?: unknown; question?: unknown };
+  if (data.scope === "document") return { reply: "", parts: null, wantsDocument: true, question: "" };
   if (typeof data.reply !== "string" || !Array.isArray(data.edits)) throw new Error("The AI returned an incomplete text-edit response.");
   const slots = editableSegments(selections);
   const byId = new Map(slots.map(slot => [slot.id, slot]));
@@ -46,5 +46,6 @@ export function parseTextEdits(response: string, selections: ProtectedSelection[
     const original = parts[slot.block];
     parts[slot.block] = original.slice(0, slot.from) + replacements.get(slot.id)! + original.slice(slot.to);
   }
-  return { reply: data.reply, parts, wantsDocument: false };
+  const question = typeof data.question === "string" ? data.question.trim() : "";
+  return { reply: data.reply, parts, wantsDocument: false, question };
 }

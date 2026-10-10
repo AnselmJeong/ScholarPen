@@ -53,6 +53,10 @@ import { analyzeAIText } from "../../ai-detector/service";
 import { resolveMentionedFiles, type MentionedFileContext } from "../../agent/mention-resolver";
 import { runBulkComments } from "./bulk-comments";
 import { projectBulkSources, type BulkSources } from "./bulk-sources";
+import { editLevelExceeded, editLevelGuidance, editLevelLabel, editLevelOf, EDIT_LEVEL_MAX_CHANGE, WRITING_MAP, type EditLevel } from "../../../shared/collab/writing";
+import { glossaryGuidance, type Glossary } from "../../../shared/glossary";
+import { mapGuidance, type ManuscriptMap } from "../../../shared/manuscript-map";
+import { recordRevision, REVISIONS_MAP, type RevisionEntry, type RevisionParagraph } from "../../../shared/collab/revision-log";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
@@ -73,6 +77,8 @@ export interface CollabAgentDeps {
   pollMs?: number;
   /** Per-model-call deadline, not a limit on processing the whole manuscript. */
   completionTimeoutMs?: number;
+  /** The project's glossary and manuscript map, followed by every AI edit; none when absent. */
+  projectGuide?: (session: CollabSession) => Promise<{ glossary: Glossary; map: ManuscriptMap }>;
   /** The project around a document for coordinated revisions; defaults to its files on disk. */
   bulkSources?: (session: CollabSession) => BulkSources | Promise<BulkSources>;
   /** Decides suggestion vs direct edits for a block (zones refine this in stage 5). */
@@ -89,6 +95,9 @@ export interface Attachment {
 
 interface Job {
   references?: MentionedFileContext[];
+  /** Edit level, glossary and manuscript map for every prompt of this job. */
+  policy?: string;
+  level?: EditLevel;
   view: AgentJobView;
   run: (job: Job, attachment: Attachment, signal: AbortSignal) => Promise<void>;
 }
@@ -356,6 +365,13 @@ export class CollabAgent {
     }, AI_META_ORIGIN);
   }
 
+  /** The author's standing rules for one job: how far edits may go, and the project's terms and chapters. */
+  async policyFor(session: CollabSession, level: EditLevel) {
+    const guide = await this.deps.projectGuide?.(session).catch(() => null);
+    return [editLevelGuidance(level), guide ? glossaryGuidance(guide.glossary) : "", guide ? mapGuidance(guide.map, session.filename) : ""]
+      .filter(Boolean).join("\n\n");
+  }
+
   modeFor(attachment: Attachment, blockId: string): EditMode {
     return this.deps.editModeFor?.(attachment.session, blockId) ?? "auto";
   }
@@ -372,7 +388,10 @@ export class CollabAgent {
     const thread = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find((item) => item.id === threadId);
     if (!thread || !threadWantsAI(thread)) return;
     const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text);
-    reply({ assignee: "ai", agent: SCHOLARPEN_AI.id, status: "in-progress", statusNote: undefined });
+    reply({ assignee: "ai", agent: SCHOLARPEN_AI.id, status: "in-progress", statusNote: undefined, decision: undefined });
+    job.level = thread.meta.editLevel ?? editLevelOf(session.ydoc.getMap(WRITING_MAP));
+    job.policy = await this.policyFor(session, job.level);
+    signal.throwIfAborted();
     if (thread.meta.documentAction === "resolve-comments") {
       const all = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP));
       const requested = new Set(thread.meta.bulkThreadIds ?? []);
@@ -387,6 +406,7 @@ export class CollabAgent {
         modeFor: blockId => this.modeFor(attachment, blockId),
         progress: detail => this.update(job, { detail }),
         sources: await (this.deps.bulkSources ?? projectBulkSources)(session),
+        level: job.level, policy: job.policy,
       }, signal);
     }
     const latestRequest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
@@ -505,6 +525,7 @@ export class CollabAgent {
     for (let index = 0; index < parts.length; index++) {
       const response = await this.complete(buildDocumentPlanMessages({
         references: job.references,
+        policy: job.policy,
         conversation: conversationOf(thread),
         paragraphs: parts[index],
         part: parts.length > 1 ? { index: index + 1, total: parts.length } : undefined,
@@ -632,6 +653,8 @@ export class CollabAgent {
       // Everything this request changes is one change set, accepted or rejected together.
       changeSetId: nextSuggestionId(readDoc(session)),
       paragraphs: blockIds.length,
+      questions: [],
+      paragraphsChanged: [],
     };
     this.update(job, { blockId: blockIds[0] });
 
@@ -662,6 +685,7 @@ export class CollabAgent {
         part: options.quoted === undefined ? { index: index + 1, total: batches.length } : undefined,
         allowWiderScope: options.allowWiderScope,
         guidance: options.guidance,
+        policy: job.policy,
         segments: editableSegments(bases.map(base => base.protection)).map(({ id, text }) => ({ id, text })),
       });
       let parsed: ReturnType<typeof parseCommentEditResponse> | undefined;
@@ -674,6 +698,7 @@ export class CollabAgent {
           parsed = structured
             ? { reply: structured.reply, passage: structured.parts ? "structured" : null, wantsDocument: structured.wantsDocument }
             : parseCommentEditResponse(response);
+          if (structured?.question) result.questions.push(structured.question);
           if (parsed.wantsDocument && options.allowWiderScope && index === 0) return "document";
           if (parsed.passage !== null) {
             parts = structured?.parts ?? splitProtected(bases, parsed.passage);
@@ -696,9 +721,17 @@ export class CollabAgent {
       if (parsed?.passage == null) continue;
       for (let at = 0; at < bases.length; at++) {
         let rate: number | undefined;
+        const before = protectedRewritePreview(bases[at].protection.protectedText, bases[at].protection);
+        const after = protectedRewritePreview(parts[at], bases[at].protection);
+        // Humanizer requests carry their own gate; everything else keeps to the author's edit level.
+        const level = job.level;
+        if (level && !options.gateChangeRate && !options.suggestOnly && before !== after && editLevelExceeded(level, changeRate(before, after))) {
+          result.notes.push(`I left one paragraph unchanged ("${clip(before, 40, "start").replace(/\n\[…\]$/, "…")}"): the edit changed more than ` +
+            `${percent(EDIT_LEVEL_MAX_CHANGE[level])} of it, which exceeds the ${editLevelLabel(level)} edit level. Raise the level to allow it.`);
+          continue;
+        }
         if (options.gateChangeRate) {
-          const before = protectedRewritePreview(bases[at].protection.protectedText, bases[at].protection);
-          rate = changeRate(before, protectedRewritePreview(parts[at], bases[at].protection));
+          rate = changeRate(before, after);
           if (rate >= CHANGE_RATE_ABORT) {
             result.notes.push(`I left one paragraph unchanged ("${clip(before, 40, "start").replace(/\n\[…\]$/, "…")}"): ` +
               `the rewrite changed ${percent(rate)} of it, which im-not-ai treats as over-polishing.`);
@@ -709,7 +742,10 @@ export class CollabAgent {
         const outcome = applyBlockRewrite(session, bases[at], parts[at],
           options.suggestOnly && mode !== "observe" ? "suggest" : mode, AI_ORIGIN, result.changeSetId);
         result.outcomes.push(outcome);
-        if (outcome.kind === "applied") result.editedBlockIds.push(bases[at].blockId);
+        if (outcome.kind === "applied") {
+          result.editedBlockIds.push(bases[at].blockId);
+          result.paragraphsChanged.push({ blockId: bases[at].blockId, before, after, mode: outcome.mode });
+        }
         if (rate !== undefined && outcome.kind === "applied") result.changeRates.push(rate);
         if (outcome.kind === "applied" && outcome.mode === "direct") this.markDirectEdit(attachment, bases[at].blockId, `comment:${thread.id}`);
       }
@@ -739,6 +775,26 @@ export class CollabAgent {
     });
   }
 
+  /** One revision-log entry per answered thread, for the history panel and the response letter. */
+  private logRevision(attachment: Attachment, thread: ThreadSnapshot, result: EditResult, response: string, questions: string[], level?: EditLevel) {
+    const { session } = attachment;
+    const first = thread.comments.find(comment => !comment.deleted);
+    const status = revisionStatus(result.paragraphsChanged);
+    session.ydoc.transact(() => {
+      recordRevision(session.ydoc.getMap<RevisionEntry>(REVISIONS_MAP), {
+        createdAt: this.now(), kind: "comment",
+        label: clip(conversationOf(thread).at(-1)?.text.replace(/\s+/g, " ") ?? "AI edit", 80, "start"),
+        ...(status === "pending" ? { changeSetId: result.changeSetId } : {}),
+        status, summary: response,
+        ...(level ? { level } : {}),
+        items: [{ threadId: thread.id, comment: first?.text ?? "", commentBy: first && isAIUser(first.userId) ? "ai" : "author",
+          response: questions.length ? `${response} ${questions.join(" ")}`.trim() : response,
+          outcome: "addressed", blockIds: result.paragraphsChanged.map(paragraph => paragraph.blockId) }],
+        paragraphs: result.paragraphsChanged.map(({ blockId, before, after }) => ({ blockId, before, after })),
+      });
+    }, AI_META_ORIGIN);
+  }
+
   private finishEdit(job: Job, attachment: Attachment, thread: ThreadSnapshot, result: EditResult,
     reply: (patch: Partial<ThreadMeta>, text?: string) => void) {
     this.recordEditProgress(attachment, thread, result);
@@ -753,16 +809,27 @@ export class CollabAgent {
       notes.push(`Change rate ${percent(mean)} on average across the paragraphs I changed` +
         (high ? `; ${high} changed by ${percent(CHANGE_RATE_WARN)} or more, so check those first.` : "."));
     }
+    const questions = [...new Set(result.questions)];
+    if (questions.length) notes.push(`Question for you: ${questions.join(" ")}`);
     const { text, meta } = summarize(lead, result.outcomes, notes);
     reply({ ...meta,
       editedBlockIds: [...new Set([...(thread.meta.editedBlockIds ?? []), ...result.editedBlockIds])],
       ...(suggested ? { changeSet: result.changeSetId } : {}),
+      ...(questions.length ? { decision: { question: questions.join(" "), askedAt: this.now() } } : {}),
     }, text);
+    if (result.paragraphsChanged.length) this.logRevision(attachment, thread, result, lead || text, questions, job.level);
     this.update(job, { detail: meta.statusNote ?? undefined });
   }
 }
 
+function revisionStatus(paragraphs: EditResult["paragraphsChanged"]): RevisionEntry["status"] {
+  return paragraphs.some(paragraph => paragraph.mode === "suggest") ? "pending" : "applied";
+}
+
 interface EditResult {
+  /** Questions the model needs the author to answer before it can continue. */
+  questions: string[];
+  paragraphsChanged: Array<RevisionParagraph & { mode: "suggest" | "direct" }>;
   outcomes: EditOutcome[];
   editedBlockIds: string[];
   replies: string[];
