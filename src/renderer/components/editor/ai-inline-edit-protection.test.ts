@@ -105,7 +105,8 @@ describe("AI inline edit protection", () => {
     expect(messages.user).toContain("<complete_document_context reference_only=\"true\">");
     expect(messages.user).toContain("The introduction defines the paper's central problem.");
     expect(messages.user).toContain("The conclusion returns to the same qualified claim.");
-    expect(messages.user).toContain(selection.protectedText);
+    expect(messages.user).toContain("<editable_segments>");
+    expect(messages.user).not.toContain("⟦SP:");
   });
 
   test("runs the embedded humanizer audit only for Academic Improve", () => {
@@ -124,7 +125,7 @@ describe("AI inline edit protection", () => {
     expect(improveMessages.system).toContain("Preserve the author's real voice");
     expect(improveMessages.system).toContain("do not change a passage based on a single possible tell");
     expect(improveMessages.system).toContain("Does the rewrite introduce or remove any fact");
-    expect(improveMessages.system).toContain("Output only the final protected passage");
+    expect(improveMessages.system).toContain("Output only the final JSON with the revised segments");
     expect(generalMessages.system).not.toContain("clusters of AI-writing patterns");
   });
 
@@ -141,7 +142,7 @@ describe("AI inline edit protection", () => {
     expect(messages.system).toContain("epistemic calibration");
     expect(messages.system).toContain("Do not invent, strengthen, generalize, or delete");
     expect(messages.system).toContain("Never alter a protected control marker");
-    expect(messages.system).toContain("Copy every control marker exactly once");
+    expect(messages.system).toContain("never write citation keys, footnote numbers, math or any ⟦SP: marker into a segment");
   });
 
   test("captures all document text before and after the selected passage", () => {

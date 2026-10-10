@@ -10,6 +10,7 @@ import {
   type InlineEditWorkflow,
   type ProtectedSelection,
 } from "./ai-inline-edit-protection";
+import { resolveInlineEditResponse, streamingSegmentPreview } from "../../../shared/ai-text-segments";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -201,9 +202,19 @@ export function AIInlineEditPanel({
       if (done) {
         setLoading(false);
         activeRef.current = false;
-        if (workflowRef.current === "academic-improve" && !streamFailedRef.current) {
-          const suggestionError = accumulatedRef.current
-            ? onSuggest(snapshot, accumulatedRef.current, "Improve")
+        if (streamFailedRef.current) return;
+        // The model returns plain-text segments; rebuild the annotated passage around the protected markers.
+        let revision = "";
+        try {
+          revision = accumulatedRef.current ? resolveInlineEditResponse(accumulatedRef.current, snapshot.protection) : "";
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+          return;
+        }
+        setResult(revision);
+        if (workflowRef.current === "academic-improve") {
+          const suggestionError = revision
+            ? onSuggest(snapshot, revision, "Improve")
             : "AI가 수정안을 반환하지 않았습니다. 다시 실행해 주세요.";
           if (suggestionError) setError(suggestionError);
         }
@@ -278,7 +289,9 @@ export function AIInlineEditPanel({
     : result
     ? "result"
     : "input";
-  const resultPreview = protectedRewritePreview(result, snapshot.protection);
+  const resultPreview = loading
+    ? streamingSegmentPreview(result) ?? protectedRewritePreview(result, snapshot.protection)
+    : protectedRewritePreview(result, snapshot.protection);
 
   return ReactDOM.createPortal(
     <div
