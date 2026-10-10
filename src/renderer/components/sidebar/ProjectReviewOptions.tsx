@@ -45,7 +45,7 @@ export function ProjectReviewOptions({ collab }: { collab: Pick<CollabPeer, "doc
         {disabled && <span className="ml-2 font-normal text-muted-foreground">{REVIEW_CATEGORIES.length - disabled.length}/{REVIEW_CATEGORIES.length} on</span>}
       </summary>
       <p className="px-2 pb-2 text-[11px] leading-4 text-muted-foreground">
-        Applies to every document in this project. Turning a type off stops new comments; existing comments stay.
+        Applies to every document in this project. Turning a type off stops new comments and hides its open ones from the list; they are kept, not resolved.
       </p>
       <fieldset disabled={saving || disabled === null} className="max-h-72 space-y-1 overflow-y-auto px-2 pb-2">
         <legend className="sr-only">Project comment types</legend>

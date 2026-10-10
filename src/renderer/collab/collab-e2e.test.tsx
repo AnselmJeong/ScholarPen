@@ -537,3 +537,53 @@ for (const accept of [true, false]) {
     }
   });
 }
+
+test("the comment list hides project-disabled types and marks comments whose text is gone", async () => {
+  const { createThread } = await import("../../shared/collab/threads");
+  const { REVIEW_MAP, PROJECT_REVIEW_SETTINGS_KEY } = await import("../../shared/collab/review");
+  jsonFiles.set("/p/types.scholarpen.json", [{ id: "p1", type: "paragraph", content: "Lithium did not differ from placebo." }]);
+  const a = await mountPeer("A", "types.scholarpen.json");
+  await settle();
+  const map = a.peer.ydoc.getMap("threads");
+  const meta = (category: string) => ({ agent: "scholarpen-ai", category, severity: "high" as const, assignee: "me" as const, status: "open" as const });
+  let statistics = "";
+  let logic = "";
+  a.peer.ydoc.transact(() => {
+    statistics = createThread(map, "scholarpen-ai", "Report the effect size.", meta("statistics"));
+    logic = createThread(map, "scholarpen-ai", "This does not follow.", meta("logic"));
+    createThread(map, "scholarpen-ai", "A claim about deleted text.", meta("logic"));
+    a.peer.ydoc.getMap(REVIEW_MAP).set(PROJECT_REVIEW_SETTINGS_KEY, { disabledCategories: ["statistics"] });
+  });
+  const view = a.editor.prosemirrorView!;
+  let from = -1;
+  view.state.doc.descendants((node, pos) => { if (from < 0 && node.isText) from = pos; });
+  const mark = (threadId: string) => view.state.schema.marks.comment.create({ threadId, orphan: false });
+  await act(async () => { view.dispatch(view.state.tr.addMark(from, from + 7, mark(statistics)).addMark(from + 8, from + 35, mark(logic))); });
+  await settle();
+
+  const panel = document.createElement("div");
+  document.body.append(panel);
+  const panelRoot = createRoot(panel);
+  await act(async () => { panelRoot.render(<ActivityPanel editor={a.editor} documentName="types.scholarpen.json" projectPath="/p" />); });
+  expect(panel.textContent).toContain("This does not follow.");
+  expect(panel.textContent).not.toContain("Report the effect size.");
+  expect(panel.textContent).toContain("1 open comment of types turned off in this project hidden.");
+  expect(panel.textContent).toContain("open 2");
+  // The anchored claim quotes its passage; the one whose text is gone says so.
+  expect(panel.textContent).toContain("did not differ from placebo");
+  expect(panel.textContent).toContain("The commented text is no longer in the document.");
+
+  // Resolve all acts on the listed comments only.
+  const button = (label: string) => [...panel.querySelectorAll("button")].find(item => item.textContent?.trim().startsWith(label))!;
+  await act(async () => { button("Resolve all").click(); });
+  await settle();
+  expect(readThreads(map).find(thread => thread.id === statistics)!.resolved).toBe(false);
+  expect(readThreads(map).filter(thread => thread.resolved)).toHaveLength(2);
+
+  await act(async () => { button("Show").click(); });
+  expect(panel.textContent).toContain("Report the effect size.");
+  expect(panel.textContent).toContain("Lithium");
+
+  await act(async () => { panelRoot.unmount(); a.root.unmount(); });
+  panel.remove(); a.peer.destroy(); await settle();
+});

@@ -12,7 +12,14 @@ import {
   type ThreadStatus,
 } from "../../../shared/collab/threads";
 import { getEditorCollab } from "../../collab/editor-collab";
-import { reviewCategoryLabel, normalizeReviewCategory } from "../../../shared/collab/review";
+import {
+  REVIEW_MAP,
+  isDisabledReviewType,
+  normalizeReviewCategory,
+  reviewCategoryLabel,
+  reviewSettingsOf,
+  type ReviewCategory,
+} from "../../../shared/collab/review";
 import { SCHOLARPEN_AI, isAIUser, personaByUser } from "../../../shared/collab/personas";
 import { AIActivitySection } from "./AIActivitySection";
 import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
@@ -63,6 +70,24 @@ function useThreadPositions(editor: BlockNoteEditor<any, any, any> | null) {
   return positions;
 }
 
+/** Review types the project turned off; their open comments are hidden unless asked for. */
+function useDisabledReviewTypes(editor: BlockNoteEditor<any, any, any> | null) {
+  const [disabled, setDisabled] = useState<ReviewCategory[]>([]);
+  useEffect(() => {
+    const collab = editor ? getEditorCollab(editor) : null;
+    if (!collab) {
+      setDisabled([]);
+      return;
+    }
+    const map = collab.ydoc.getMap(REVIEW_MAP);
+    const refresh = () => setDisabled(reviewSettingsOf(map).muted);
+    refresh();
+    map.observe(refresh);
+    return () => map.unobserve(refresh);
+  }, [editor]);
+  return disabled;
+}
+
 interface ActivityPanelProps {
   editor: BlockNoteEditor<any, any, any> | null;
   documentName: string | null;
@@ -73,6 +98,8 @@ interface ActivityPanelProps {
 export function ActivityPanel({ editor, documentName, projectPath, onExported }: ActivityPanelProps) {
   const threads = useThreads(editor);
   const positions = useThreadPositions(editor);
+  const disabledTypes = useDisabledReviewTypes(editor);
+  const [showDisabledTypes, setShowDisabledTypes] = useState(false);
   const changeSets = usePendingChangeSets(editor);
   const pendingChangeSets = new Set(changeSets.map((set) => String(set.id)));
   const [filter, setFilter] = useState<Filter>("open");
@@ -84,7 +111,13 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   const collab = editor ? getEditorCollab(editor) : null;
   useEffect(() => { setExportResult(null); }, [editor, projectPath]);
   useEffect(() => { setBulkInstructions(""); setBulkError(null); }, [editor, projectPath]);
-  const bulkTargets = openClaimThreads(threads);
+  // Lists, counts and bulk actions all work on the comments the panel shows.
+  const inScope = (thread: ThreadSnapshot) => showDisabledTypes || threadStatus(thread) === "resolved" ||
+    !isDisabledReviewType(thread.meta.category, disabledTypes);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- inScope reads exactly these values.
+  const scoped = useMemo(() => threads.filter(inScope), [threads, disabledTypes, showDisabledTypes]);
+  const hiddenByType = threads.length - scoped.length;
+  const bulkTargets = openClaimThreads(scoped);
   const bulkBusy = threads.some(thread => !thread.resolved && (thread.meta.status === "in-progress" ||
     (thread.meta.documentAction === "resolve-comments" && thread.meta.assignee === "ai")));
 
@@ -93,7 +126,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
     setBulkError(null);
     try {
       if (pendingChangeSets.size) throw new Error("Accept or reject the pending edits first, so AI can work from one settled manuscript.");
-      requestBulkComments(collab.ydoc, bulkInstructions);
+      requestBulkComments(collab.ydoc, bulkInstructions, inScope);
       setBulkInstructions("");
     } catch (error) { setBulkError(error instanceof Error ? error.message : String(error)); }
   };
@@ -108,7 +141,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
       const doc = editor.prosemirrorState.doc;
       const livePositions = editor.getExtension(CommentsExtension)?.store.state.threadPositions;
       const report = exportUnresolvedComments({ documentName,
-        entries: readThreads(collab.ydoc.getMap(COLLAB_THREADS_MAP)).map(thread => {
+        entries: readThreads(collab.ydoc.getMap(COLLAB_THREADS_MAP)).filter(inScope).map(thread => {
           const range = livePositions?.get(thread.id);
           const from = Math.max(0, range?.from ?? 0);
           const to = Math.min(doc.content.size, range?.to ?? 0);
@@ -130,7 +163,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   };
 
   const visible = useMemo(() => {
-    const filtered = threads.filter((thread) => {
+    const filtered = scoped.filter((thread) => {
       const status = threadStatus(thread);
       if (filter === "resolved") return status === "resolved";
       if (status === "resolved") return false;
@@ -140,15 +173,15 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
     });
     return filtered.sort((a, b) =>
       (positions.get(a.id)?.from ?? Number.MAX_SAFE_INTEGER) - (positions.get(b.id)?.from ?? Number.MAX_SAFE_INTEGER));
-  }, [threads, filter, positions]);
+  }, [scoped, filter, positions]);
 
   const counts = useMemo(() => ({
-    open: threads.filter((t) => threadStatus(t) !== "resolved").length,
-    ai: threads.filter((t) => threadStatus(t) !== "resolved" &&
+    open: scoped.filter((t) => threadStatus(t) !== "resolved").length,
+    ai: scoped.filter((t) => threadStatus(t) !== "resolved" &&
       (t.meta.assignee === "ai" || isAIUser(t.comments[0]?.userId))).length,
-    mine: threads.filter((t) => threadStatus(t) !== "resolved" && t.meta.assignee === "me").length,
-    resolved: threads.filter((t) => threadStatus(t) === "resolved").length,
-  }), [threads]);
+    mine: scoped.filter((t) => threadStatus(t) !== "resolved" && t.meta.assignee === "me").length,
+    resolved: scoped.filter((t) => threadStatus(t) === "resolved").length,
+  }), [scoped]);
 
   const setMeta = (threadId: string, patch: Parameters<typeof updateThreadMeta>[2]) => {
     if (!collab) return;
@@ -210,7 +243,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
             className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
             <Bot className="h-3 w-3" /> Ask AI
           </button>
-          <button type="button" onClick={() => { resolveAllComments(collab.ydoc); setBulkError(null); }} disabled={!counts.open}
+          <button type="button" onClick={() => { resolveAllComments(collab.ydoc, inScope); setBulkError(null); }} disabled={!counts.open}
             title="Dismiss all open comments without changing the manuscript or accepting suggested edits"
             className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
             <Check className="h-3 w-3" /> Resolve all
@@ -221,6 +254,16 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
           aria-label="Instructions for all comments" placeholder="Optional direction for the whole revision…"
           className="mt-2 w-full rounded border border-border bg-background px-2 py-1 text-xs" />}
         {bulkError && <p role="alert" className="mt-1 text-[11px] text-red-600">{bulkError}</p>}
+        {(hiddenByType > 0 || showDisabledTypes) && (
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {showDisabledTypes
+              ? "Showing comments of types turned off in this project. "
+              : `${hiddenByType} open ${hiddenByType === 1 ? "comment" : "comments"} of types turned off in this project hidden. `}
+            <button type="button" onClick={() => setShowDisabledTypes(value => !value)} className="underline hover:text-foreground">
+              {showDisabledTypes ? "Hide" : "Show"}
+            </button>
+          </p>
+        )}
         {exportResult && <p role={exportResult.error ? "alert" : "status"}
           className={cn("mt-1 break-all text-[11px]", exportResult.error ? "text-red-600" : "text-muted-foreground")}>
           {exportResult.message}
@@ -239,6 +282,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
             key={thread.id}
             thread={thread}
             reference={thread.meta.scope === "document" ? "Whole manuscript" : referenceText(thread.id)}
+            detached={thread.meta.scope !== "document" && threadStatus(thread) !== "resolved" && !positions.has(thread.id)}
             onSelect={() => editor.getExtension(CommentsExtension)?.selectThread(thread.id)}
             onAssign={(assignee) => setMeta(thread.id, {
               assignee, status: "open", statusNote: undefined,
@@ -263,14 +307,16 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   );
 }
 
-function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen, onMute, onDecideChange, coordinated }: {
+function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve, onReopen, onMute, onDecideChange, coordinated }: {
   thread: ThreadSnapshot;
   reference: string | null;
+  /** The commented text is no longer in the document, so there is nothing to highlight. */
+  detached?: boolean;
   onSelect: () => void;
   onAssign: (assignee: "ai" | "me") => void;
   onResolve: () => void;
   onReopen: () => void;
-  /** Disables this category project-wide without resolving or hiding existing comments. */
+  /** Disables this category project-wide; its open comments are hidden, not resolved. */
   onMute?: () => void;
   /** Accepts or rejects the AI's change set for this thread, when one is pending. */
   onDecideChange?: (accept: boolean) => void;
@@ -311,8 +357,12 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
             ` · ${thread.meta.assignee === "ai" ? SCHOLARPEN_AI.shortName : "you"}`}
         </span>
       </div>
-      {reference && (
+      {reference ? (
         <p className="mb-1 truncate border-l-2 border-amber-400/70 pl-2 text-[11px] text-muted-foreground">{reference}</p>
+      ) : detached && (
+        <p className="mb-1 border-l-2 border-border pl-2 text-[11px] italic text-muted-foreground">
+          The commented text is no longer in the document.
+        </p>
       )}
       <p className="line-clamp-3 text-xs leading-5 text-foreground">{first?.text || "(empty comment)"}</p>
       {replies > 0 && last && last !== first && (

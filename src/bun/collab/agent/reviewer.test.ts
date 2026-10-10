@@ -26,7 +26,7 @@ const { Reviewer } = await import("./reviewer");
 const { anchorThread, readDoc, findBlock, blockContent, writeBlock, threadRange } = await import("./doc-model");
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
-const { createThread, readThreads, updateThreadMeta, AI_USER_ID } = await import("../../../shared/collab/threads");
+const { addThreadComment, createThread, readThreads, updateThreadMeta, AI_USER_ID } = await import("../../../shared/collab/threads");
 const { REVIEW_MAP, PROJECT_REVIEW_SETTINGS_KEY, REVIEW_CATEGORIES } = await import("../../../shared/collab/review");
 
 const editor = getHeadlessEditor();
@@ -669,4 +669,104 @@ test("raising severity while the model is working filters the in-flight response
   reviewer.reviewSection(session.docKey, "p1");
   await idle();
   expect(threads(session).map(t => t.meta.severity)).toEqual(["high"]);
+});
+
+function authorReplace(session: CollabSession, blockId: string, text: string) {
+  const doc = readDoc(session);
+  const block = findBlock(doc, blockId)!;
+  const content = blockContent(block);
+  const state = EditorState.create({ schema: session.schema, doc });
+  writeBlock(session, state.tr.insertText(text, content.from, content.to).doc.nodeAt(block.pos)!, "editor");
+}
+
+test("claims on passages the author deleted or rewrote resolve after a grace period; small edits keep them", async () => {
+  const clock = { now: Date.now() };
+  const { session } = await setup(findings([
+    { paragraph: 1, quote: "prove that the treatment works in every patient", category: "overclaim", severity: "high", comment: "Too strong." },
+  ]), clock);
+  session.ydoc.getMap(REVIEW_MAP).set("projectCategories", { disabledCategories: ["citation"] });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  const [claim] = threads(session);
+  expect(claim.meta.anchorText).toBe("prove that the treatment works in every patient");
+
+  // A one-word tweak inside the claimed words leaves the claim open.
+  authorEdit(session, "p1");
+  const doc = readDoc(session);
+  const range = threadRange(doc, claim.id)!;
+  const state = EditorState.create({ schema: session.schema, doc });
+  const block = findBlock(doc, "p1")!;
+  writeBlock(session, state.tr.insertText("shows", range.from, range.from + "prove".length).doc.nodeAt(block.pos)!, "editor");
+  reviewer.tick();
+  clock.now += 60_000;
+  reviewer.tick();
+  expect(threads(session)[0].resolved).toBe(false);
+
+  // Rewriting the passage makes the claim stale, but only once it stays that way.
+  authorReplace(session, "p1", "Our findings suggest a modest benefit in some patients.");
+  reviewer.tick();
+  expect(threads(session)[0].resolved).toBe(false);
+  clock.now += 25_000;
+  reviewer.tick();
+  const resolved = threads(session)[0];
+  expect(resolved.resolved).toBe(true);
+  expect(resolved.meta.autoResolved).toBe("stale");
+  // The rewritten paragraph is not retired from future reviews.
+  expect(session.ydoc.getMap("resolvedReviewBlocks").has("p1")).toBe(false);
+
+  // A claim the author reopens stays open.
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  session.ydoc.transact(() => updateThreadMeta(map, claim.id, { status: "open" }), "editor");
+  clock.now += 60_000;
+  reviewer.tick();
+  reviewer.tick();
+  expect(threads(session)[0].resolved).toBe(false);
+});
+
+test("deleting a claimed passage resolves the claim after the grace period unless the author replied to it", async () => {
+  const clock = { now: Date.now() };
+  const { session } = await setup(findings([
+    { paragraph: 1, quote: "prove that the treatment works", category: "overclaim", severity: "high", comment: "Too strong." },
+    { paragraph: 1, quote: "in every patient", category: "generalisation", severity: "high", comment: "Every patient?" },
+  ]), clock);
+  session.ydoc.getMap(REVIEW_MAP).set("projectCategories", { disabledCategories: ["citation"] });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const discussed = threads(session).find(t => t.meta.category === "generalisation")!;
+  session.ydoc.transact(() => addThreadComment(map, discussed.id, "me", "I will handle this in the discussion."), "editor");
+
+  authorReplace(session, "p1", "Placeholder.");
+  expect(threadRange(readDoc(session), discussed.id)).toBeNull();
+  reviewer.tick();
+  clock.now += 10_000;
+  reviewer.tick();
+  expect(threads(session).every(t => !t.resolved)).toBe(true);
+  clock.now += 15_000;
+  reviewer.tick();
+  const byCategory = Object.fromEntries(threads(session).map(t => [t.meta.category, t.resolved]));
+  expect(byCategory).toEqual({ overclaim: true, generalisation: false });
+});
+
+test("stale claims wait while a coordinated revision is reading the comments", async () => {
+  const clock = { now: Date.now() };
+  const { session } = await setup(findings([
+    { paragraph: 1, quote: "prove that the treatment works", category: "overclaim", severity: "high", comment: "Too strong." },
+  ]), clock);
+  session.ydoc.getMap(REVIEW_MAP).set("projectCategories", { disabledCategories: ["citation"] });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const request = createThread(map, "me", "Address all comments.", { assignee: "ai", scope: "document", documentAction: "resolve-comments" });
+  authorReplace(session, "p1", "Placeholder.");
+  reviewer.tick();
+  clock.now += 60_000;
+  reviewer.tick();
+  expect(threads(session).find(t => t.meta.category === "overclaim")!.resolved).toBe(false);
+
+  session.ydoc.transact(() => updateThreadMeta(map, request, { status: "resolved" }));
+  reviewer.tick();
+  clock.now += 25_000;
+  reviewer.tick();
+  expect(threads(session).find(t => t.meta.category === "overclaim")!.resolved).toBe(true);
 });

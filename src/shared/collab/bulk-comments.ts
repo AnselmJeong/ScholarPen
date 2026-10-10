@@ -2,20 +2,23 @@ import type * as Y from "yjs";
 import { COLLAB_THREADS_MAP } from "./protocol";
 import { createThread, readThreads, updateThreadMeta, type ThreadSnapshot } from "./threads";
 
-export function openClaimThreads(threads: ThreadSnapshot[]) {
-  return threads.filter(thread => !thread.resolved && thread.meta.status !== "resolved" &&
+/** `include` limits bulk actions to the comments the author is looking at. */
+type ThreadFilter = (thread: ThreadSnapshot) => boolean;
+
+export function openClaimThreads(threads: ThreadSnapshot[], include: ThreadFilter = () => true) {
+  return threads.filter(thread => include(thread) && !thread.resolved && thread.meta.status !== "resolved" &&
     !thread.meta.documentAction && thread.comments.some(comment => !comment.deleted));
 }
 
 /** One request, rather than one independently queued edit per comment. */
-export function requestBulkComments(ydoc: Y.Doc, instructions = "") {
+export function requestBulkComments(ydoc: Y.Doc, instructions = "", include?: ThreadFilter) {
   const map = ydoc.getMap(COLLAB_THREADS_MAP);
   const all = readThreads(map);
   if (all.some(thread => !thread.resolved && (thread.meta.status === "in-progress" ||
     (thread.meta.documentAction === "resolve-comments" && thread.meta.assignee === "ai")))) {
     throw new Error("Wait for the current AI task to finish before asking for a coordinated revision.");
   }
-  const targets = openClaimThreads(all);
+  const targets = openClaimThreads(all, include);
   if (!targets.length) throw new Error("There are no open comments to address.");
   let id = "";
   ydoc.transact(() => {
@@ -32,9 +35,9 @@ export function requestBulkComments(ydoc: Y.Doc, instructions = "") {
 }
 
 /** Dismiss comments only; never accepts suggestions or changes manuscript text. */
-export function resolveAllComments(ydoc: Y.Doc) {
+export function resolveAllComments(ydoc: Y.Doc, include: ThreadFilter = () => true) {
   const map = ydoc.getMap(COLLAB_THREADS_MAP);
-  const targets = readThreads(map).filter(thread => !thread.resolved && thread.meta.status !== "resolved");
+  const targets = readThreads(map).filter(thread => include(thread) && !thread.resolved && thread.meta.status !== "resolved");
   ydoc.transact(() => {
     for (const thread of targets) updateThreadMeta(map, thread.id, {
       status: "resolved", assignee: "me", manual: true, bulkRequestId: undefined,

@@ -42,6 +42,10 @@ export interface ThreadMeta {
   editedBlockIds?: string[];
   /** User feedback: hide this kind of finding in future reviews. */
   muted?: boolean;
+  /** Text the review finding was anchored to, to notice when the author rewrote it. */
+  anchorText?: string;
+  /** Retired by ScholarPen rather than the author: "stale" when edits deleted or rewrote the passage. */
+  autoResolved?: "stale";
   /** Identity of a review finding, so a dismissed finding is not raised again. */
   fingerprint?: string;
   /** Set when the author hands the thread to the AI, so a repeated request is a new job. */

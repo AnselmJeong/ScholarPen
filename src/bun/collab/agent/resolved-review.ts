@@ -13,7 +13,8 @@ export function rememberResolvedReviewBlocks(session: CollabSession, origin: unk
   const resolved = ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
   let doc: ReturnType<typeof readDoc> | undefined;
   const ids = readThreads(ydoc.getMap(COLLAB_THREADS_MAP))
-    .filter(thread => (thread.resolved || thread.meta.status === "resolved") &&
+    // A claim retired because its passage was rewritten says nothing about the new text.
+    .filter(thread => (thread.resolved || thread.meta.status === "resolved") && !thread.meta.autoResolved &&
       (isAIUser(thread.meta.agent) || thread.comments.some(comment => isAIUser(comment.userId))))
     .flatMap(thread => {
       const ids = [...(thread.meta.editedBlockIds ?? []), ...(thread.meta.blockId ? [thread.meta.blockId] : [])];

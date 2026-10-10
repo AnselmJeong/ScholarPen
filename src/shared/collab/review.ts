@@ -79,6 +79,12 @@ export function reviewCategoryLabel(value: unknown): string {
   return REVIEW_CATEGORIES.find(category => category.id === id)?.label ?? "Review";
 }
 
+/** A review finding whose type the project turned off. Comments without a review type never are. */
+export function isDisabledReviewType(category: unknown, disabled: readonly ReviewCategory[]) {
+  const id = normalizeReviewCategory(category);
+  return id !== null && disabled.includes(id);
+}
+
 export function enabledReviewCategories(settings: ReviewSettings): ReviewCategory[] {
   return REVIEW_CATEGORIES.filter(category => !settings.muted.includes(category.id)).map(category => category.id);
 }

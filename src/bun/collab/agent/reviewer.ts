@@ -29,6 +29,7 @@ import {
 } from "./doc-model";
 import { clip } from "./prompts";
 import { RESOLVED_REVIEW_BLOCKS_MAP } from "./resolved-review";
+import { StaleClaimSweeper } from "./stale-claims";
 
 export interface ReviewerDeps {
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
@@ -232,9 +233,11 @@ export class Reviewer {
   private readonly timer: ReturnType<typeof setInterval> | null;
   private readonly lastAuto = new Map<string, number[]>();
   private lastDocument: string | null = null;
+  private readonly sweeper: StaleClaimSweeper;
 
   constructor(private readonly agent: CollabAgent, private readonly deps: ReviewerDeps) {
     this.now = deps.now ?? Date.now;
+    this.sweeper = new StaleClaimSweeper(this.now);
     this.timer = deps.tickMs === 0 ? null : setInterval(() => this.tick(), deps.tickMs ?? 10_000);
   }
 
@@ -260,6 +263,8 @@ export class Reviewer {
   /** Round-robin across documents and sections; no edit or cursor prerequisite. */
   tick() {
     const attachments = this.agent.attachmentList();
+    // Independent of automatic review: claims on passages the author rewrote no longer apply.
+    for (const { session } of attachments) this.sweeper.sweep(session, AI_META_ORIGIN);
     const docStart = attachments.findIndex((att) => att.session.docKey === this.lastDocument) + 1;
     for (let offset = 0; offset < attachments.length; offset++) {
       const attachment = attachments[(docStart + offset) % attachments.length];
@@ -408,6 +413,7 @@ export class Reviewer {
       const meta: ThreadMeta = {
         agent: SCHOLARPEN_AI.id, category: finding.category, severity: finding.severity,
         blockId: finding.blockId, assignee: "me", status: "open", fingerprint,
+        anchorText: readableText(doc, range.from, range.to),
       };
       session.ydoc.transact(() => {
         const threadId = createThread(threads, SCHOLARPEN_AI.userId, finding.comment, meta);
