@@ -206,7 +206,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
         </button>
         <div className="mt-2 flex items-center gap-2" role="group" aria-label="All open comments">
           <button type="button" onClick={askAll} disabled={!bulkTargets.length || bulkBusy}
-            title="Address AI and your comments together in one consistent manuscript revision"
+            title="Address AI and your comments together in one consistent manuscript revision. AI reads the project's other documents and cites from references.bib, adding verified new works to it first."
             className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
             <Bot className="h-3 w-3" /> Ask AI
           </button>

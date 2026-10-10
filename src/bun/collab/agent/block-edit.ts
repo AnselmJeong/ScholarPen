@@ -18,7 +18,8 @@ import {
   writeBlock,
   type BlockRef,
 } from "./doc-model";
-import { isMinorEdit, mergeText, type Hunk } from "./text-diff";
+import { isMinorEdit, mergeText } from "./text-diff";
+import { citationHunks, type CitationSpan } from "./citation-edits";
 
 import { readableHunks } from "../../../shared/collab/suggested-edits";
 export { nextSuggestionId } from "../../../shared/collab/suggested-edits";
@@ -95,6 +96,8 @@ export function applyBlockRewrite(
   origin: unknown,
   /** Suggestion id shared by every change of one AI request, so it is reviewed as one unit. */
   changeSetId?: number,
+  /** Citekeys in references.bib: new `[@key]` text with these keys becomes citation nodes. */
+  citekeys?: ReadonlySet<string>,
 ): EditOutcome {
   const preview = protectedRewritePreview(response, base.protection);
   if (!hasProtectedTextChanges(base.protection, response)) return { kind: "unchanged" };
@@ -129,22 +132,41 @@ export function applyBlockRewrite(
 
   const content = blockContent(block);
   const nodes = textNodes(content.node, content.from);
-  const hunksByNode = nodes.map((node, index) => readableHunks(node.text, targetTexts[index]));
+  const citation = session.schema.nodes.citation;
+  const known = (key: string) => !!citation && !!citekeys?.has(key);
+  const hunksByNode = nodes.map((node, index) => citekeys
+    ? citationHunks(node.text, targetTexts[index], known)
+    : readableHunks(node.text, targetTexts[index]).map((hunk) => ({ ...hunk, citations: [] as CitationSpan[] })));
   if (hunksByNode.every((hunks) => hunks.length === 0)) return { kind: "unchanged" };
 
-  const minor = hunksByNode.every((hunks, index) => hunks.length === 0 || isMinorEdit(nodes[index].text, hunks));
+  // A new citation is a substantive change, never a silent direct edit.
+  const minor = hunksByNode.every((hunks, index) => hunks.length === 0 ||
+    (isMinorEdit(nodes[index].text, hunks) && hunks.every((hunk) => !hunk.citations.length)));
   const effective: "suggest" | "direct" = mode === "auto" ? (minor ? "direct" : "suggest") : mode === "direct" ? "direct" : "suggest";
 
   const state = EditorState.create({ schema: session.schema, doc });
   let tr = state.tr;
   // Apply from the end so earlier positions stay valid.
   for (let index = nodes.length - 1; index >= 0; index--) {
-    const hunks: Hunk[] = hunksByNode[index];
+    const hunks = hunksByNode[index];
     for (let h = hunks.length - 1; h >= 0; h--) {
       const hunk = hunks[h];
       const from = nodes[index].pos + hunk.from;
       const to = nodes[index].pos + hunk.to;
-      if (hunk.insert) tr.insertText(hunk.insert, from, to);
+      if (hunk.citations.length) {
+        // One step, so a suggestion never shows the `[@key]` text as inserted and deleted again.
+        const $from = tr.doc.resolve(from);
+        const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
+        const parts: PMNode[] = [];
+        let cursor = 0;
+        for (const span of hunk.citations) {
+          if (span.from > cursor) parts.push(session.schema.text(hunk.insert.slice(cursor, span.from), marks));
+          parts.push(...span.items.map((item) => citation.create({ citekey: item.key, locator: item.locator })));
+          cursor = span.to;
+        }
+        if (cursor < hunk.insert.length) parts.push(session.schema.text(hunk.insert.slice(cursor), marks));
+        tr.replaceWith(from, to, parts);
+      } else if (hunk.insert) tr.insertText(hunk.insert, from, to);
       else tr.delete(from, to);
     }
   }

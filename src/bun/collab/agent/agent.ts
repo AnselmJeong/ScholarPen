@@ -52,6 +52,7 @@ import { asksForAIScore, formatAIDetectionReport, type AIDetectionReport } from 
 import { analyzeAIText } from "../../ai-detector/service";
 import { resolveMentionedFiles, type MentionedFileContext } from "../../agent/mention-resolver";
 import { runBulkComments } from "./bulk-comments";
+import { projectBulkSources, type BulkSources } from "./bulk-sources";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
@@ -72,6 +73,8 @@ export interface CollabAgentDeps {
   pollMs?: number;
   /** Per-model-call deadline, not a limit on processing the whole manuscript. */
   completionTimeoutMs?: number;
+  /** The project around a document for coordinated revisions; defaults to its files on disk. */
+  bulkSources?: (session: CollabSession) => BulkSources | Promise<BulkSources>;
   /** Decides suggestion vs direct edits for a block (zones refine this in stage 5). */
   editModeFor?: (session: CollabSession, blockId: string) => EditMode;
 }
@@ -383,6 +386,7 @@ export class CollabAgent {
           this.deps.completeBulk ?? this.deps.complete, messages, callSignal, this.deps.completionTimeoutMs ?? 180_000),
         modeFor: blockId => this.modeFor(attachment, blockId),
         progress: detail => this.update(job, { detail }),
+        sources: await (this.deps.bulkSources ?? projectBulkSources)(session),
       }, signal);
     }
     const latestRequest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
