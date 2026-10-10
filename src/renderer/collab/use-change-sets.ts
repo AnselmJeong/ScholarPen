@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../shared/collab/change-sets";
 import { COLLAB_THREADS_MAP } from "../../shared/collab/protocol";
-import { updateThreadMeta } from "../../shared/collab/threads";
+import { readThreads, updateThreadMeta } from "../../shared/collab/threads";
 import { getEditorCollab } from "./editor-collab";
 import { listChangeSets, resolveAllChangeSets, resolveChangeSet, type PendingChangeSet } from "./suggestions";
 
@@ -57,12 +57,21 @@ function settleThreads(editor: BlockNoteEditor<any, any, any>, ids: Array<string
   const threads = collab.ydoc.getMap(COLLAB_THREADS_MAP);
   collab.ydoc.transact(() => {
     for (const id of ids) {
-      if (stillPending.has(String(id))) continue;
       const info = infos.get(String(id));
-      if (info?.threadId) {
-        updateThreadMeta(threads, info.threadId, accept
-          ? { status: "resolved", statusNote: undefined }
-          : { status: "open", assignee: "me", statusNote: "You rejected the AI's change." });
+      if (stillPending.has(String(id))) {
+        if (!accept && info) infos.set(String(id), { ...info, rejected: true });
+        continue;
+      }
+      const acceptedEntirely = accept && !info?.rejected;
+      for (const threadId of new Set([info?.threadId, ...(info?.addressedThreadIds ?? [])])) {
+        if (!threadId) continue;
+        const thread = readThreads(threads).find(item => item.id === threadId);
+        // Do not undo Resolve all or overwrite a newer request's state.
+        if (!thread || thread.resolved || (thread.meta.changeSet !== undefined && String(thread.meta.changeSet) !== String(id))) continue;
+        updateThreadMeta(threads, threadId, acceptedEntirely
+          ? { status: "resolved", statusNote: undefined, changeSet: undefined }
+          : { status: "open", assignee: "me", manual: true, changeSet: undefined,
+            statusNote: "The revision was not accepted in full. This comment remains open." });
       }
       infos.delete(String(id));
     }

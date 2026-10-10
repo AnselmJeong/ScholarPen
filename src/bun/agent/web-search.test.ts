@@ -44,7 +44,6 @@ const settings = {
   ollamaDefaultModel: "qwen3.5:397b",
   tinyfishApiKey: "tinyfish-key",
   webSearchEnabled: true,
-  anthropicApiKey: "",
   anthropicDefaultModel: "claude-sonnet-4-5",
   deepseekApiKey: "",
   deepseekBaseUrl: "https://api.deepseek.com",
@@ -54,6 +53,7 @@ const settings = {
   openaiDefaultModel: "gpt-5.2",
   openAlexApiKey: "",
   ncbiApiKey: "",
+  paperclipApiKey: "",
   theme: "system",
 } satisfies AppSettings;
 

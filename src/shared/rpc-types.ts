@@ -272,6 +272,10 @@ export interface AgentStreamParams {
   };
   citationContext?: {
     selectedText: string;
+    beforeSelection?: string;
+    afterSelection?: string;
+    /** User-edited claims for an explicit retry; skips claim generation. */
+    claims?: string[];
   };
 }
 
@@ -316,7 +320,6 @@ export interface AppSettings {
   ollamaDefaultModel: string;
   tinyfishApiKey: string;
   webSearchEnabled: boolean;
-  anthropicApiKey: string;
   anthropicDefaultModel: string;
   deepseekApiKey: string;
   deepseekBaseUrl: string;
@@ -326,6 +329,7 @@ export interface AppSettings {
   openaiDefaultModel: string;
   openAlexApiKey: string;
   ncbiApiKey: string;
+  paperclipApiKey: string;
   /** @deprecated Migrated to sidebarAgentProvider. */
   aiBackend?: "ollama" | "claude";
   /** @deprecated Migrated to anthropicDefaultModel/sidebarAgentModel. */

@@ -11,5 +11,9 @@ export interface ChangeSetInfo {
   label: string;
   persona: string;
   threadId?: string;
+  /** Comments addressed together; close only after the entire revision is accepted. */
+  addressedThreadIds?: string[];
+  /** A partial rejection means the coordinated solution was not accepted in full. */
+  rejected?: boolean;
   createdAt: number;
 }

@@ -129,6 +129,17 @@ class CitationClient {
     ]);
     const settled = await Promise.allSettled(tasks);
     const candidates = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+    const scores = new Map<string, number>();
+    for (const result of settled) {
+      if (result.status !== "fulfilled") continue;
+      const seen = new Set<string>();
+      result.value.forEach((candidate, rank) => {
+        const key = normalizeDOI(candidate.doi).toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        scores.set(key, (scores.get(key) ?? 0) + 1 / (60 + rank + 1));
+      });
+    }
     const byDOI = new Map<string, SupportingCitation>();
 
     for (const candidate of candidates) {
@@ -146,7 +157,9 @@ class CitationClient {
       }
     }
 
-    return Array.from(byDOI.values()).slice(0, Math.max(1, Math.min(20, limit)));
+    return Array.from(byDOI.values())
+      .sort((a, b) => (scores.get(b.doi.toLowerCase()) ?? 0) - (scores.get(a.doi.toLowerCase()) ?? 0))
+      .slice(0, Math.max(1, Math.min(20, limit)));
   }
 
   private async searchOpenAlexSupporting(

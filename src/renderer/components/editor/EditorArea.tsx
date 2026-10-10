@@ -27,6 +27,7 @@ import {
 import { CommentsExtension } from "@blocknote/core/comments";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
 import { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
+import { CommentFileMentionsProvider } from "../../collab/comment-file-mentions";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
@@ -787,8 +788,10 @@ function CollabEditorArea({
             comments={false}
           >
             <EditorSideMenu onOpenProperties={setPropertiesBlockId} />
-            <ScholarFloatingComposerController />
-            <FloatingThreadController floatingThread={ScholarFloatingThread} />
+            <CommentFileMentionsProvider key={project.path} projectPath={project.path}>
+              <ScholarFloatingComposerController />
+              <FloatingThreadController floatingThread={ScholarFloatingThread} />
+            </CommentFileMentionsProvider>
             <AIMenuController />
             <SuggestionMenuController
               triggerCharacter="$"
@@ -951,7 +954,7 @@ function CollabEditorArea({
           }}
           onFindCitation={(snapshot) => {
             releaseAISelection(editor.prosemirrorView, snapshot.protection);
-            onFindCitation(createFindCitationRequest(snapshot.selectedText));
+            onFindCitation(createFindCitationRequest(snapshot.selectedText, snapshot.documentContext));
             setAiEditSnapshot(null);
           }}
           onClose={() => {

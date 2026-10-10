@@ -7,6 +7,7 @@ import {
   agentStreamTimeoutMessage,
 } from "@shared/agent-stream-timeout";
 import { onAgentChunk, rpc } from "../rpc";
+import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult } from "@shared/citation-evidence";
 
 const HISTORY_MESSAGE_LIMIT = 4_000;
 const HISTORY_TOTAL_LIMIT = 16_000;
@@ -40,7 +41,9 @@ function compactHistory(messages: readonly ThreadMessage[]): AgentStreamParams["
 
   for (const message of messages.slice(0, -1).reverse()) {
     if (message.role !== "user" && message.role !== "assistant") continue;
-    const content = trimHistoryText(textFromMessage(message));
+    const text = textFromMessage(message);
+    const citationResult = parseCitationSearchResult(text);
+    const content = trimHistoryText(citationResult ? citationResultText(citationResult) : text);
     const images = imagesFromMessage(message);
     if (!content && !images.length) continue;
     if (message.role === "assistant" && content.startsWith("❌")) continue;
@@ -122,7 +125,7 @@ export function createScholarAgentAdapter(
         while (!done || visible.length < received.length) {
           if (visible.length < received.length) {
             const remaining = received.length - visible.length;
-            const step = Math.min(
+            const step = received.includes(CITATION_RESULT_MARKER) ? remaining : Math.min(
               remaining,
               remaining > 800 ? STREAM_CHARS_PER_FLUSH * 4 : STREAM_CHARS_PER_FLUSH,
             );

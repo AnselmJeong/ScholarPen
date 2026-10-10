@@ -79,14 +79,12 @@ test("image-only input works; ordinary text retains the text-only API shape", as
   for await (const _ of streamAgentModel({ provider: "ollama", model: params.model, messages: plain.messages }, settings)) { /* drain */ }
 });
 
-test("Claude receives image source blocks and OpenAI receives image_url blocks", async () => {
-  for (const provider of ["anthropic", "openai"] as const) {
+test("OpenAI receives image_url blocks", async () => {
+  for (const provider of ["openai"] as const) {
     globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body));
       const part = payload.messages[0].content[1];
-      expect(part).toEqual(provider === "anthropic"
-        ? { type: "image", source: { type: "base64", media_type: "image/png", data: image.dataUrl.split(",")[1] } }
-        : { type: "image_url", image_url: { url: image.dataUrl } });
+      expect(part).toEqual({ type: "image_url", image_url: { url: image.dataUrl } });
       return new Response("data: [DONE]\n\n");
     }) as typeof fetch;
     for await (const _ of streamAgentModel({ provider, model: "vision", messages: [{ role: "user", content: "Describe", images: [image] }] }, settings)) { /* drain */ }

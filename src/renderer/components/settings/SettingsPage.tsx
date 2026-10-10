@@ -1,3 +1,4 @@
+import { ClaudeConnection } from "./ClaudeConnection";
 import React, { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, Folder, Bot, BookOpen, RefreshCw, Sun } from "lucide-react";
 import { applyTheme } from "../../main";
@@ -27,14 +28,13 @@ interface SettingsPageProps {
 
 const PROVIDERS: Array<{ value: LLMProvider; label: string }> = [
   { value: "ollama", label: "Ollama" },
-  { value: "anthropic", label: "Claude" },
+  { value: "anthropic", label: "Claude 구독" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "openai", label: "OpenAI" },
   { value: "codex", label: "Codex" },
 ];
 
-const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama" | "codex">, string[]> = {
-  anthropic: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama" | "codex" | "anthropic">, string[]> = {
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
   openai: ["gpt-5.2", "gpt-5.1", "gpt-4.1"],
 };
@@ -42,6 +42,7 @@ const MODEL_PRESETS: Record<Exclude<LLMProvider, "ollama" | "codex">, string[]> 
 const DEFAULT_PROVIDER_MODELS: Record<LLMProvider, string[]> = {
   ollama: [],
   codex: [],
+  anthropic: [],
   ...MODEL_PRESETS,
 };
 
@@ -182,7 +183,6 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
     const provider = settings.sidebarAgentProvider ?? "ollama";
     const hasCredentials =
       (provider === "ollama" && settings.ollamaApiKey.trim()) ||
-      (provider === "anthropic" && settings.anthropicApiKey.trim()) ||
       (provider === "deepseek" && settings.deepseekApiKey.trim()) ||
       (provider === "openai" && settings.openaiApiKey.trim());
     if (hasCredentials) fetchProviderModels(provider, settings);
@@ -296,6 +296,8 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
             {provider === "codex" && <CodexConnection model={settings.sidebarAgentModel} onModelChange={updateProviderModel} />}
 
+            {provider === "anthropic" && <ClaudeConnection model={settings.sidebarAgentModel} onModelChange={updateProviderModel} />}
+
             {/* Ollama model */}
             {provider === "ollama" && (
               <>
@@ -332,7 +334,7 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
               </>
             )}
 
-            {provider !== "ollama" && provider !== "codex" && (
+            {(provider === "deepseek" || provider === "openai") && (
               <>
                 <SettingRow
                   label={`${PROVIDERS.find((p) => p.value === provider)?.label} API Key`}
@@ -341,14 +343,11 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                   <Input
                     type="password"
                     value={
-                      provider === "anthropic"
-                        ? settings.anthropicApiKey
-                        : provider === "deepseek"
+                      provider === "deepseek"
                           ? settings.deepseekApiKey
                           : settings.openaiApiKey
                     }
                     onChange={(e) => {
-                      if (provider === "anthropic") updateSetting("anthropicApiKey", e.target.value);
                       if (provider === "deepseek") updateSetting("deepseekApiKey", e.target.value);
                       if (provider === "openai") updateSetting("openaiApiKey", e.target.value);
                     }}
@@ -357,7 +356,6 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                   />
                 </SettingRow>
 
-                {provider !== "anthropic" && (
                   <SettingRow label="Base URL" description="OpenAI-compatible endpoint">
                     <Input
                       value={provider === "deepseek" ? settings.deepseekBaseUrl : settings.openaiBaseUrl}
@@ -380,7 +378,6 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
                       className="font-mono text-xs"
                     />
                   </SettingRow>
-                )}
 
                 <SettingRow label="Sidebar Agent Model" description="Provider API에서 모델 목록을 불러옵니다">
                   <ProviderModelPicker
@@ -516,6 +513,34 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
 
           {/* Citations */}
           <SettingSection icon={BookOpen} title="Citations">
+            <SettingRow
+              label="Paperclip API Key"
+              description="Find Citation에서 선택문을 AI가 영어 주장으로 정리한 뒤, 지지·반박 근거를 검색합니다. 키가 없거나 검색에 실패하면 기존 문헌 검색을 사용합니다."
+            >
+              <div className="space-y-1.5">
+                <Input
+                  aria-label="Paperclip API Key"
+                  type="password"
+                  value={settings.paperclipApiKey ?? ""}
+                  onChange={(e) => updateSetting("paperclipApiKey", e.target.value)}
+                  placeholder="Enter Paperclip API key…"
+                  className="font-mono text-xs"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="text-[11px] text-primary underline underline-offset-2 hover:text-primary/80"
+                  onClick={() => rpc.openExternal("https://paperclip.gxl.ai/keys")}
+                >
+                  Paperclip API key 만들기
+                </button>
+                <p className="text-[11px] text-muted-foreground">
+                  정리된 주장만 Paperclip에 전송합니다. 공개 결과 링크는 생성하지 않습니다.
+                </p>
+              </div>
+            </SettingRow>
+
             <SettingRow
               label="OpenAlex API Key"
               description="Semantic literature search와 citation discovery에 사용됩니다"

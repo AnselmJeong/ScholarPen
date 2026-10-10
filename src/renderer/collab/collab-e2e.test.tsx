@@ -32,6 +32,7 @@ const jsonFiles = new Map<string, unknown>([["/p/agent.scholarpen.json", [
 ]]]);
 
 const updateListeners = new Set<(message: CollabUpdateMessage) => void>();
+const commentExports: Array<{ projectPath: string; filename: string; content: string }> = [];
 const awarenessListeners = new Set<(message: CollabUpdateMessage) => void>();
 const { CollabRegistry } = await import("../../bun/collab/registry");
 const registry = new CollabRegistry({
@@ -55,6 +56,10 @@ mock.module("../rpc", () => ({
     collabAwareness: async (docKey: string, peerId: string, update: string) => registry.pushAwareness(docKey, peerId, update),
     collabClose: (docKey: string, peerId: string) => registry.close(docKey, peerId),
     loadDocument: async (projectPath: string, filename: string) => jsonFiles.get(`${projectPath}/${filename}`) ?? [],
+    exportFile: async (projectPath: string, filename: string, content: string) => {
+      commentExports.push({ projectPath, filename, content });
+      return `${projectPath}/exports/${filename}`;
+    },
   },
   onCollabUpdate: (listener: (message: CollabUpdateMessage) => void) => {
     updateListeners.add(listener);
@@ -138,6 +143,9 @@ test("independent slash actions target the current document despite a partial se
     complete: async () => { throw new Error("Watermark cleanup must not call the model"); },
     onActivity: () => {}, pollMs: 5,
   });
+  const resultHost = document.createElement("div");
+  document.body.append(resultHost);
+  const resultRoot = createRoot(resultHost);
   try {
   const items = getScholarSlashMenuItems(a.editor, () => {}, () => {},
     () => requestHumanizeManuscript(a.editor), () => requestRemoveWatermarkManuscript(a.editor), () => requestAIScoreManuscript(a.editor));
@@ -157,6 +165,32 @@ test("independent slash actions target the current document despite a partial se
   expect(texts(b.editor).filter(Boolean)).toEqual(["Other\u200B document."]);
   expect(a.editor.getBlock("last")!.content).toContainEqual({ type: "text", text: "Last passage ", styles: { bold: true } });
   expect(readThreads(a.peer.ydoc.getMap("threads"))[0].meta).toMatchObject({ scope: "document", documentAction: "remove-watermark" });
+  expect(readThreads(a.peer.ydoc.getMap("threads"))[0].meta.watermarkResult).toMatchObject({ removed: 3, replaced: 2, skipped: 1 });
+  await act(async () => { resultRoot.render(<ActivityPanel editor={a.editor} documentName="watermark.scholarpen.json" projectPath="/p" />); });
+  await settle();
+  expect(resultHost.querySelector('[aria-label="Remove watermark result"]')?.textContent).toContain("숨은 문자 3개 제거 · 특수 공백 2개 정리");
+  // The in-memory activity RPC is empty: a resolved cleanup still has a visible,
+  // durable result, independent of the default Open comment filter.
+  expect(resultHost.textContent).toContain("1개 블록 제외");
+  const cleaned = texts(a.editor);
+  await act(async () => { requestRemoveWatermarkManuscript(a.editor); });
+  for (let i = 0; i < 100; i++) {
+    await settle();
+    if (readThreads(a.peer.ydoc.getMap("threads")).filter(thread => thread.resolved).length === 2) break;
+  }
+  expect(texts(a.editor)).toEqual(cleaned);
+  expect(resultHost.querySelector('[aria-label="Remove watermark result"]')?.textContent).toContain("검사한 텍스트에서 정리할 문자가 없었습니다");
+  await act(async () => { resultRoot.render(<></>); });
+  await act(async () => { resultRoot.render(<ActivityPanel editor={a.editor} documentName="watermark.scholarpen.json" projectPath="/p" />); });
+  await settle();
+  expect(resultHost.querySelector('[aria-label="Remove watermark result"]')).not.toBeNull();
+  await act(async () => { resultHost.querySelector<HTMLButtonElement>('[aria-label="워터마크 정리 결과 닫기"]')!.click(); });
+  await settle();
+  expect(resultHost.querySelector('[aria-label="Remove watermark result"]')).toBeNull();
+  await act(async () => { resultRoot.render(<></>); });
+  await act(async () => { resultRoot.render(<ActivityPanel editor={a.editor} documentName="watermark.scholarpen.json" projectPath="/p" />); });
+  await settle();
+  expect(resultHost.querySelector('[aria-label="Remove watermark result"]')).toBeNull();
   await act(async () => { expect(agent.undoLast(a.peer.docKey)).toBe(true); });
   await settle();
   expect(texts(a.editor).filter(Boolean)).toEqual(original.filter(Boolean));
@@ -179,6 +213,8 @@ test("independent slash actions target the current document despite a partial se
   expect(view.state.doc.textContent).toBe(a.editor.prosemirrorState.doc.textContent);
   } finally {
   agent.dispose();
+  await act(async () => resultRoot.unmount());
+  resultHost.remove();
   await act(async () => { a.root.unmount(); b.root.unmount(); });
   a.peer.destroy(); b.peer.destroy();
   await settle();
@@ -251,14 +287,25 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
   const panel = document.createElement("div");
   document.body.append(panel);
   const panelRoot = createRoot(panel);
-  await act(async () => { panelRoot.render(<ActivityPanel editor={b.editor} documentName="doc.scholarpen.json" />); });
+  await act(async () => { panelRoot.render(<ActivityPanel editor={b.editor} documentName="doc.scholarpen.json" projectPath="/p" />); });
   expect(panel.textContent).toContain("@AI make this sentence shorter");
   expect(panel.textContent).toContain("Rewritten");
+  // Export reads live shared state and does not resolve the comments.
+  const exportButton = [...panel.querySelectorAll("button")].find(button => button.textContent?.includes("Export unresolved"))!;
+  await act(async () => { exportButton.click(); });
+  await settle();
+  expect(commentExports.at(-1)?.projectPath).toBe("/p");
+  expect(commentExports.at(-1)?.filename).toMatch(/^doc-unresolved-comments-.*\.md$/);
+  expect(commentExports.at(-1)?.content).toContain("@AI make this sentence shorter");
+  expect(commentExports.at(-1)?.content).toContain("Rewritten");
+  expect(readThreads(a.peer.ydoc.getMap("threads"))[0].resolved).toBe(false);
+  expect(panel.querySelector('[role="status"]')?.textContent).toContain("1개 코멘트 저장됨");
   const resolve = [...panel.querySelectorAll("button")].find((button) => button.textContent?.includes("Resolve"))!;
   await act(async () => { resolve.click(); });
   await settle();
   expect(readThreads(a.peer.ydoc.getMap("threads"))[0]).toMatchObject({ resolved: true, meta: { status: "resolved" } });
   expect(panel.textContent).toContain("No open threads");
+  expect(exportButton.disabled).toBe(true);
   await act(async () => { panelRoot.unmount(); });
 
   await act(async () => { a.root.unmount(); b.root.unmount(); });
@@ -400,3 +447,93 @@ test("selection suggestions sync metadata and support per-paragraph Accept/Rejec
     await settle();
   }
 });
+
+for (const accept of [true, false]) {
+  test(`bulk comment buttons coordinate both authors and ${accept ? "accept" : "reject"} the whole revision`, async () => {
+    const { CollabAgent } = await import("../../bun/collab/agent/agent");
+    const { createThread, updateThreadMeta, AI_USER_ID } = await import("../../shared/collab/threads");
+    const { listChangeSets } = await import("./suggestions");
+    const filename = `bulk-${accept}.scholarpen.json`;
+    jsonFiles.set(`/p/${filename}`, [
+      { id: "first", type: "paragraph", content: "The data prove our hypothesis." },
+      { id: "last", type: "paragraph", content: "The findings prove our hypothesis." },
+    ]);
+    const a = await mountPeer("A", filename);
+    await settle();
+    let calls = 0;
+    const agent = new CollabAgent(registry, {
+      onActivity: () => {},
+      complete: async messages => {
+        calls++;
+        const payload = JSON.parse(String(messages[1].content));
+        if (payload.candidateManuscript) return JSON.stringify({ consistent: true, outcomes: payload.proposedOutcomes });
+        expect(payload.authorInstructions).toEqual(["Keep my terminology."]);
+        expect(payload.comments.filter((comment: { target: boolean }) => comment.target)).toHaveLength(3);
+        return JSON.stringify({ summary: "Qualify both ends of the document.",
+          edits: payload.editable_segments.filter((segment: { text: string }) => segment.text.includes("prove")).map((segment: { id: string; text: string }) => ({ id: segment.id, text: segment.text.replace("prove", "suggest") })),
+          outcomes: payload.comments.filter((comment: { target: boolean }) => comment.target).map((comment: { id: string; comments: Array<{ text: string }> }) => ({
+            threadId: comment.id, status: comment.comments[0].text.includes("Choose") ? "needs-user" : "addressed",
+            reason: "Checked against the whole manuscript.", blockIds: comment.comments[0].text.includes("Choose") ? [] : ["first", "last"],
+          })),
+        });
+      },
+    });
+    const panel = document.createElement("div"); document.body.append(panel);
+    const panelRoot = createRoot(panel);
+    const map = a.peer.ydoc.getMap("threads");
+    let ai = "", human = "", decision = "";
+    try {
+      await act(async () => {
+        ai = createThread(map, AI_USER_ID, "Qualify the introduction.", { assignee: "me", blockId: "first" });
+        human = createThread(map, "me", "Keep the conclusion consistent.", { manual: true, blockId: "last" });
+        decision = createThread(map, "me", "Choose a primary endpoint.", { manual: true, blockId: "last" });
+        panelRoot.render(<ActivityPanel editor={a.editor} documentName={filename} projectPath="/p" />);
+      });
+      await settle();
+      const group = panel.querySelector('[aria-label="All open comments"]')!;
+      const exportButton = Array.from(panel.querySelectorAll("button")).find(button => button.textContent?.includes("Export unresolved"))!;
+      expect(exportButton.nextElementSibling).toBe(group);
+      // The AI filter must not exclude author comments from the bulk action.
+      await act(async () => { Array.from(panel.querySelectorAll("button")).find(button => button.textContent === "AI 1")!.click(); });
+      const input = panel.querySelector<HTMLInputElement>('[aria-label="Instructions for all comments"]')!;
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")!.set!;
+        setter.call(input, "Keep my terminology.");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => { Array.from(group.querySelectorAll("button")).find(button => button.textContent?.includes("Ask AI"))!.click(); });
+      for (let i = 0; i < 100 && !listChangeSets(a.editor.prosemirrorState.doc).length; i++) {
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+      }
+      await settle();
+      expect(agent.jobs(a.peer.docKey).find(job => job.state === "failed")?.detail).toBeUndefined();
+      expect(calls).toBe(2);
+      expect(listChangeSets(a.editor.prosemirrorState.doc)).toHaveLength(1);
+      expect(readThreads(map).find(thread => thread.id === human)?.meta.status).toBe("proposed");
+      const label = accept ? "Accept coordinated revision" : "Reject coordinated revision";
+      const decisionButton = Array.from(panel.querySelectorAll("button")).find(button => button.textContent?.includes(label));
+      expect(decisionButton).toBeDefined();
+      await act(async () => { decisionButton!.click(); });
+      await settle();
+      expect(listChangeSets(a.editor.prosemirrorState.doc)).toHaveLength(0);
+      expect(readThreads(map).find(thread => thread.id === ai)?.resolved).toBe(accept);
+      expect(readThreads(map).find(thread => thread.id === human)?.resolved).toBe(accept);
+      expect(readThreads(map).find(thread => thread.id === decision)?.resolved).toBe(false);
+      expect(texts(a.editor).filter(Boolean)).toEqual(accept
+        ? ["The data suggest our hypothesis.", "The findings suggest our hypothesis."]
+        : ["The data prove our hypothesis.", "The findings prove our hypothesis."]);
+      const beforeDismiss = a.editor.prosemirrorState.doc.toJSON();
+      await act(async () => { Array.from(group.querySelectorAll("button")).find(button => button.textContent?.includes("Resolve all"))!.click(); });
+      await settle();
+      expect(readThreads(map).every(thread => thread.resolved)).toBe(true);
+      expect(a.editor.prosemirrorState.doc.toJSON()).toEqual(beforeDismiss);
+      // Dismissal is reversible through the ordinary per-thread action.
+      await act(async () => { updateThreadMeta(map, decision, { status: "open" }); });
+      expect(readThreads(map).find(thread => thread.id === decision)?.resolved).toBe(false);
+    } finally {
+      agent.dispose();
+      await act(async () => { panelRoot.unmount(); a.root.unmount(); });
+      panel.remove(); a.peer.destroy(); await settle();
+    }
+  });
+}

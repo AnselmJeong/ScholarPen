@@ -1,3 +1,4 @@
+import { useClaudeStatus } from "../../hooks/useClaudeStatus";
 import React from "react";
 import type { LLMProvider, OllamaStatus } from "../../../shared/rpc-types";
 import { useCodexStatus } from "../../hooks/useCodexStatus";
@@ -15,23 +16,26 @@ interface StatusBarProps {
 
 export function StatusBar({ ollamaStatus, sidebarAgentProvider = "ollama", sidebarAgentModel, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
   const codexStatus = useCodexStatus(sidebarAgentProvider === "codex");
-  const labels: Record<LLMProvider, string> = { ollama: "Ollama", anthropic: "Claude", deepseek: "DeepSeek", openai: "OpenAI", codex: "Codex (ChatGPT)" };
+  const { status: claudeStatus } = useClaudeStatus(sidebarAgentProvider === "anthropic");
+  const subscriptionStatus = sidebarAgentProvider === "codex" ? codexStatus : sidebarAgentProvider === "anthropic" ? claudeStatus : null;
+  const isSubscription = sidebarAgentProvider === "codex" || sidebarAgentProvider === "anthropic";
+  const labels: Record<LLMProvider, string> = { ollama: "Ollama", anthropic: "Claude (구독)", deepseek: "DeepSeek", openai: "OpenAI", codex: "Codex (ChatGPT)" };
   const label = labels[sidebarAgentProvider];
-  const connected = sidebarAgentProvider === "codex" ? codexStatus?.state === "connected"
+  const connected = isSubscription ? subscriptionStatus?.state === "connected"
     : sidebarAgentProvider === "ollama" ? ollamaStatus.connected : true;
-  const checking = sidebarAgentProvider === "codex" && (!codexStatus || codexStatus.state === "signingIn");
-  const connectionLabel = sidebarAgentProvider === "codex"
-    ? !codexStatus ? "checking…" : codexStatus.state === "signingIn" ? "signing in…"
-      : codexStatus.state === "unavailable" ? "unavailable" : codexStatus.state === "error" ? "error"
+  const checking = isSubscription && (!subscriptionStatus || subscriptionStatus.state === "signingIn");
+  const connectionLabel = isSubscription
+    ? !subscriptionStatus ? "checking…" : subscriptionStatus.state === "signingIn" ? "signing in…"
+      : subscriptionStatus.state === "unavailable" ? "unavailable" : subscriptionStatus.state === "error" ? "error"
       : connected ? "connected" : "disconnected"
     : connected ? "connected" : "disconnected";
-  const modelLabel = sidebarAgentModel || (sidebarAgentProvider === "ollama" ? ollamaStatus.activeModel : sidebarAgentProvider === "codex" ? "Codex default" : null);
+  const modelLabel = sidebarAgentModel || (sidebarAgentProvider === "ollama" ? ollamaStatus.activeModel : sidebarAgentProvider === "codex" ? "Codex default" : sidebarAgentProvider === "anthropic" ? "구독 기본 모델" : null);
 
   return (
     <div className="flex items-center justify-between px-4 py-1 bg-gray-800 text-gray-300 text-xs border-t border-gray-700 select-none">
       <div className="flex items-center gap-4">
         {/* AI backend status */}
-        <div className="flex items-center gap-1.5" title={sidebarAgentProvider === "codex" ? codexStatus?.error : undefined}>
+        <div className="flex items-center gap-1.5" title={subscriptionStatus?.error}>
           <span
             className={`w-2 h-2 rounded-full ${
               checking ? "bg-yellow-400" : connected ? "bg-green-400" : "bg-red-400"

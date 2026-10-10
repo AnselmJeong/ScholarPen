@@ -808,6 +808,7 @@ export function App() {
                 return null;
               });
               setPendingFindCitationRequest(request);
+              setRightPanelTab("assistant");
               setAiSidebarOpen(true);
             }}
           />
@@ -843,6 +844,8 @@ export function App() {
               <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "activity" ? "flex" : "none" }}>
                 <ActivityPanel
                   editor={activeEditor}
+                  projectPath={activeProject?.path}
+                  onExported={refreshFileTree}
                   documentName={activeFile?.kind === "document" ? activeFile.name : null}
                 />
               </div>

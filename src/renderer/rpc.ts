@@ -1,3 +1,4 @@
+import type { ClaudeStatus } from "../shared/claude";
 import type { ReviewCategory, ProjectReviewSettings } from "../shared/collab/review";
 import type { CodexStatus } from "../shared/codex";
 import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "../shared/project-memory";
@@ -46,6 +47,7 @@ type CollabMessageHandler = (message: CollabUpdateMessage) => void;
 
 const strictRpcMethods = new Set([
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
+  "getClaudeStatus", "loginClaude", "cancelClaudeLogin", "logoutClaude",
   "getCodexStatus", "loginCodex", "cancelCodexLogin", "logoutCodex", "listProviderModels",
   "selectFigure",
   "readFigure",
@@ -290,18 +292,20 @@ function mockRpc(method: string, _args: unknown[]): unknown {
       ollamaApiKey: "",
       ollamaDefaultModel: "qwen3.5:397b",
       tinyfishApiKey: "",
+      openAlexApiKey: "",
+      ncbiApiKey: "",
+      paperclipApiKey: "",
       webSearchEnabled: true,
       sidebarAgentProvider: "ollama",
       sidebarAgentModel: "qwen3.5:397b",
       modelProviders: {
         codex: { provider: "codex", model: "", enabled: true },
         ollama: { provider: "ollama", model: "qwen3.5:397b", baseUrl: DEFAULT_OLLAMA_BASE_URL, enabled: true },
-        anthropic: { provider: "anthropic", model: "claude-sonnet-4-5", enabled: false },
+        anthropic: { provider: "anthropic", model: "sonnet", enabled: true },
         deepseek: { provider: "deepseek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com", enabled: false },
         openai: { provider: "openai", model: "gpt-5.2", baseUrl: "https://api.openai.com/v1", enabled: false },
       },
-      anthropicApiKey: "",
-      anthropicDefaultModel: "claude-sonnet-4-5",
+      anthropicDefaultModel: "sonnet",
       deepseekApiKey: "",
       deepseekBaseUrl: "https://api.deepseek.com",
       deepseekDefaultModel: "deepseek-chat",
@@ -450,6 +454,10 @@ export const rpc = {
   getOllamaModels: () => call<string[]>("getOllamaModels"),
   listProviderModels: (provider: AppSettings["sidebarAgentProvider"], settings?: AppSettingsUpdate) =>
     call<string[]>("listProviderModels", { provider, settings }),
+  getClaudeStatus: () => call<ClaudeStatus>("getClaudeStatus"),
+  loginClaude: () => call<void>("loginClaude"),
+  cancelClaudeLogin: () => call<void>("cancelClaudeLogin"),
+  logoutClaude: () => call<void>("logoutClaude"),
   getCodexStatus: (reconnect = false) => call<CodexStatus>("getCodexStatus", reconnect ? { reconnect: true } : undefined),
   loginCodex: () => call<void>("loginCodex"),
   cancelCodexLogin: () => call<void>("cancelCodexLogin"),

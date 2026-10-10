@@ -1,5 +1,6 @@
+import { claudeClient } from "../claude/client";
 import { codexClient } from "../codex/client";
-import { openAIImageMessages, validateAgentImages } from "../../shared/agent-images";
+import { openAIImageMessages } from "../../shared/agent-images";
 import type { AgentThinkingLevel, AppSettings, LLMProvider, OllamaMessage } from "../../shared/rpc-types";
 import { agentThinkingConfig } from "../../shared/agent-thinking";
 import { resolveOllamaConnection } from "../../shared/ollama-connection";
@@ -27,20 +28,6 @@ function ensureApiKey(provider: string, apiKey: string): string {
   return apiKey.trim();
 }
 
-function firstText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!Array.isArray(value)) return "";
-  return value
-    .map((item) => {
-      if (typeof item === "string") return item;
-      if (typeof item === "object" && item && "text" in item && typeof item.text === "string") {
-        return item.text;
-      }
-      return "";
-    })
-    .join("");
-}
-
 async function* streamSse(response: Response): AsyncGenerator<Record<string, any>> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("Provider returned an empty response body.");
@@ -64,30 +51,14 @@ async function* streamSse(response: Response): AsyncGenerator<Record<string, any
   }
 }
 
-function splitSystem(messages: OllamaMessage[]) {
-  const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-  const rest = messages
-    .filter((m) => m.role !== "system")
-    .map((m) => {
-      const images = validateAgentImages(m.images);
-      return { role: m.role, content: images.length ? [
-        { type: "text", text: m.content },
-        ...images.map((image) => {
-          const [header, data] = image.dataUrl.split(",");
-          return { type: "image", source: { type: "base64", media_type: header.slice(5, -7), data } };
-        }),
-      ] : m.content };
-    });
-  return { system, messages: rest };
-}
-
 export async function completeAgentModel(
   request: AgentCompletionRequest,
   settings: AppSettings,
 ): Promise<string> {
-  if (request.provider === "codex") {
+  if (request.provider === "codex" || request.provider === "anthropic") {
+    const client = request.provider === "codex" ? codexClient : claudeClient;
     let text = "";
-    for await (const chunk of codexClient.stream(request)) text += chunk;
+    for await (const chunk of client.stream(request)) text += chunk;
     return text;
   }
   const maxTokens = request.maxTokens ?? 256;
@@ -115,30 +86,6 @@ export async function completeAgentModel(
     if (!res.ok) throw new Error(`Ollama completion error: HTTP ${res.status} ${await res.text()}`);
     const json = await res.json();
     return json.choices?.[0]?.message?.content ?? "";
-  }
-
-  if (request.provider === "anthropic") {
-    const apiKey = ensureApiKey("Claude", settings.anthropicApiKey);
-    const { system, messages } = splitSystem(request.messages);
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: request.model || settings.anthropicDefaultModel,
-        max_tokens: maxTokens,
-        temperature,
-        system,
-        messages,
-      }),
-      signal: request.signal,
-    });
-    if (!res.ok) throw new Error(`Claude completion error: HTTP ${res.status} ${await res.text()}`);
-    const json = await res.json();
-    return firstText(json.content);
   }
 
   const isDeepSeek = request.provider === "deepseek";
@@ -176,13 +123,13 @@ export async function* streamAgentModel(
   request: AgentStreamRequest,
   settings: AppSettings,
 ): AsyncGenerator<string> {
-  if (request.provider === "codex") {
-    yield* codexClient.stream(request);
+  if (request.provider === "codex" || request.provider === "anthropic") {
+    const client = request.provider === "codex" ? codexClient : claudeClient;
+    yield* client.stream(request);
     return;
   }
   const model = request.model || ({
     ollama: settings.ollamaDefaultModel,
-    anthropic: settings.anthropicDefaultModel,
     deepseek: settings.deepseekDefaultModel,
     openai: settings.openaiDefaultModel,
   }[request.provider]);
@@ -207,35 +154,6 @@ export async function* streamAgentModel(
     if (!res.ok) throw new Error(`Ollama error: HTTP ${res.status} ${await res.text()}`);
     for await (const json of streamSse(res)) {
       const text = json.choices?.[0]?.delta?.content;
-      yield text || "";
-    }
-    return;
-  }
-
-  if (request.provider === "anthropic") {
-    const apiKey = ensureApiKey("Claude", settings.anthropicApiKey);
-    const { system, messages } = splitSystem(request.messages);
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: request.model || settings.anthropicDefaultModel,
-        max_tokens: 4096,
-        system,
-        messages,
-        stream: true,
-        ...thinking.fields,
-      }),
-      signal: request.signal,
-    });
-    if (!res.ok) throw new Error(`Claude API error: HTTP ${res.status} ${await res.text()}`);
-    for await (const json of streamSse(res)) {
-      const text = json.delta?.text;
-      if (json.type === "error") throw new Error(json.error?.message || "Claude stream error");
       yield text || "";
     }
     return;
@@ -285,17 +203,7 @@ export async function listProviderModels(provider: LLMProvider, settings: AppSet
     return normalizeModelIds(await res.json());
   }
 
-  if (provider === "anthropic") {
-    const apiKey = ensureApiKey("Claude", settings.anthropicApiKey);
-    const res = await fetch("https://api.anthropic.com/v1/models", {
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-    });
-    if (!res.ok) throw new Error(`Claude model list error: HTTP ${res.status} ${await res.text()}`);
-    return normalizeModelIds(await res.json());
-  }
+  if (provider === "anthropic") return claudeClient.models();
 
   const isDeepSeek = provider === "deepseek";
   const apiKey = ensureApiKey(isDeepSeek ? "DeepSeek" : "OpenAI", isDeepSeek ? settings.deepseekApiKey : settings.openaiApiKey);

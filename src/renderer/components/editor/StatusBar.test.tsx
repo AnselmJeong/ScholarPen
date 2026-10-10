@@ -14,6 +14,7 @@ mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(op
 const { rpc } = await import("../../rpc");
 const { StatusBar } = await import("./StatusBar");
 const status = spyOn(rpc, "getCodexStatus");
+const claudeStatus = spyOn(rpc, "getClaudeStatus");
 const connected: CodexStatus = { state: "connected", ordinaryUsageAllowed: true, quotas: [] };
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -23,9 +24,9 @@ async function render(provider: LLMProvider = "codex", model = "gpt-6.1-sol", ol
     ollamaStatus={{ connected: ollamaConnected, models: ["ollama-model"], activeModel: "ollama-model" }}
     wordCount={123} onToggleAI={() => {}} />));
 }
-afterEach(async () => { await act(async () => root?.unmount()); root = undefined; container?.remove(); status.mockReset(); });
+afterEach(async () => { await act(async () => root?.unmount()); root = undefined; container?.remove(); status.mockReset(); claudeStatus.mockReset(); });
 afterAll(() => {
-  status.mockRestore();
+  status.mockRestore(); claudeStatus.mockRestore();
   for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
   dom.happyDOM.abort();
 });
@@ -67,9 +68,26 @@ test("late responses from a previous provider selection cannot overwrite the cur
 });
 
 test("other providers do not poll Codex and retain their labels", async () => {
-  for (const [provider, label] of [["ollama", "Ollama disconnected"], ["openai", "OpenAI connected"], ["anthropic", "Claude connected"], ["deepseek", "DeepSeek connected"]] as const) {
+  for (const [provider, label] of [["ollama", "Ollama disconnected"], ["openai", "OpenAI connected"], ["deepseek", "DeepSeek connected"]] as const) {
     await render(provider);
     expect(container!.textContent).toContain(label);
   }
+  expect(status).not.toHaveBeenCalled();
+});
+
+
+test("Claude uses subscription status and ignores stale requests after provider changes", async () => {
+  let resolveOld!: (s: { state: "connected" }) => void;
+  claudeStatus.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+  await render("anthropic", "sonnet");
+  expect(container!.textContent).toContain("Claude (구독) checking");
+  await render("ollama");
+  claudeStatus.mockResolvedValue({ state: "signedOut" });
+  await render("anthropic", "sonnet");
+  await act(async () => resolveOld({ state: "connected" }));
+  expect(container!.textContent).toContain("Claude (구독) disconnected");
+  claudeStatus.mockResolvedValue({ state: "connected", plan: "pro" });
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(container!.textContent).toContain("Claude (구독) connected");
   expect(status).not.toHaveBeenCalled();
 });

@@ -11,6 +11,8 @@ import { buildAgentMessages } from "./context-builder";
 import { streamAgentModel } from "./providers";
 import { asksForAIScore, detectionInputForRequest, formatAIDetectionReport } from "../../shared/ai-detection";
 import { analyzeAIText } from "../ai-detector/service";
+import { findCitationEvidence } from "./find-citation";
+import { serializeCitationSearchResult } from "../../shared/citation-evidence";
 
 export async function streamScholarAgent(
   params: AgentStreamParams,
@@ -27,6 +29,23 @@ export async function streamScholarAgent(
   else signal?.addEventListener("abort", abortRequest, { once: true });
 
   try {
+    if (params.analysisMode === "find-citation") {
+      requestController.signal.throwIfAborted();
+      callbacks.onChunk("선택문의 주장을 정리하고 인용 근거를 검색하고 있습니다…\n");
+      const heartbeat = setInterval(() => callbacks.onChunk(""), 15_000);
+      try {
+        const settings = await fileSystem.getSettings();
+        const result = await withAgentStreamTimeout(findCitationEvidence({
+          ...params,
+          provider: params.provider || settings.sidebarAgentProvider,
+          model: params.model || settings.sidebarAgentModel,
+        }, settings, requestController.signal), "first-response", AGENT_FIRST_RESPONSE_TIMEOUT_MS, () => requestController.abort());
+        requestController.signal.throwIfAborted();
+        callbacks.onChunk(serializeCitationSearchResult(result));
+        callbacks.onDone();
+      } finally { clearInterval(heartbeat); }
+      return;
+    }
     if (!params.analysisMode && asksForAIScore(params.message)) {
       requestController.signal.throwIfAborted();
       const { text, scope } = detectionInputForRequest(params);

@@ -52,6 +52,7 @@ import {
 } from "../../ai/deepen-analysis";
 import {
   buildFindCitationMessage,
+  createFindCitationRequest,
   type FindCitationRequest,
 } from "../../ai/find-citation";
 import { onProjectUpdated, rpc } from "../../rpc";
@@ -61,6 +62,8 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { ProjectMemoryPanel } from "./ProjectMemoryPanel";
+import { CitationEvidenceResults } from "./CitationEvidenceResults";
+import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult } from "@shared/citation-evidence";
 import { asksForAIScore, detectionTextFromBlocks } from "@shared/ai-detection";
 
 interface AISidebarProps {
@@ -126,7 +129,7 @@ function messageText(message: MessageState): string {
 }
 
 function assistantLabel(provider: AppSettings["sidebarAgentProvider"]): string {
-  if (provider === "anthropic") return "Claude";
+  if (provider === "anthropic") return "Claude · 구독";
   if (provider === "deepseek") return "DeepSeek";
   if (provider === "openai") return "OpenAI";
   if (provider === "codex") return "Codex · ChatGPT 구독";
@@ -135,14 +138,20 @@ function assistantLabel(provider: AppSettings["sidebarAgentProvider"]): string {
 
 function AssistantMessage({
   onOpenProjectSource,
+  projectPath,
+  onRetryCitation,
 }: {
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
+  projectPath: string | null;
+  onRetryCitation: (claims: string[], selectedText: string) => void;
 }) {
   const message = useAuiState((state) => state.message);
   const text = messageText(message);
   const isUser = message.role === "user";
   const isStreaming = message.status?.type === "running";
   const isError = text.trimStart().startsWith("❌") || text.includes("\n\n❌");
+  const citationResult = !isUser ? parseCitationSearchResult(text) : null;
+  const isRunning = useAuiState((state) => state.thread.isRunning);
 
   if (isUser) {
     const images = imagesFromMessage(message);
@@ -174,7 +183,9 @@ function AssistantMessage({
         [&_hr]:border-border [&_table]:text-xs [&_th]:font-semibold [&_td]:py-0.5`,
         )}
       >
-        {text ? (
+        {citationResult ? (
+          <CitationEvidenceResults result={citationResult} projectPath={projectPath} onRetry={onRetryCitation} busy={isRunning} />
+        ) : text ? (
           <>
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkMath]}
@@ -203,7 +214,7 @@ function AssistantMessage({
                 },
               }}
             >
-              {text}
+              {text.includes(CITATION_RESULT_MARKER) ? "인용 근거를 불러오는 중…" : text}
             </ReactMarkdown>
             {isStreaming && <TypingDots />}
           </>
@@ -213,7 +224,7 @@ function AssistantMessage({
       </div>
       {text && !isStreaming && (
         <button
-          onClick={() => navigator.clipboard.writeText(text)}
+          onClick={() => navigator.clipboard.writeText(citationResult ? citationResultText(citationResult) : text)}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
         >
           <Copy className="h-2.5 w-2.5" />
@@ -312,9 +323,13 @@ function AssistantHeader({
 function AssistantThread({
   slashCommands,
   onOpenProjectSource,
+  projectPath,
+  onRetryCitation,
 }: {
   slashCommands: AgentSkill[];
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
+  projectPath: string | null;
+  onRetryCitation: (claims: string[], selectedText: string) => void;
 }) {
   return (
     <ThreadPrimitive.Root className="flex-1 min-h-0 overflow-hidden">
@@ -345,7 +360,7 @@ function AssistantThread({
         </ThreadPrimitive.Empty>
         <div className="space-y-4 w-full overflow-hidden">
           <ThreadPrimitive.Messages>
-            {() => <AssistantMessage onOpenProjectSource={onOpenProjectSource} />}
+            {() => <AssistantMessage onOpenProjectSource={onOpenProjectSource} projectPath={projectPath} onRetryCitation={onRetryCitation} />}
           </ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
@@ -918,6 +933,7 @@ export function AISidebar({
   const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
+  const [retryCitationRequest, setRetryCitationRequest] = useState<FindCitationRequest | null>(null);
   const [deepenApplyNotice, setDeepenApplyNotice] = useState<SelectionReviewNotice | null>(null);
   const modelKeyRef = useRef<string | null>(null);
   const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
@@ -1032,6 +1048,7 @@ export function AISidebar({
   const consumeFindCitationRequest = useCallback(
     (requestId: string) => {
       setPreparedFindCitationRequestId((current) => current === requestId ? null : current);
+      setRetryCitationRequest((current) => current?.id === requestId ? null : current);
       onFindCitationRequestConsumed?.(requestId);
     },
     [onFindCitationRequestConsumed],
@@ -1146,7 +1163,12 @@ export function AISidebar({
               }
             : undefined,
           citationContext: isFindCitation && findCitation
-            ? { selectedText: findCitation.selectedText }
+            ? {
+                selectedText: findCitation.selectedText,
+                beforeSelection: findCitation.beforeSelection,
+                afterSelection: findCitation.afterSelection,
+                claims: findCitation.claims,
+              }
             : undefined,
           ignoreHistory: isPreparedRequest || !canReuseThread,
           transformVisibleContent: isDeepen && deepen
@@ -1249,7 +1271,7 @@ export function AISidebar({
         onConsumed={consumeDeepenRequest}
       />
       <PreparedRequestDispatcher
-        request={findCitationRequest}
+        request={findCitationRequest ?? retryCitationRequest}
         preparedRequestId={preparedFindCitationRequestId}
         ready
         buildMessage={buildFindCitationMessage}
@@ -1316,7 +1338,12 @@ export function AISidebar({
           문서 자동 참조: <span className="text-foreground">{activeDocumentName}</span>
         </div>}
 
-        <AssistantThread slashCommands={slashCommands} onOpenProjectSource={onOpenProjectSource} />
+        <AssistantThread
+          slashCommands={slashCommands}
+          onOpenProjectSource={onOpenProjectSource}
+          projectPath={project?.path ?? null}
+          onRetryCitation={(claims, selectedText) => setRetryCitationRequest(createFindCitationRequest(selectedText, undefined, claims))}
+        />
 
         {/^(Validate|Deepen):/.test(activeThread?.title ?? "") && (
           <p className="px-3 pt-2 text-xs text-muted-foreground">

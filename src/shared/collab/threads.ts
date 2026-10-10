@@ -23,7 +23,14 @@ export interface ThreadMeta {
   /** "document": the thread asks for changes anywhere in the manuscript, not only the commented passage. */
   scope?: "document";
   /** Explicit slash action; independent of the current selection or model interpretation. */
-  documentAction?: "humanize" | "remove-watermark" | "ai-score";
+  documentAction?: "humanize" | "remove-watermark" | "ai-score" | "resolve-comments";
+  /** One coordinated request owns these comments until its job finishes. */
+  bulkThreadIds?: string[];
+  bulkRequestId?: string;
+  /** Durable cleanup report, available even after the in-memory job queue is gone. */
+  watermarkResult?: { scanned: number; skipped: number; removed: number; replaced: number };
+  /** Dismissing the result card does not delete or reopen its comment thread. */
+  resultDismissedAt?: number;
   /** The author took the thread over ("I'll handle"); their replies are notes, not requests to the AI. */
   manual?: boolean;
   /** Review finding category and severity for AI-opened threads. */
@@ -180,6 +187,7 @@ export function updateThreadMeta(threads: Y.Map<any>, threadId: string, patch: P
  * AI is already part of (unless they took the thread over themselves).
  */
 export function threadWantsAI(thread: ThreadSnapshot) {
+  if (thread.meta.bulkRequestId) return false;
   if (thread.resolved || thread.meta.status === "resolved" || thread.meta.status === "in-progress") return false;
   if (thread.meta.assignee === "ai") return true;
   const last = [...thread.comments].reverse().find((comment) => !comment.deleted);

@@ -137,12 +137,13 @@ export function AIActivitySection({ editor }: { editor: BlockNoteEditor<any, any
             className="ml-auto rounded border border-border bg-background px-1 py-0.5 text-[11px]">
             <option value="low">All findings</option>
             <option value="medium">Medium and up</option>
-            <option value="high">High only</option>
+            <option value="high">Serious issues only</option>
           </select>
         </div>
       )}
       {review && (
         <p className="px-3 pb-1.5 text-[11px] text-muted-foreground">
+          {review.minSeverity === "high" && "Only clear problems that materially affect the argument or evidence. Optional improvements are skipped. "}
           Resolved paragraphs stay excluded from automatic review. Use the review button to check them again.
         </p>
       )}
@@ -224,6 +225,7 @@ function ChangeSetRow({ set, editor, scrollTo }: {
 }) {
   const [open, setOpen] = useState(false);
   const count = set.paragraphs.length;
+  const coordinated = !!set.info?.addressedThreadIds;
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-center gap-1.5 px-3 py-1.5">
@@ -240,6 +242,7 @@ function ChangeSetRow({ set, editor, scrollTo }: {
           </span>
           <span className="block text-[10px] text-muted-foreground">
             {count} {count === 1 ? "paragraph" : "paragraphs"}
+            {coordinated && " · Accept or reject together"}
           </span>
         </button>
         <button type="button" onClick={() => decideChangeSet(editor, set.id, true)}
@@ -254,10 +257,10 @@ function ChangeSetRow({ set, editor, scrollTo }: {
             {paragraph.deleted && paragraph.inserted && " "}
             {paragraph.inserted && <ins className="no-underline">{paragraph.inserted.slice(0, 160)}</ins>}
           </button>
-          <IconButton label="Accept this paragraph" icon={<Check className="h-3 w-3 text-emerald-700" />}
+          {!coordinated && <><IconButton label="Accept this paragraph" icon={<Check className="h-3 w-3 text-emerald-700" />}
             onClick={() => decideChangeSet(editor, set.id, true, paragraph)} />
           <IconButton label="Reject this paragraph" icon={<X className="h-3 w-3 text-red-600" />}
-            onClick={() => decideChangeSet(editor, set.id, false, paragraph)} />
+            onClick={() => decideChangeSet(editor, set.id, false, paragraph)} /></>}
         </div>
       ))}
     </div>

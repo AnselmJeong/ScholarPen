@@ -50,6 +50,8 @@ import { protectedRewritePreview, restoreProtectedSelection } from "../../../sha
 import type { Node as PMNode } from "prosemirror-model";
 import { asksForAIScore, formatAIDetectionReport, type AIDetectionReport } from "../../../shared/ai-detection";
 import { analyzeAIText } from "../../ai-detector/service";
+import { resolveMentionedFiles, type MentionedFileContext } from "../../agent/mention-resolver";
+import { runBulkComments } from "./bulk-comments";
 
 /** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
 export const AI_ORIGIN = "ai-agent";
@@ -58,8 +60,11 @@ export const AI_META_ORIGIN = "ai-meta";
 export const AI_EDITS_MAP = "aiEdits";
 
 export interface CollabAgentDeps {
+  resolveMentionedFiles?: typeof resolveMentionedFiles;
   analyzeAIText?: (text: string, signal: AbortSignal) => Promise<AIDetectionReport>;
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
+  /** Larger output budget for a whole-manuscript revision and its outcome ledger. */
+  completeBulk?: (messages: OllamaMessage[], signal: AbortSignal) => Promise<string>;
   onActivity(docKey: string, jobs: AgentJobView[]): void;
   now?: () => number;
   /** How long the AI waits for the author to leave a paragraph before working on it anyway. */
@@ -80,6 +85,7 @@ export interface Attachment {
 }
 
 interface Job {
+  references?: MentionedFileContext[];
   view: AgentJobView;
   run: (job: Job, attachment: Attachment, signal: AbortSignal) => Promise<void>;
 }
@@ -159,7 +165,14 @@ export class CollabAgent {
     });
     const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const onThreads = () => {
+    const onThreads = (_events: unknown, transaction: Y.Transaction) => {
+      // Resolve all (or resolving the active request) cancels in-flight edits too.
+      if (transaction.origin !== AI_META_ORIGIN && this.running?.job.view.docKey === session.docKey) {
+        const runningId = this.running.job.view.threadId;
+        if (runningId && !readThreads(threads).some(thread => thread.id === runningId && !thread.resolved)) {
+          this.running.controller.abort();
+        }
+      }
       // Record resolution synchronously, before another review or thread deletion.
       rememberResolvedReviewBlocks(session, AI_META_ORIGIN);
       if (timer) clearTimeout(timer);
@@ -184,6 +197,13 @@ export class CollabAgent {
         if (thread.meta.status === "in-progress") {
           updateThreadMeta(threads, thread.id, { assignee: "me", status: "open", statusNote: "Interrupted. Ask AI to retry when ready." });
           addThreadComment(threads, thread.id, SCHOLARPEN_AI.userId, "The previous AI task was interrupted. Any existing suggestions remain available for review. Ask AI to retry when ready.");
+        }
+      }
+      for (const thread of readThreads(threads)) {
+        if (!thread.meta.bulkRequestId) continue;
+        const owner = readThreads(threads).find(item => item.id === thread.meta.bulkRequestId);
+        if (!owner || owner.resolved || owner.meta.assignee !== "ai") {
+          updateThreadMeta(threads, thread.id, { bulkRequestId: undefined, assignee: "me", manual: true });
         }
       }
     }, AI_META_ORIGIN);
@@ -281,10 +301,23 @@ export class CollabAgent {
         if (thread?.meta.status === "in-progress") this.setThread(attachment, thread.id, {
           assignee: "me", status: thread.meta.changeSet === undefined ? "open" : "proposed",
           statusNote: controller.signal.aborted ? "Cancelled" : `Failed: ${message}`,
-        }, `${controller.signal.aborted ? "The task was cancelled." : `The task stopped: ${message}`} Any earlier suggestions remain available for review. Ask AI to retry when ready.`);
+        }, `${controller.signal.aborted ? "The task was cancelled." : `The task stopped: ${message}`} ` +
+          (thread.meta.documentAction === "resolve-comments"
+            ? "No manuscript edits were applied by this coordinated request. Ask AI to retry when ready."
+            : "Any earlier suggestions remain available for review. Ask AI to retry when ready."));
       }
       this.update(job, { state: controller.signal.aborted ? "cancelled" : "failed", detail: message, finishedAt: this.now() });
     } finally {
+      if (job.view.threadId) {
+        const map = attachment.session.ydoc.getMap(COLLAB_THREADS_MAP);
+        attachment.session.ydoc.transact(() => {
+          for (const thread of readThreads(map)) {
+            if (thread.meta.bulkRequestId === job.view.threadId) updateThreadMeta(map, thread.id, {
+              bulkRequestId: undefined, assignee: "me", manual: true,
+            });
+          }
+        }, AI_META_ORIGIN);
+      }
       attachment.presence.release();
       this.running = null;
       if (!this.queue.some((queued) => queued.view.docKey === job.view.docKey)) {
@@ -337,6 +370,21 @@ export class CollabAgent {
     if (!thread || !threadWantsAI(thread)) return;
     const reply = (patch: Partial<ThreadMeta>, text?: string) => this.setThread(attachment, threadId, patch, text);
     reply({ assignee: "ai", agent: SCHOLARPEN_AI.id, status: "in-progress", statusNote: undefined });
+    if (thread.meta.documentAction === "resolve-comments") {
+      const all = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP));
+      const requested = new Set(thread.meta.bulkThreadIds ?? []);
+      const references = await (this.deps.resolveMentionedFiles ?? resolveMentionedFiles)({
+        projectPath: session.projectPath, explicitFilePaths: [],
+        message: all.filter(item => requested.has(item.id) || item.id === thread.id)
+          .flatMap(item => item.comments.filter(comment => !comment.deleted && !isAIUser(comment.userId)).map(comment => comment.text)).join("\n"),
+      });
+      return runBulkComments(session, thread, {
+        references, complete: (messages, callSignal) => completeWithDeadline(
+          this.deps.completeBulk ?? this.deps.complete, messages, callSignal, this.deps.completionTimeoutMs ?? 180_000),
+        modeFor: blockId => this.modeFor(attachment, blockId),
+        progress: detail => this.update(job, { detail }),
+      }, signal);
+    }
     const latestRequest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
     if (thread.meta.documentAction === "ai-score" || asksForAIScore(latestRequest)) {
       const doc = readDoc(session);
@@ -359,14 +407,27 @@ export class CollabAgent {
     if (thread.meta.documentAction === "remove-watermark") {
       if (signal.aborted) throw new Error("Cancelled");
       const result = cleanDocumentWatermarks(session, AI_ORIGIN);
-      reply({ assignee: "me", status: "resolved", editedBlockIds: result.blockIds },
+      const { scanned, skipped, removed, replaced } = result;
+      const summary = removed || replaced
+        ? `숨은 문자 ${removed}개 제거 · 특수 공백 ${replaced}개 정리`
+        : skipped ? "검사한 텍스트에서 정리할 문자 없음 · 일부 블록 제외" : "검사 완료 · 정리할 숨은 문자·특수 공백 없음";
+      reply({ assignee: "me", status: "resolved", editedBlockIds: result.blockIds,
+        watermarkResult: { scanned, skipped, removed, replaced }, resultDismissedAt: undefined, statusNote: summary },
         `현재 문서 전체에서 ${result.scanned}개 텍스트 블록을 확인했습니다. 숨은 문자 ${result.removed}개 제거, 특수 공백 ${result.replaced}개 정리. ` +
         `코드 또는 검토 중인 수정안이 있는 블록 ${result.skipped}개는 보존했습니다. ` +
         "문체 재작성 없이 로컬 유니코드 정리만 수행했습니다. 통계적 워터마크나 첨부 파일의 워터마크 제거를 보장하지 않습니다. " +
         (result.blockIds.length ? "Activity의 Undo last AI edit으로 전체 정리를 되돌릴 수 있습니다." : "변경할 문자가 없어 원문을 유지했습니다."));
-      this.update(job, { detail: `Removed ${result.removed} characters; normalized ${result.replaced} spaces` });
+      this.update(job, { detail: `${summary} · ${scanned}개 블록 검사${skipped ? ` · ${skipped}개 제외` : ""}` });
       return;
     }
+    // Only the author's live comments select resources; AI output must never
+    // cause additional files to be read. Keep the same snapshot for all batches.
+    job.references = await (this.deps.resolveMentionedFiles ?? resolveMentionedFiles)({
+      projectPath: session.projectPath,
+      explicitFilePaths: [],
+      message: conversationOf(thread).filter(comment => comment.author === "author").map(comment => comment.text).join("\n"),
+    });
+    signal.throwIfAborted();
     if (thread.meta.scope === "document" || thread.meta.documentAction === "humanize") return this.runDocumentRequest(job, attachment, thread, reply, signal);
 
     const doc = readDoc(session);
@@ -439,6 +500,7 @@ export class CollabAgent {
     let summary = "";
     for (let index = 0; index < parts.length; index++) {
       const response = await this.complete(buildDocumentPlanMessages({
+        references: job.references,
         conversation: conversationOf(thread),
         paragraphs: parts[index],
         part: parts.length > 1 ? { index: index + 1, total: parts.length } : undefined,
@@ -587,6 +649,7 @@ export class CollabAgent {
       const first = blockContent(fresh[0]);
       const last = blockContent(fresh[fresh.length - 1]);
       const messages = buildCommentEditMessages({
+        references: job.references,
         conversation: conversationOf(thread),
         passage: joinProtections(bases),
         quoted: options.quoted,

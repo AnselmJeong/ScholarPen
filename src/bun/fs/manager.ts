@@ -53,8 +53,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     },
     anthropic: {
       provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      enabled: false,
+      model: "sonnet",
+      enabled: true,
     },
     deepseek: {
       provider: "deepseek",
@@ -74,8 +74,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   ollamaDefaultModel: "qwen3.5:397b",
   tinyfishApiKey: "",
   webSearchEnabled: true,
-  anthropicApiKey: "",
-  anthropicDefaultModel: "claude-sonnet-4-5",
+  anthropicDefaultModel: "sonnet",
   deepseekApiKey: "",
   deepseekBaseUrl: "https://api.deepseek.com",
   deepseekDefaultModel: "deepseek-chat",
@@ -84,10 +83,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiDefaultModel: "gpt-5.2",
   openAlexApiKey: "",
   ncbiApiKey: "",
+  paperclipApiKey: "",
   theme: "system",
 };
 
 export type PersistedAppSettings = Partial<AppSettings> & {
+  /** Removed: read only so migration can discard the old credential. */
+  anthropicApiKey?: string;
   /** @deprecated Migrated to webSearchEnabled. */
   ollamaWebSearchEnabled?: boolean;
 };
@@ -95,6 +97,7 @@ export type PersistedAppSettings = Partial<AppSettings> & {
 export function normalizeSettings(parsed: PersistedAppSettings): AppSettings {
   const migrated = { ...parsed };
   delete migrated.ollamaWebSearchEnabled;
+  delete migrated.anthropicApiKey;
   const legacyProvider = parsed.aiBackend === "claude" ? "anthropic" : "ollama";
   const sidebarAgentProvider = parsed.sidebarAgentProvider ?? legacyProvider;
   const legacyClaudeModel =
@@ -116,7 +119,7 @@ export function normalizeSettings(parsed: PersistedAppSettings): AppSettings {
   modelProviders.anthropic = {
     ...modelProviders.anthropic,
     model: parsed.anthropicDefaultModel ?? legacyClaudeModel,
-    enabled: Boolean(parsed.anthropicApiKey) || modelProviders.anthropic.enabled,
+    enabled: true,
   };
   modelProviders.deepseek = {
     ...modelProviders.deepseek,
@@ -158,6 +161,10 @@ export function normalizeSettings(parsed: PersistedAppSettings): AppSettings {
       typeof parsed.ncbiApiKey === "string"
         ? parsed.ncbiApiKey
         : DEFAULT_SETTINGS.ncbiApiKey,
+    paperclipApiKey:
+      typeof parsed.paperclipApiKey === "string"
+        ? parsed.paperclipApiKey.trim()
+        : DEFAULT_SETTINGS.paperclipApiKey,
     anthropicDefaultModel: parsed.anthropicDefaultModel ?? legacyClaudeModel,
     deepseekBaseUrl: parsed.deepseekBaseUrl ?? DEFAULT_SETTINGS.deepseekBaseUrl,
     deepseekDefaultModel: parsed.deepseekDefaultModel ?? DEFAULT_SETTINGS.deepseekDefaultModel,
@@ -1044,7 +1051,7 @@ class FileSystemManager {
 
   async saveSettings(update: AppSettingsUpdate): Promise<void> {
     const current = await this.getSettings();
-    const merged = { ...current, ...update };
+    const merged = normalizeSettings({ ...current, ...update });
     await writeFile(SETTINGS_FILE, JSON.stringify(merged, null, 2), { mode: 0o600 });
     await chmod(SETTINGS_FILE, 0o600);
     if (update.projectsRootDir) {

@@ -7,12 +7,12 @@ import {
   REVIEW_MAP,
   REVIEW_CATEGORIES,
   enabledReviewCategories,
+  isReviewSeverity,
   normalizeReviewCategory,
   type ReviewCategory,
   reviewSettingsOf,
   SEVERITY_RANK,
   type ReviewFinding,
-  type ReviewSeverity,
   type ReviewSettings,
   type ReviewProgress,
 } from "../../../shared/collab/review";
@@ -61,6 +61,19 @@ interface SectionReview {
 
 function settingsFingerprint(settings: ReviewSettings) {
   return JSON.stringify([settings.minSeverity, [...settings.muted].sort()]);
+}
+
+/** Stricter preferences must not trigger another wave of comments on unchanged text. */
+function previousReviewCoversSettings(fingerprint: string | undefined, settings: ReviewSettings) {
+  if (!fingerprint) return false;
+  try {
+    const previous: unknown = JSON.parse(fingerprint);
+    if (!Array.isArray(previous) || !isReviewSeverity(previous[0]) || !Array.isArray(previous[1])) return false;
+    return SEVERITY_RANK[previous[0]] <= SEVERITY_RANK[settings.minSeverity] &&
+      previous[1].every(category => settings.muted.includes(category));
+  } catch {
+    return false;
+  }
 }
 
 function proseOf(section: Section) {
@@ -145,21 +158,33 @@ export function locateQuote(block: BlockRef, quote: string) {
   return { from: chars[at], to: chars[at + length - 1] + 1 };
 }
 
-function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[]): OllamaMessage[] {
+function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[], settings: ReviewSettings): OllamaMessage[] {
   const system =
     `You are ${SCHOLARPEN_AI.name}, reviewing a section of an academic manuscript together with its author. ` +
-    `Point out only problems worth the author's time: ${SCHOLARPEN_AI.reviewFocus}. ` +
-    "Offer substantive questions, missing connections and useful improvements as well as identifying errors. " +
+    "Protect the author's attention: report concrete problems, not opportunities to improve an already defensible passage. " +
+    `The minimum severity is ${settings.minSeverity}. Omit findings below this threshold; never inflate their severity to pass it. ` +
+    "Severity rubric: high = a clearly demonstrated problem that materially changes a central claim, conclusion, or the validity of the analysis, " +
+    "such as a direct contradiction, an incorrect calculation, reversed chronology or causality, or a central inference incompatible with the stated evidence or design. " +
+    "Medium = a substantive but local ambiguity, missing explanation, or evidential qualification that does not invalidate the main argument. " +
+    "Low = optional elaboration or minor clarification. " +
+    "For a high-severity finding, identify the specific evidence in the supplied text and explain the material consequence if it remains unfixed. " +
+    "If you cannot establish both, omit the finding. When uncertain whether a problem is serious, omit it. " +
+    "Do not request more definitions, background, literature, caveats, alternative explanations, or citations merely because they would be useful. " +
+    "A term not defined in this paragraph, a citation not repeated locally, or an unfamiliar theoretical interpretation is not by itself a serious error. " +
+    "Respect the manuscript's genre and argumentative purpose; do not impose empirical-study reporting requirements on a conceptual or historical essay. " +
+    "Check the supplied surrounding context before alleging an omission or contradiction. Context is partial: do not infer that something is absent from the whole manuscript. " +
+    "Without the cited source text, do not assert that a source fails to support a claim based only on its title, date, or your memory. " +
     "Read every supplied paragraph, including the last one. Do not focus only on the opening. " +
     "Avoid cosmetic wording preferences and trivial grammar corrections. " +
-    "Do not invent references. If the section is sound, return no findings. " +
+    "Do not invent references. Return an empty findings array when no problem meets the threshold; zero findings is a successful review. " +
+    "Combine observations about the same underlying problem into one comment rather than repeating it under several categories. " +
     `Only report these enabled categories: ${allowed.join(", ")}. Do not invent categories or rename disabled issues to an enabled type. ` +
     REVIEW_CATEGORIES.filter(category => allowed.includes(category.id)).map(category => `${category.id}: ${category.description}`).join("\n") + "\n" +
     "Write each comment in the language of the manuscript, in one or two sentences, and say what to check or change. " +
     AI_WRITING_STYLE + "\n\n" +
     "Return JSON only, in this shape:\n" +
     `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${allowed.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
-    `Report at most ${MAX_FINDINGS_PER_BATCH} findings, most important first. The quote must be copied exactly from the paragraph and be at most 25 words.`;
+    `Report at most ${MAX_FINDINGS_PER_BATCH} findings, most important first. This is a ceiling, never a quota; most passages should need no comment. The quote must be copied exactly from the paragraph and be at most 25 words.`;
   const user =
     `<section title="${title.replace(/"/g, "'")}">\n` +
     paragraphs.map((text, index) => `<paragraph n="${index + 1}">\n${text}\n</paragraph>`).join("\n") +
@@ -183,7 +208,8 @@ function parseFindings(response: string, paragraphCount: number): ReviewFinding[
     const category = normalizeReviewCategory(item.category);
     if (!category) continue;
     const paragraph = Number(item.paragraph);
-    const severity = (["low", "medium", "high"].includes(String(item.severity)) ? item.severity : "medium") as ReviewSeverity;
+    if (!isReviewSeverity(item.severity)) continue;
+    const severity = item.severity;
     if (!Number.isInteger(paragraph) || paragraph < 1 || paragraph > paragraphCount) continue;
     if (typeof item.quote !== "string" || typeof item.comment !== "string" || !item.comment.trim()) continue;
     findings.push({
@@ -243,7 +269,6 @@ export class Reviewer {
       const doc = readDoc(session);
       const reviewed = (map.get("sections") as Record<string, SectionReview> | undefined) ?? {};
       const resolved = session.ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
-      const settingsHash = settingsFingerprint(settings);
       const seen = new Set<string>();
       const sections: Array<{ key: string; current: boolean }> = [];
       for (const block of iterateTop(doc)) {
@@ -256,7 +281,7 @@ export class Reviewer {
         const eligible = proseOf(section).filter(block => !resolved.has(block.id));
         const previous = reviewed[key];
         sections.push({ key, current: !eligible.length || (previous?.version === REVIEW_VERSION &&
-          previous.settings === settingsHash && (previous.paragraphs
+          previousReviewCoversSettings(previous.settings, settings) && (previous.paragraphs
             ? previous.heading === sectionTitle(section) && eligible.every(block =>
               previous.paragraphs![block.id] === paragraphFingerprint(doc, block))
             : previous.hash === hashText(sectionFingerprint(doc, section)))) });
@@ -347,7 +372,7 @@ export class Reviewer {
         clip(contextText(contextBlocks.filter(block => block.pos > last.pos)), 2000, "start");
       attachment.presence.claim(first.id, "reviewing");
       const response = await this.deps.complete(
-        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed), signal);
+        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed, settings), signal);
       if (signal.aborted) throw new Error("Cancelled");
       for (const finding of parseFindings(response, batch.length)) {
         findings.push({ ...finding, blockId: batch[finding.paragraph].id });

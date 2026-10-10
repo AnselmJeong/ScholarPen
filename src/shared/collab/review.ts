@@ -6,6 +6,10 @@ export const REVIEW_MAP = "review";
 export type ReviewSeverity = "low" | "medium" | "high";
 export const SEVERITY_RANK: Record<ReviewSeverity, number> = { low: 0, medium: 1, high: 2 };
 
+export function isReviewSeverity(value: unknown): value is ReviewSeverity {
+  return value === "low" || value === "medium" || value === "high";
+}
+
 export interface ReviewFinding {
   /** Index of the paragraph in the reviewed section, or -1 for deterministic checks. */
   paragraph: number;
@@ -81,9 +85,10 @@ export function enabledReviewCategories(settings: ReviewSettings): ReviewCategor
 
 export function reviewSettingsOf(map: Y.Map<unknown>): ReviewSettings {
   const project = map.get(PROJECT_REVIEW_SETTINGS_KEY) as ProjectReviewSettings | undefined;
+  const severity = map.get("minSeverity");
   return {
     autoReview: map.get("autoReview") !== false,
-    minSeverity: map.get("minSeverity") === "low" ? "low" : map.get("minSeverity") === "high" ? "high" : "medium",
+    minSeverity: isReviewSeverity(severity) ? severity : "high",
     // Once connected to a project, one project policy replaces old document-only mutes.
     muted: normalizeReviewCategories(project ? project.disabledCategories : map.get("muted")),
   };

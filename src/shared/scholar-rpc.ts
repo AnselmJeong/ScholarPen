@@ -1,3 +1,4 @@
+import type { ClaudeStatus } from "./claude";
 import type { ReviewCategory, ProjectReviewSettings } from "./collab/review";
 import type { CodexStatus } from "./codex";
 import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "./project-memory";
@@ -155,6 +156,10 @@ type BunRequests = RPCSchema<{
     abortAgentStream: { params: void; response: void };
     getOllamaModels: { params: void; response: string[] };
     listProviderModels: { params: { provider: AppSettings["sidebarAgentProvider"]; settings?: AppSettingsUpdate }; response: string[] };
+    getClaudeStatus: { params: void; response: ClaudeStatus };
+    loginClaude: { params: void; response: void };
+    cancelClaudeLogin: { params: void; response: void };
+    logoutClaude: { params: void; response: void };
     getCodexStatus: { params: { reconnect?: boolean } | void; response: CodexStatus };
     loginCodex: { params: void; response: void };
     cancelCodexLogin: { params: void; response: void };

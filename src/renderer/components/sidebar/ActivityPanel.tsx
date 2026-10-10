@@ -2,7 +2,7 @@ import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
-import { BellOff, Bot, Check, CircleDot, MessageSquare, RotateCcw, User, X } from "lucide-react";
+import { BellOff, Bot, Check, CircleDot, Download, MessageSquare, RotateCcw, User, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import {
@@ -17,6 +17,9 @@ import { SCHOLARPEN_AI, isAIUser, personaByUser } from "../../../shared/collab/p
 import { AIActivitySection } from "./AIActivitySection";
 import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import { ZonesSection } from "./ZonesSection";
+import { WatermarkResultCard } from "./WatermarkResultCard";
+import { exportUnresolvedComments, unresolvedCommentsFilename } from "../../../shared/collab/comment-export";
+import { openClaimThreads, requestBulkComments, resolveAllComments } from "../../../shared/collab/bulk-comments";
 
 type Filter = "open" | "ai" | "mine" | "resolved";
 
@@ -63,15 +66,68 @@ function useThreadPositions(editor: BlockNoteEditor<any, any, any> | null) {
 interface ActivityPanelProps {
   editor: BlockNoteEditor<any, any, any> | null;
   documentName: string | null;
+  projectPath?: string;
+  onExported?: () => Promise<void>;
 }
 
-export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
+export function ActivityPanel({ editor, documentName, projectPath, onExported }: ActivityPanelProps) {
   const threads = useThreads(editor);
   const positions = useThreadPositions(editor);
-  const pendingChangeSets = new Set(usePendingChangeSets(editor).map((set) => String(set.id)));
+  const changeSets = usePendingChangeSets(editor);
+  const pendingChangeSets = new Set(changeSets.map((set) => String(set.id)));
   const [filter, setFilter] = useState<Filter>("open");
   const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [bulkInstructions, setBulkInstructions] = useState("");
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [exportResult, setExportResult] = useState<{ message: string; error: boolean } | null>(null);
   const collab = editor ? getEditorCollab(editor) : null;
+  useEffect(() => { setExportResult(null); }, [editor, projectPath]);
+  useEffect(() => { setBulkInstructions(""); setBulkError(null); }, [editor, projectPath]);
+  const bulkTargets = openClaimThreads(threads);
+  const bulkBusy = threads.some(thread => !thread.resolved && (thread.meta.status === "in-progress" ||
+    (thread.meta.documentAction === "resolve-comments" && thread.meta.assignee === "ai")));
+
+  const askAll = () => {
+    if (!collab) return;
+    setBulkError(null);
+    try {
+      if (pendingChangeSets.size) throw new Error("Accept or reject the pending edits first, so AI can work from one settled manuscript.");
+      requestBulkComments(collab.ydoc, bulkInstructions);
+      setBulkInstructions("");
+    } catch (error) { setBulkError(error instanceof Error ? error.message : String(error)); }
+  };
+
+  const exportComments = async () => {
+    if (!editor || !collab || !projectPath || !documentName || exporting) return;
+    if (collab.docKey !== `${projectPath}::${documentName}`) return;
+    setExporting(true);
+    setExportResult(null);
+    try {
+      // Read live state at click time, including unsaved comments and edits.
+      const doc = editor.prosemirrorState.doc;
+      const livePositions = editor.getExtension(CommentsExtension)?.store.state.threadPositions;
+      const report = exportUnresolvedComments({ documentName,
+        entries: readThreads(collab.ydoc.getMap(COLLAB_THREADS_MAP)).map(thread => {
+          const range = livePositions?.get(thread.id);
+          const from = Math.max(0, range?.from ?? 0);
+          const to = Math.min(doc.content.size, range?.to ?? 0);
+          return { thread, position: range?.from, reference: range && from < to
+            ? doc.textBetween(from, to, "\n\n", node => {
+              if (node.type.name === "citation") return `[@${node.attrs.citekey}${node.attrs.locator ? `, ${node.attrs.locator}` : ""}]`;
+              if (node.type.name === "inlineMath") return `$${node.attrs.formula ?? ""}$`;
+              return node.type.spec.leafText?.(node) ?? "";
+            }) : null };
+        }),
+      });
+      if (!report.count) { setExportResult({ message: "내보낼 미해결 코멘트가 없습니다.", error: false }); return; }
+      const path = await rpc.exportFile(projectPath, unresolvedCommentsFilename(documentName), report.markdown);
+      setExportResult({ message: `${report.count}개 코멘트 저장됨: ${path}`, error: false });
+      await onExported?.();
+    } catch (error) {
+      setExportResult({ message: error instanceof Error ? error.message : String(error), error: true });
+    } finally { setExporting(false); }
+  };
 
   const visible = useMemo(() => {
     const filtered = threads.filter((thread) => {
@@ -118,6 +174,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <AIActivitySection editor={editor} />
+      <WatermarkResultCard threads={threads} onDismiss={threadId => setMeta(threadId, { resultDismissedAt: Date.now() })} />
       {categoryError && <p role="alert" className="px-3 py-1 text-xs text-red-600">{categoryError}</p>}
       <ZonesSection editor={editor} />
       <div className="flex items-center gap-1 border-b border-border px-3 py-2">
@@ -139,6 +196,36 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
           </button>
         ))}
       </div>
+      <div className="border-b border-border px-3 py-2">
+        <button type="button" onClick={() => void exportComments()}
+          disabled={exporting || counts.open === 0 || !projectPath || collab.docKey !== `${projectPath}::${documentName}`}
+          title="현재 문서의 미해결 코멘트 전체를 본문·답글과 함께 exports 폴더에 저장합니다."
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40">
+          <Download className="h-3.5 w-3.5" />
+          {exporting ? "Exporting…" : `Export unresolved (.md) · ${counts.open}`}
+        </button>
+        <div className="mt-2 flex items-center gap-2" role="group" aria-label="All open comments">
+          <button type="button" onClick={askAll} disabled={!bulkTargets.length || bulkBusy}
+            title="Address AI and your comments together in one consistent manuscript revision"
+            className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
+            <Bot className="h-3 w-3" /> Ask AI
+          </button>
+          <button type="button" onClick={() => { resolveAllComments(collab.ydoc); setBulkError(null); }} disabled={!counts.open}
+            title="Dismiss all open comments without changing the manuscript or accepting suggested edits"
+            className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
+            <Check className="h-3 w-3" /> Resolve all
+          </button>
+          <span className="text-[11px] text-muted-foreground">All comments · AI + yours</span>
+        </div>
+        {!!bulkTargets.length && <input value={bulkInstructions} onInput={event => setBulkInstructions(event.currentTarget.value)}
+          aria-label="Instructions for all comments" placeholder="Optional direction for the whole revision…"
+          className="mt-2 w-full rounded border border-border bg-background px-2 py-1 text-xs" />}
+        {bulkError && <p role="alert" className="mt-1 text-[11px] text-red-600">{bulkError}</p>}
+        {exportResult && <p role={exportResult.error ? "alert" : "status"}
+          className={cn("mt-1 break-all text-[11px]", exportResult.error ? "text-red-600" : "text-muted-foreground")}>
+          {exportResult.message}
+        </p>}
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {visible.length === 0 && (
           <p className="p-4 text-xs leading-5 text-muted-foreground">
@@ -158,6 +245,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
               ...(assignee === "ai" ? { requestedAt: Date.now(), manual: undefined } : { manual: true }),
             })}
             onResolve={() => setMeta(thread.id, { status: "resolved" })}
+            coordinated={changeSets.some(set => String(set.id) === String(thread.meta.changeSet) && !!set.info?.addressedThreadIds)}
             onDecideChange={thread.meta.changeSet !== undefined && pendingChangeSets.has(String(thread.meta.changeSet))
               ? (accept) => decideChangeSet(editor, thread.meta.changeSet!, accept)
               : undefined}
@@ -175,7 +263,7 @@ export function ActivityPanel({ editor, documentName }: ActivityPanelProps) {
   );
 }
 
-function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen, onMute, onDecideChange }: {
+function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen, onMute, onDecideChange, coordinated }: {
   thread: ThreadSnapshot;
   reference: string | null;
   onSelect: () => void;
@@ -186,6 +274,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
   onMute?: () => void;
   /** Accepts or rejects the AI's change set for this thread, when one is pending. */
   onDecideChange?: (accept: boolean) => void;
+  coordinated?: boolean;
 }) {
   const status = threadStatus(thread);
   const first = thread.comments.find((comment) => !comment.deleted);
@@ -239,11 +328,11 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
           <>
             <button type="button" onClick={() => onDecideChange(true)}
               className="flex items-center gap-1 rounded border border-emerald-600/30 px-1.5 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-500/10">
-              <Check className="h-3 w-3" /> Accept change
+              <Check className="h-3 w-3" /> {coordinated ? "Accept coordinated revision" : "Accept change"}
             </button>
             <button type="button" onClick={() => onDecideChange(false)}
               className="flex items-center gap-1 rounded border border-red-600/30 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-500/10">
-              <X className="h-3 w-3" /> Reject change
+              <X className="h-3 w-3" /> {coordinated ? "Reject coordinated revision" : "Reject change"}
             </button>
           </>
         )}
@@ -251,7 +340,7 @@ function ThreadRow({ thread, reference, onSelect, onAssign, onResolve, onReopen,
           <SmallButton icon={<RotateCcw className="h-3 w-3" />} label="Reopen" onClick={onReopen} />
         ) : (
           <>
-            {thread.meta.assignee !== "ai" && (
+            {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && (
               <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
                 onClick={() => onAssign("ai")} />
             )}

@@ -25,6 +25,7 @@ describe("settings migration", () => {
     expect(normalized.tinyfishApiKey).toBe("");
     expect(normalized.openAlexApiKey).toBe("");
     expect(normalized.ncbiApiKey).toBe("");
+    expect(normalized.paperclipApiKey).toBe("");
     expect("ollamaWebSearchEnabled" in normalized).toBeFalse();
   });
 
@@ -43,9 +44,12 @@ describe("settings migration", () => {
     const normalized = normalizeSettings({
       openAlexApiKey: " openalex-key ",
       ncbiApiKey: " ncbi-key ",
+      paperclipApiKey: " paperclip-test-key ",
     });
 
     expect(normalized.openAlexApiKey).toBe(" openalex-key ");
     expect(normalized.ncbiApiKey).toBe(" ncbi-key ");
+    expect(normalized.paperclipApiKey).toBe("paperclip-test-key");
+    expect(normalizeSettings(JSON.parse(JSON.stringify(normalized))).paperclipApiKey).toBe("paperclip-test-key");
   });
 });

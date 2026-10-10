@@ -86,6 +86,7 @@ test("a section review posts anchored AI threads and respects severity", async (
     { paragraph: 1, quote: "Our findings", category: "definition", severity: "low", comment: "Minor point." },
     { paragraph: 2, quote: "not in the text", category: "logic", severity: "medium", comment: "Unclear link." },
   ]));
+  session.ydoc.getMap(REVIEW_MAP).set("minSeverity", "medium");
   reviewer.reviewSection(session.docKey, "p1");
   await idle();
 
@@ -245,6 +246,7 @@ test("long sections send every paragraph in batches and post more than three com
       paragraph: Number(match[1]), quote: match[2], category: "logic", severity: "medium", comment: `Check ${match[2]}.`,
     })) });
   }, undefined, blocks);
+  session.ydoc.getMap(REVIEW_MAP).set("minSeverity", "medium");
   reviewer.reviewSection(session.docKey, "long-0");
   await idle();
   expect(prompts).toHaveLength(3);
@@ -602,4 +604,69 @@ test("legacy AI-assisted passage threads can retire paragraphs using their comme
   await idle();
   expect(prompts).toHaveLength(0);
   expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
+});
+
+test("default review posts only serious findings and tells the model to omit optional improvements", async () => {
+  const { session, prompts } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "definition", severity: "low", comment: "Define findings." },
+    { paragraph: 1, quote: "the treatment", category: "literature", severity: "medium", comment: "Add more background." },
+    { paragraph: 1, quote: "every patient", category: "overclaim", severity: "high", comment: "The reported nonresponders contradict the claim of universal benefit; restrict the conclusion." },
+    { paragraph: 1, quote: "prove", category: "logic", severity: "critical", comment: "Invalid severity." },
+    { paragraph: 1, quote: "works", category: "logic", comment: "Missing severity." },
+  ]), undefined, BLOCKS.slice(0, 2));
+  reviewer.tick();
+  await idle();
+  expect(threads(session).map(t => t.meta.category)).toEqual(["overclaim"]);
+  const prompt = String(prompts[0][0].content);
+  expect(prompt).toContain("minimum severity is high");
+  expect(prompt).toContain("never inflate their severity");
+  expect(prompt).toContain("explain the material consequence");
+  expect(prompt).toContain("Context is partial");
+  expect(prompt).toContain("Without the cited source text");
+  expect(prompt).toContain("zero findings is a successful review");
+});
+
+test("stricter settings do not restart completed reviews, including a legacy medium-default review", async () => {
+  const clock = { now: 1_000_000 };
+  const { session, prompts } = await setup(findings([
+    { paragraph: 1, quote: "Our findings", category: "logic", severity: "medium", comment: "Existing feedback." },
+  ]), clock, BLOCKS.slice(0, 2));
+  const map = session.ydoc.getMap(REVIEW_MAP);
+  map.set("minSeverity", "medium");
+  reviewer.tick();
+  await idle();
+  expect(threads(session)).toHaveLength(1);
+  // An old document stored the medium fingerprint but had no explicit preference.
+  map.delete("minSeverity");
+  map.set("muted", ["literature"]);
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(1);
+  expect(map.get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
+  expect(threads(session)).toHaveLength(1); // Existing comments are preserved.
+  expect(threads(session)[0].resolved).toBe(false);
+  authorEdit(session, "p1");
+  clock.now += 20_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(String(prompts[1][0].content)).toContain("minimum severity is high");
+});
+
+test("raising severity while the model is working filters the in-flight response", async () => {
+  let raiseThreshold = () => {};
+  const { session } = await setup(async () => {
+    raiseThreshold();
+    return JSON.stringify({ findings: [
+      { paragraph: 1, quote: "Our findings", category: "logic", severity: "medium", comment: "No longer requested." },
+      { paragraph: 1, quote: "every patient", category: "overclaim", severity: "high", comment: "Serious contradiction." },
+    ] });
+  }, undefined, BLOCKS.slice(0, 2));
+  const map = session.ydoc.getMap(REVIEW_MAP);
+  map.set("minSeverity", "medium");
+  raiseThreshold = () => map.set("minSeverity", "high");
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session).map(t => t.meta.severity)).toEqual(["high"]);
 });

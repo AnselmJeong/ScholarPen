@@ -41,17 +41,10 @@ export function agentThinkingConfig(provider: LLMProvider, model: string, level:
         : "이 모델에서는 Medium이 High로 적용됩니다.",
     };
   }
-  if (provider === "anthropic") {
-    const adaptive = /claude-(?:opus|sonnet)-4[.-][6-9]|claude-(?:opus|sonnet|fable|mythos)-[5-9]|mythos-preview/.test(id);
-    const manual = /claude-(?:opus|sonnet|haiku)-4|claude-3[.-]7-sonnet/.test(id);
-    if (!adaptive && !manual) {
-      return { fields: {}, supported: false, notice: "이 모델은 thinking 조절을 지원하지 않습니다." };
-    }
-    if (!enabled) return { fields: { thinking: { type: "disabled" } } };
-    if (adaptive) return { fields: { thinking: { type: "adaptive" }, output_config: { effort: level }, max_tokens: 16384 } };
-    const budget = { low: 1024, medium: 4096, high: 8192 }[level];
-    return { fields: { thinking: { type: "enabled", budget_tokens: budget }, max_tokens: budget + 4096 } };
-  }
+  if (provider === "anthropic") return {
+    fields: {},
+    notice: "Claude 구독 연결에서는 CLI의 effort를 사용합니다. None은 Low로 실행하며, 지원 범위는 선택한 모델에 따라 다릅니다.",
+  };
   if (/^gpt-5(?:[.-]|$)|^o[134](?:-|$)/.test(id) && !id.includes("chat") && !/^o1-(?:mini|preview)/.test(id)) {
     const supportsNone = /^gpt-5\.[1-9]/.test(id) && !id.includes("pro") && !id.includes("codex");
     const onlyHigh = id === "gpt-5-pro" || id.startsWith("gpt-5-pro-");

@@ -1,4 +1,5 @@
-import { extname, relative } from "path";
+import { extname, isAbsolute, relative, sep } from "path";
+import { realpath } from "fs/promises";
 import type { AgentMentionableFile, FileNode } from "../../shared/rpc-types";
 import { parseFileMentions, type ParsedFileMention } from "../../shared/file-mentions";
 import { fileSystem } from "../fs/manager";
@@ -32,8 +33,8 @@ interface MentionResolverDependencies {
 function flatten(nodes: FileNode[]): FileNode[] {
   const result: FileNode[] = [];
   for (const node of nodes) {
+    result.push(node);
     if (node.isDirectory) result.push(...flatten(node.children ?? []));
-    else result.push(node);
   }
   return result;
 }
@@ -62,11 +63,11 @@ export function buildMentionableFiles(
   nodes: FileNode[],
 ): AgentMentionableFile[] {
   return flatten(nodes)
-    .filter((file) => isSupportedTextFile(file.path))
+    .filter((file) => file.isDirectory || isSupportedTextFile(file.path))
     .map((file) => ({
       name: file.name,
       path: file.path,
-      displayPath: relative(projectPath, file.path),
+      displayPath: relative(projectPath, file.path) + (file.isDirectory ? "/" : ""),
       kind: file.kind,
     }))
     .sort((a, b) => a.displayPath.localeCompare(b.displayPath));
@@ -77,7 +78,9 @@ export async function resolveMentionedFiles(params: {
   explicitFilePaths: string[];
   projectPath: string;
 }, dependencies: MentionResolverDependencies = {}): Promise<MentionedFileContext[]> {
-  const mentions = parseFileMentions(params.message);
+  const mentions = parseFileMentions(params.message).filter(mention =>
+    mention.syntax !== "legacy" || !/^(ai|stats|reviewer2)[,.:!?]?$/i.test(mention.value));
+  if (!mentions.length && !params.explicitFilePaths.length) return [];
   const listFiles = dependencies.listMentionableFiles ?? listAgentMentionableFiles;
   const readTextFile = dependencies.readTextFile ?? ((filePath: string) => fileSystem.readTextFile(filePath));
   const mentionable = await listFiles(params.projectPath);
@@ -94,15 +97,39 @@ export async function resolveMentionedFiles(params: {
     else if (matches.length > 1 && !matches.some((file) => explicitPaths.has(file.path))) {
       throw new Error(`@${mention.value} is ambiguous. Select the exact file from the dropdown.`);
     }
+    else if (!matches.length && mention.syntax !== "legacy") {
+      throw new Error(`Referenced file or folder was not found in this project: ${mention.value}`);
+    }
   }
 
+  // Expand folders only through the current project's allowlist, never by
+  // interpreting a user-supplied path as a filesystem traversal.
+  for (const [filePath, token] of [...selected]) {
+    const folder = mentionable.find(file => file.path === filePath && file.kind === "folder");
+    if (!folder) continue;
+    selected.delete(filePath);
+    const files = mentionable.filter(file => file.kind !== "folder" && isInside(filePath, file.path));
+    if (!files.length) throw new Error(`No supported text files in folder: ${folder.displayPath}`);
+    for (const file of files) selected.set(file.path, token);
+  }
+  if (selected.size > 32) throw new Error("Too many referenced files (maximum 32). Select a smaller folder or individual files.");
+
   const contexts: MentionedFileContext[] = [];
+  let totalChars = 0;
   for (const [filePath, token] of selected) {
     const meta = mentionable.find((file) => file.path === filePath);
     if (!meta) throw new Error(`Selected file is not part of the current project: ${filePath}`);
     if (!isSupportedTextFile(filePath)) throw new Error(`Unsupported @file type: ${meta.displayPath}`);
+    if (!dependencies.readTextFile) {
+      // A symlink listed inside the project must not expose files outside it.
+      if (!isInside(await realpath(params.projectPath), await realpath(filePath))) {
+        throw new Error(`Referenced file is outside the current project: ${meta.displayPath}`);
+      }
+    }
     const raw = await readTextFile(filePath);
     const { content, truncated } = trimContent(raw);
+    totalChars += content.length;
+    if (totalChars > 80_000) throw new Error("Referenced content is too large. Select fewer files or a smaller folder.");
     contexts.push({
       token,
       filePath,
@@ -120,12 +147,14 @@ function matchMention(
   mention: ParsedFileMention,
   mentionable: AgentMentionableFile[],
 ): AgentMentionableFile[] {
-  const normalized = mention.value.toLowerCase();
-  const exact = mentionable.filter(
-    (file) =>
-      file.name.toLowerCase() === normalized ||
-      file.displayPath.toLowerCase() === normalized,
-  );
+  const normalized = mention.value.replace(/\/$/, "").toLowerCase();
+  const paths = mentionable.filter(file => file.displayPath.replace(/\/$/, "").toLowerCase() === normalized);
+  const exact = paths.length ? paths : mentionable.filter(file => file.name.toLowerCase() === normalized);
   if (exact.length > 0 || mention.syntax !== "legacy") return exact;
   return mentionable.filter((file) => file.name.toLowerCase().startsWith(normalized));
+}
+
+function isInside(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return !!path && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }

@@ -1,3 +1,4 @@
+import { claudeClient } from "./claude/client";
 import * as Y from "yjs";
 import { toBase64 } from "lib0/buffer";
 import { ProjectReviewSettingsStore, applyProjectReviewSettings } from "./collab/project-review-settings";
@@ -96,6 +97,7 @@ async function completeWithSettings(messages: Parameters<typeof completeAgentMod
 // The AI co-author: a Bun-side peer that answers comment threads with edits…
 const collabAgent = new CollabAgent(collabRegistry, {
   complete: completeWithSettings,
+  completeBulk: (messages, signal) => completeWithSettings(messages, signal, 16384),
   onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
   // Each section's work zone decides whether AI edits are proposals, suggestions or direct.
   editModeFor: zoneEditMode,
@@ -564,6 +566,10 @@ async function main() {
           activeAgentAbortController?.abort();
         },
 
+        getClaudeStatus: () => claudeClient.status(),
+        loginClaude: () => claudeClient.login(),
+        cancelClaudeLogin: () => claudeClient.cancelLogin(),
+        logoutClaude: () => claudeClient.logout(),
         getCodexStatus: (params) => params?.reconnect ? codexClient.refresh() : codexClient.status(),
         loginCodex: async () => { openValidatedExternalUrl(await codexClient.login()); },
         cancelCodexLogin: () => codexClient.cancelLogin(),
@@ -750,6 +756,7 @@ async function main() {
 
 Electrobun.events.on("before-quit", () => {
   codexClient.close();
+  claudeClient.close();
   void collabRegistry.flush();
 });
 

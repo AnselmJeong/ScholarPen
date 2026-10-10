@@ -21,6 +21,7 @@ import { TextSelection } from "prosemirror-state";
 import { createThread, LOCAL_USER_ID, type ThreadMeta } from "../../shared/collab/threads";
 import { COLLAB_THREADS_MAP } from "../../shared/collab/protocol";
 import { getEditorCollab } from "./editor-collab";
+import { hasOpenFileMentionMenu } from "./comment-file-mentions";
 
 // Same schema BlockNote uses for comment bodies: paragraphs without colors.
 const { textColor: _textColor, backgroundColor: _backgroundColor, ...commentStyleSpecs } = defaultStyleSpecs;
@@ -76,7 +77,7 @@ function ScholarFloatingComposer() {
     <Components.Comments.Card className="bn-thread" headerText={wholeManuscript ? "Whole manuscript" : undefined}>
       <div
         onKeyDownCapture={(event) => {
-          if (!isSubmitEnter(event)) return;
+          if (!isSubmitEnter(event) || hasOpenFileMentionMenu(event.target)) return;
           event.preventDefault();
           event.stopPropagation();
           void save();
@@ -121,7 +122,7 @@ export function ScholarFloatingThread(props: ThreadProps) {
     <div
       style={{ display: "contents" }}
       onKeyDownCapture={(event) => {
-        if (!isSubmitEnter(event)) return;
+        if (!isSubmitEnter(event) || hasOpenFileMentionMenu(event.target)) return;
         const commentEditor = (event.target as HTMLElement).closest(".bn-comment-editor");
         if (!commentEditor?.parentElement) return;
         event.preventDefault();

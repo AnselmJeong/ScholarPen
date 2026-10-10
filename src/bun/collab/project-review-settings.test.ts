@@ -74,3 +74,17 @@ test("corrupt settings fail visibly instead of silently turning all types back o
   await expect(store.setCategory(root, "logic", false)).rejects.toThrow("Invalid project review settings");
   expect(await readFile(path, "utf8")).toBe('{"disabledCategories":false}');
 });
+
+test("review defaults to serious issues and preserves explicit severity choices on reopen", () => {
+  const original = session("/a");
+  const map = original.ydoc.getMap(REVIEW_MAP);
+  expect(reviewSettingsOf(map).minSeverity).toBe("high");
+  map.set("minSeverity", "invalid");
+  expect(reviewSettingsOf(map).minSeverity).toBe("high");
+  for (const severity of ["low", "medium", "high"] as const) {
+    map.set("minSeverity", severity);
+    const reopened = session("/a");
+    Y.applyUpdate(reopened.ydoc, Y.encodeStateAsUpdate(original.ydoc));
+    expect(reviewSettingsOf(reopened.ydoc.getMap(REVIEW_MAP)).minSeverity).toBe(severity);
+  }
+});

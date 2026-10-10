@@ -167,14 +167,9 @@ describe("provider thinking payloads and activity", () => {
     expect(agentThinkingConfig("openai", "gpt-4o", "high").supported).toBeFalse();
   });
 
-  test("Claude manual budgets leave room for the answer and new models use adaptive thinking", () => {
-    for (const level of ["low", "medium", "high"] as const) {
-      const fields = agentThinkingConfig("anthropic", "claude-sonnet-4-5", level).fields as any;
-      expect(fields.thinking.budget_tokens).toBeGreaterThanOrEqual(1024);
-      expect(fields.max_tokens).toBeGreaterThan(fields.thinking.budget_tokens);
-      expect(agentThinkingConfig("anthropic", "claude-sonnet-4-6", level).fields.output_config).toEqual({ effort: level });
-    }
-    expect(agentThinkingConfig("anthropic", "claude-sonnet-4-6", "none").fields.thinking).toEqual({ type: "disabled" });
+  test("Claude subscription explains CLI effort without an API payload", () => {
+    expect(agentThinkingConfig("anthropic", "sonnet", "none").fields).toEqual({});
+    expect(agentThinkingConfig("anthropic", "sonnet", "none").notice).toContain("None은 Low");
   });
 
   test("DeepSeek explicitly disables thinking and explains legacy model selection", () => {
