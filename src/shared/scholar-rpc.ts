@@ -2,6 +2,7 @@ import type { ClaudeStatus } from "./claude";
 import type { ReviewCategory, ProjectReviewSettings } from "./collab/review";
 import type { CodexStatus } from "./codex";
 import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "./project-memory";
+import type { AuthorLearningView } from "./author-learning";
 import type { ElectrobunRPCSchema, RPCSchema } from "electrobun/bun";
 import type { ReferenceDocument } from "./project-references";
 import type { Glossary } from "./glossary";
@@ -52,6 +53,8 @@ type BunRequests = RPCSchema<{
     openProjectByPath: { params: { projectPath: string }; response: ProjectInfo };
     createProject: { params: { name: string }; response: ProjectInfo };
     getProjectMemoryStatus: { params: { projectPath: string }; response: ProjectMemoryStatus };
+    getAuthorLearning: { params: { projectPath: string }; response: AuthorLearningView };
+    dismissAuthorPreference: { params: { projectPath: string; id: string }; response: AuthorLearningView };
     retainProjectMemory: { params: { projectPath: string; content: string; source: string }; response: ProjectMemoryReceipt };
     recallProjectMemory: { params: { projectPath: string; query: string }; response: ProjectMemoryHit[] };
     getProjectMemoryOperation: { params: { projectPath: string; operationId: string }; response: ProjectMemoryOperation };
@@ -104,12 +107,13 @@ type BunRequests = RPCSchema<{
         model: string;
         messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
         think?: boolean;
+        projectPath?: string;
       };
       response: void;
     };
     abortAiStream: { params: void; response: void };
     startOllamaOpenAIProxy: {
-      params: { requestId: string; body: string };
+      params: { requestId: string; body: string; projectPath?: string };
       response: OllamaProxyResponse;
     };
     abortOllamaOpenAIProxy: { params: { requestId: string }; response: void };

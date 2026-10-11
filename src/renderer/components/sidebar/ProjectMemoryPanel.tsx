@@ -97,10 +97,10 @@ export function ProjectMemoryPanel({ projectPath, sourceName, getSelection }: {
       {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       <Brain className="h-3.5 w-3.5 text-muted-foreground" />
       <span className="font-medium">프로젝트 기억</span>
-      <span className="ml-auto text-muted-foreground">{status?.state === "ready" ? "Hindsight 연결됨" : status?.state === "unavailable" || error ? "연결 확인 필요" : "연결 중…"}</span>
+      <span className="ml-auto text-muted-foreground">{status?.state === "ready" ? `기억 ${status.memories ?? 0}건` : status?.state === "unavailable" || error ? "연결 확인 필요" : "연결 중…"}</span>
     </button>
     {expanded && <div className="max-h-[45vh] space-y-3 overflow-y-auto px-3 pb-3">
-      <p className="text-muted-foreground">연구 결정, 용어 정의, 참고할 내용을 남기세요. 저장한 기억은 이 프로젝트의 AI 질문에 자동으로 참조됩니다.</p>
+      <p className="text-muted-foreground">직접 수정에서 배우는 편집 취향은 Project 탭에서 자동 관리됩니다. 여기에는 별도로 기억시키고 싶은 연구 결정이나 참고 사항을 남길 수 있습니다.</p>
       {status?.state === "unavailable" && <p role="alert" className="text-amber-700 dark:text-amber-300">{status.error}</p>}
       <div className="flex items-center gap-2">
         <Button variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>연결 재시도</Button>

@@ -72,6 +72,7 @@ import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../..
 import { reconcileBlocks } from "../../collab/reconcile";
 import { setEditorCollab } from "../../collab/editor-collab";
 import { acceptedDocument } from "../../collab/suggestions";
+import { observeAuthorEdits } from "../../collab/author-learning";
 import { AIEditHighlightExtension, AIZoneBadgeExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
 import { ZONES_MAP } from "../../../shared/collab/zones";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
@@ -240,7 +241,7 @@ function CollabEditorArea({
       AISelectionTargetExtension(),
       AIExtension({
         transport: ollamaStatus.connected
-          ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b")
+          ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b", project?.path)
           : createNoOpTransport(),
       }),
     ],
@@ -321,6 +322,11 @@ function CollabEditorArea({
 
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
+    if (!documentReady || !peer) return;
+    return observeAuthorEdits(editor, peer);
+  }, [editor, peer, documentReady]);
+
+  useEffect(() => {
     if (!documentReady) return;
     onEditorReady(editor);
     return () => onEditorReady(null);
@@ -332,7 +338,7 @@ function CollabEditorArea({
     if (!aiExt?.options?.setState) return;
 
     const transport = ollamaStatus.connected
-      ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b")
+      ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b", project?.path)
       : createNoOpTransport();
 
     aiExt.options.setState((prev: Record<string, unknown>) => ({
@@ -344,7 +350,7 @@ function CollabEditorArea({
     if (menuState === "closed" || menuState == null) {
       aiExt.closeAIMenu?.();
     }
-  }, [editor, ollamaStatus.connected, ollamaStatus.activeModel]);
+  }, [editor, ollamaStatus.connected, ollamaStatus.activeModel, project?.path]);
 
   // Load citekeys from references.bib when project changes
   useEffect(() => {
@@ -918,6 +924,7 @@ function CollabEditorArea({
       {aiEditSnapshot && (
         <AIInlineEditPanel
           snapshot={aiEditSnapshot}
+          projectPath={project?.path}
           model={ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b"}
           onAccept={handleAIEditAccept}
           onSuggest={handleAIEditSuggest}

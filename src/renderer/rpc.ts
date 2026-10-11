@@ -2,6 +2,7 @@ import type { ClaudeStatus } from "../shared/claude";
 import type { ReviewCategory, ProjectReviewSettings } from "../shared/collab/review";
 import type { CodexStatus } from "../shared/codex";
 import type { ProjectMemoryStatus, ProjectMemoryHit, ProjectMemoryReceipt, ProjectMemoryOperation } from "../shared/project-memory";
+import type { AuthorLearningView } from "../shared/author-learning";
 // RPC client for calling Main process handlers from the Renderer
 // Uses Electrobun's webview RPC bridge
 
@@ -50,6 +51,7 @@ type CollabMessageHandler = (message: CollabUpdateMessage) => void;
 
 const strictRpcMethods = new Set([
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
+  "getAuthorLearning", "dismissAuthorPreference",
   "getClaudeStatus", "loginClaude", "cancelClaudeLogin", "logoutClaude",
   "getCodexStatus", "loginCodex", "cancelCodexLogin", "logoutCodex", "listProviderModels",
   "selectFigure",
@@ -356,6 +358,8 @@ async function call<T>(method: string, params?: unknown): Promise<T> {
 
 export const rpc = {
   getProjectMemoryStatus: (projectPath: string) => call<ProjectMemoryStatus>("getProjectMemoryStatus", { projectPath }),
+  getAuthorLearning: (projectPath: string) => call<AuthorLearningView>("getAuthorLearning", { projectPath }),
+  dismissAuthorPreference: (projectPath: string, id: string) => call<AuthorLearningView>("dismissAuthorPreference", { projectPath, id }),
   retainProjectMemory: (projectPath: string, content: string, source: string) => call<ProjectMemoryReceipt>("retainProjectMemory", { projectPath, content, source }),
   recallProjectMemory: (projectPath: string, query: string) => call<ProjectMemoryHit[]>("recallProjectMemory", { projectPath, query }),
   getProjectMemoryOperation: (projectPath: string, operationId: string) => call<ProjectMemoryOperation>("getProjectMemoryOperation", { projectPath, operationId }),
@@ -509,11 +513,12 @@ export const rpc = {
   generateTextStream: (
     model: string,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-    think?: boolean
-  ) => call<void>("generateTextStream", { model, messages, think }),
+    think?: boolean,
+    projectPath?: string
+  ) => call<void>("generateTextStream", { model, messages, think, projectPath }),
   abortAiStream: () => call<void>("abortAiStream"),
-  startOllamaOpenAIProxy: (requestId: string, body: string) =>
-    call<OllamaProxyResponse>("startOllamaOpenAIProxy", { requestId, body }),
+  startOllamaOpenAIProxy: (requestId: string, body: string, projectPath?: string) =>
+    call<OllamaProxyResponse>("startOllamaOpenAIProxy", { requestId, body, projectPath }),
   abortOllamaOpenAIProxy: (requestId: string) =>
     call<void>("abortOllamaOpenAIProxy", { requestId }),
   // ── Collaborative editing ─────────────────────────────

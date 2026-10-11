@@ -118,7 +118,9 @@ test("the former statistics reviewer and Reviewer 2 now mean ScholarPen AI", asy
   expect(posted[0].meta).toMatchObject({ agent: "scholarpen-ai", category: "statistics" });
   // One reviewer covers what the three used to.
   expect(system).toContain("effect sizes");
-  expect(system).toContain("skeptical journal referee");
+  expect(system).toContain("novelty:");
+  expect(system).toContain("alternative-explanation:");
+  expect(system).toContain("The minimum severity is high");
 });
 
 test("mentions address ScholarPen AI, including the old handles", () => {

@@ -31,6 +31,7 @@ export interface SelectionSnapshot {
 }
 
 interface AIInlineEditPanelProps {
+  projectPath?: string;
   snapshot: SelectionSnapshot;
   model: string;
   onAccept: (snapshot: SelectionSnapshot, newText: string) => string | null;
@@ -71,6 +72,7 @@ const TRANSLATE_LANGS = [
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function AIInlineEditPanel({
+  projectPath,
   snapshot,
   model,
   onAccept,
@@ -265,7 +267,8 @@ export function AIInlineEditPanel({
             { role: "system", content: messages.system },
             { role: "user", content: messages.user },
           ],
-          false
+          false,
+          projectPath
         );
       } catch (err) {
         setError((err as Error).message);
@@ -273,7 +276,7 @@ export function AIInlineEditPanel({
         activeRef.current = false;
       }
     },
-    [model, snapshot.documentContext, snapshot.protection]
+    [model, snapshot.documentContext, snapshot.protection, projectPath]
   );
 
   const handleAccept = () => {

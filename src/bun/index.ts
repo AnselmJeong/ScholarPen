@@ -12,6 +12,7 @@ import { BIBLIOGRAPHY_RELATIVE_PATH, fileSystem } from "./fs/manager";
 import { listAgentSkills } from "./agent/skill-registry";
 import { listAgentMentionableFiles } from "./agent/mention-resolver";
 import { streamScholarAgent } from "./agent/service";
+import { authorLearning, projectMemorySync } from "./memory/runtime";
 import { listProviderModels } from "./agent/providers";
 import { codexClient } from "./codex/client";
 import { getAgentThreadStore } from "./agent/thread-store";
@@ -102,7 +103,8 @@ const projectWriting = new ProjectWriting(collabRegistry, {
 
 // The AI co-author: a Bun-side peer that answers comment threads with edits…
 const collabAgent = new CollabAgent(collabRegistry, {
-  projectGuide: (session) => projectWriting.guide(session.projectPath),
+  projectGuide: async (session) => ({ ...await projectWriting.guide(session.projectPath),
+    preferences: await authorLearning.guidance(session.projectPath).catch(() => "") }),
   complete: completeWithSettings,
   completeBulk: (messages, signal) => completeWithSettings(messages, signal, 16384),
   onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
@@ -154,6 +156,7 @@ const recentlySavedFiles = new Set<string>(); // suppress reload for own saves
 const internallyUpdatingProjects = new Set<string>();
 
 function watchProjectDir(projectPath: string) {
+  projectMemorySync.start(projectPath);
   activeProjectWatcher?.close();
   activeProjectWatcher = null;
   try {
@@ -248,6 +251,12 @@ async function main() {
 
         listProjects: () => fileSystem.listProjects(),
         getProjectMemoryStatus: ({ projectPath }) => fileSystem.getProjectMemoryStatus(projectPath),
+        getAuthorLearning: async ({ projectPath }) => {
+          const path = await fileSystem.resolveProjectPath(projectPath);
+          const view = await authorLearning.view(path);
+          return { ...view, error: view.error || projectMemorySync.error(path) };
+        },
+        dismissAuthorPreference: async ({ projectPath, id }) => authorLearning.dismiss(await fileSystem.resolveProjectPath(projectPath), id),
         retainProjectMemory: ({ projectPath, content, source }) => fileSystem.retainProjectMemory(projectPath, content, source),
         recallProjectMemory: ({ projectPath, query }) => fileSystem.recallProjectMemory(projectPath, query),
         getProjectMemoryOperation: ({ projectPath, operationId }) => fileSystem.getProjectMemoryOperation(projectPath, operationId),
@@ -634,7 +643,9 @@ async function main() {
         // Proxy Ollama chat to the renderer via aiChunk messages.
         // Fire-and-forget: return immediately so Electrobun can flush outbound
         // aiChunk messages while the stream runs in the background.
-        generateTextStream: async ({ model, messages, think }) => {
+        generateTextStream: async ({ model, messages, think, projectPath }) => {
+          const preferences = projectPath ? await authorLearning.guidance(await fileSystem.resolveProjectPath(projectPath)).catch(() => "") : "";
+          if (preferences) messages = [{ role: "system", content: preferences }, ...messages];
           activeAiAbortController?.abort();
           const controller = new AbortController();
           activeAiAbortController = controller;
@@ -665,7 +676,15 @@ async function main() {
           activeAiAbortController?.abort();
         },
 
-        startOllamaOpenAIProxy: async ({ requestId, body }) => {
+        startOllamaOpenAIProxy: async ({ requestId, body, projectPath }) => {
+          if (projectPath) {
+            const preferences = await authorLearning.guidance(await fileSystem.resolveProjectPath(projectPath)).catch(() => "");
+            if (preferences) {
+              const request = JSON.parse(body);
+              if (Array.isArray(request.messages)) request.messages.unshift({ role: "system", content: preferences });
+              body = JSON.stringify(request);
+            }
+          }
           activeOllamaProxyControllers.get(requestId)?.abort();
           const controller = new AbortController();
           activeOllamaProxyControllers.set(requestId, controller);

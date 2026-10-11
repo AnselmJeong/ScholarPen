@@ -5,6 +5,7 @@ import { cn } from "../../lib/utils";
 import { normalizeGlossary, type Glossary, type GlossaryEntry } from "../../../shared/glossary";
 import type { ManuscriptMapView, ProjectJobStatus } from "../../../shared/manuscript-map";
 import { CONSISTENCY_KIND_LABEL, type ConsistencyView } from "../../../shared/consistency-report";
+import { AuthorLearningPanel } from "./AuthorLearningPanel";
 
 const POLL_MS = 2_000;
 
@@ -271,6 +272,7 @@ function ProjectTools({ projectPath, onOpenDocument }: { projectPath: string; on
   const mapped = map.view?.documents.filter(document => document.entry).length ?? 0;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
+      <AuthorLearningPanel key={projectPath} projectPath={projectPath} />
       <Section title="Glossary" icon={<BookOpen className="h-3 w-3" />} summary="terms and abbreviations" defaultOpen>
         <GlossaryEditor projectPath={projectPath} suggestions={suggestions} />
       </Section>

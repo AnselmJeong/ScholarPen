@@ -16,6 +16,7 @@ function service(handler?: (req: Request, body: Record<string, unknown>) => Resp
     const body = req.method === "GET" ? {} : await req.json();
     calls.push({ path, method: req.method, body });
     if (path === "/api/health") return Response.json({ status: "ok", dataplane: { status: "connected" } });
+    if (path.startsWith("/api/stats/")) return Response.json({ total_nodes: 0, total_documents: 0, pending_operations: 0 });
     if (handler) return handler(req, body);
     if (req.method === "PUT") return Response.json({ bank_id: path.split("/").at(-1) });
     if (path.endsWith("retain_async")) return Response.json({ success: true, bank_id: body.bank_id, async: true, operation_id: "test-operation" });

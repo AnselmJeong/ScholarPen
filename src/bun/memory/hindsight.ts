@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { DEFAULT_HINDSIGHT_URL, MEMORY_CONTENT_LIMIT, type ProjectMemoryHit, type ProjectMemoryStatus, type ProjectMemoryReceipt, type ProjectMemoryOperation } from "../../shared/project-memory";
+import type { MemorySource } from "./sources";
 
 interface Binding { version: 1; bankId: string }
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -18,12 +19,14 @@ export class ProjectMemoryService {
     url = process.env.SCHOLARPEN_HINDSIGHT_URL || DEFAULT_HINDSIGHT_URL,
     private fetcher: typeof fetch = fetch,
     private apiKey = process.env.SCHOLARPEN_HINDSIGHT_API_KEY || "",
+    private enabled = true,
   ) {
     this.url = url.replace(/\/+$/, "");
   }
 
-  private async request(path: string, body?: unknown, method = "POST", signal?: AbortSignal): Promise<unknown> {
-    const timeout = AbortSignal.timeout(8_000);
+  private async request(path: string, body?: unknown, method = "POST", signal?: AbortSignal, timeoutMs = 8_000): Promise<unknown> {
+    if (!this.enabled) throw new Error("테스트에서는 실제 Hindsight 연결이 비활성화됩니다.");
+    const timeout = AbortSignal.timeout(timeoutMs);
     const response = await this.fetcher(`${this.url}${path}`, {
       method,
       headers: { "Content-Type": "application/json", ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}) },
@@ -86,7 +89,7 @@ export class ProjectMemoryService {
     if (pending) return pending;
     const work = (async () => {
       const data = await this.request(`/api/banks/${encodeURIComponent(binding.bankId)}`, {
-        name: `ScholarPen · ${basename(projectPath)}`,
+        name: basename(projectPath),
       }, "PUT");
       if (!record(data) || data.bank_id !== binding.bankId) throw new Error("Hindsight bank 생성 응답을 확인할 수 없습니다.");
       this.ready.add(binding.bankId);
@@ -97,6 +100,7 @@ export class ProjectMemoryService {
 
   /** Local identity is durable before returning; remote availability never blocks project opening. */
   async initialize(projectPath: string): Promise<void> {
+    if (!this.enabled) return;
     const binding = await this.binding(projectPath);
     void this.ensureBank(binding, projectPath).catch(error => console.warn("[Hindsight] Bank provisioning:", errorMessage(error)));
   }
@@ -104,13 +108,42 @@ export class ProjectMemoryService {
   async status(projectPath: string): Promise<ProjectMemoryStatus> {
     let bankId: string | null = null;
     try {
+      if (!this.enabled) throw new Error("테스트에서는 실제 Hindsight 연결이 비활성화됩니다.");
       const binding = await this.binding(projectPath);
       bankId = binding.bankId;
       await this.ensureBank(binding, projectPath);
       const health = await this.request("/api/health", undefined, "GET");
       if (!record(health) || !record(health.dataplane) || health.dataplane.status !== "connected") throw new Error("Hindsight 메모리 서버에 연결할 수 없습니다.");
-      return { state: "ready", bankId, url: this.url };
+      const stats = await this.request(`/api/stats/${bankId}`, undefined, "GET");
+      if (!record(stats) || typeof stats.total_nodes !== "number" || typeof stats.total_documents !== "number") throw new Error("기억 저장 건수를 확인할 수 없습니다.");
+      return { state: "ready", bankId, url: this.url, memories: stats.total_nodes, documents: stats.total_documents,
+        pending: typeof stats.pending_operations === "number" ? stats.pending_operations : 0 };
     } catch (error) { return { state: "unavailable", bankId, url: this.url, error: errorMessage(error) }; }
+  }
+
+  async bankForProject(projectPath: string): Promise<string> {
+    if (!this.enabled) throw new Error("테스트에서는 실제 Hindsight 연결이 비활성화됩니다.");
+    const binding = await this.binding(projectPath);
+    await this.ensureBank(binding, projectPath);
+    return binding.bankId;
+  }
+
+  async retainAutoSource(projectPath: string, source: MemorySource, documentId: string): Promise<ProjectMemoryReceipt> {
+    if (!/^scholarpen-auto-[a-f0-9]{64}$/.test(documentId)) throw new Error("Invalid automatic memory source ID.");
+    const bankId = await this.bankForProject(projectPath);
+    const data = await this.request("/api/memories/retain_async", {
+      bank_id: bankId,
+      items: [{ content: source.content, document_id: documentId, context: source.context,
+        metadata: { app: "ScholarPen", source: source.key }, tags: ["scholarpen", "author-learning"] }],
+    });
+    if (!record(data) || data.success !== true || data.bank_id !== bankId || typeof data.operation_id !== "string") throw new Error("편집 관찰의 저장 접수를 확인하지 못했습니다.");
+    return { state: "processing", operationId: data.operation_id };
+  }
+
+  async deleteAutoSource(projectPath: string, documentId: string): Promise<void> {
+    if (!/^scholarpen-auto-[a-f0-9]{64}$/.test(documentId)) throw new Error("Invalid automatic memory source ID.");
+    const bankId = await this.bankForProject(projectPath);
+    await this.request(`/api/documents?bank_id=${encodeURIComponent(bankId)}&document_id=${documentId}`, undefined, "DELETE");
   }
 
   async retain(projectPath: string, content: string, source: string): Promise<ProjectMemoryReceipt> {
@@ -150,7 +183,8 @@ export class ProjectMemoryService {
     signal?.throwIfAborted();
     const data = await this.request("/api/recall", {
       bank_id: binding.bankId, query: query.slice(0, 1_500), budget: "low", max_tokens: 2_000,
-    }, "POST", signal);
+    // Cold retrieval may also load the reranker; keep user cancellation active.
+    }, "POST", signal, 60_000);
     if (!record(data) || !Array.isArray(data.results)) throw new Error("Hindsight 검색 응답을 읽을 수 없습니다.");
     const hits: ProjectMemoryHit[] = [];
     for (const hit of data.results.slice(0, 8)) {
@@ -161,4 +195,4 @@ export class ProjectMemoryService {
   }
 }
 
-export const projectMemory = new ProjectMemoryService();
+export const projectMemory = new ProjectMemoryService(undefined, fetch, undefined, process.env.SCHOLARPEN_HINDSIGHT_DISABLED !== "1");

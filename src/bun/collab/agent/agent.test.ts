@@ -497,6 +497,7 @@ const { REVISIONS_MAP, readRevisions } = await import("../../../shared/collab/re
 test("the edit level, project glossary and other chapters' map reach the edit prompt", async () => {
   const { session, prompts } = await setup(async messages => structuredRewrite(messages, text => text.replace("prove", "suggest")), {
     projectGuide: async () => ({
+      preferences: "AUTHOR EDITING PREFERENCES: Avoid unnecessary introductory phrases.",
       glossary: { entries: [{ term: "randomized controlled trial", abbreviation: "RCT", avoid: ["randomised trial"] }] },
       map: { documents: {
         "doc.scholarpen.json": { filename: "doc.scholarpen.json", hash: "h", title: "This one", summary: "SELF SUMMARY", claims: [], terms: [], numbers: [], updatedAt: 1 },
@@ -510,6 +511,7 @@ test("the edit level, project glossary and other chapters' map reach the edit pr
   expect(system).toContain("EDIT LEVEL: SENTENCE");
   expect(system).toContain("randomized controlled trial (RCT)");
   expect(system).toContain("Chapter two reports 120 patients.");
+  expect(system).toContain("Avoid unnecessary introductory phrases.");
   expect(system).not.toContain("SELF SUMMARY");
 });
 

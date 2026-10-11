@@ -392,7 +392,6 @@ class FileSystemManager {
     const projectPath = this.markProjectPath(join(rootDir, safeName));
 
     await initializeProjectSkeleton(projectPath, safeName);
-    await this.initializeProjectMemory(projectPath);
 
     return {
       name: safeName,
@@ -408,7 +407,6 @@ class FileSystemManager {
     const projectPath = this.markProjectPath(join(rootDir, safeName));
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
-    await this.initializeProjectMemory(projectPath);
     return {
       name: safeName,
       path: projectPath,
@@ -422,7 +420,6 @@ class FileSystemManager {
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
     const name = basename(projectPath);
-    await this.initializeProjectMemory(projectPath);
     return {
       name,
       path: projectPath,
@@ -432,11 +429,6 @@ class FileSystemManager {
   }
 
   // ── Document CRUD ───────────────────────────────────────────
-  private async initializeProjectMemory(projectPath: string): Promise<void> {
-    try { await projectMemory.initialize(projectPath); }
-    catch (error) { console.warn("[Hindsight] Project memory initialization failed:", error); }
-  }
-
   /** The canonical path of a project the user opened or that lives under the projects root. */
   async resolveProjectPath(projectPath: string): Promise<string> {
     return this.assertKnownProjectPath(projectPath);

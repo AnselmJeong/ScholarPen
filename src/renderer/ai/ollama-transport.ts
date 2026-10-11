@@ -11,7 +11,7 @@ import { AI_WRITING_STYLE } from "../../shared/ai-writing-style";
  * `think: false`, bypasses Cloud CORS restrictions, and keeps credentials out
  * of renderer-side network requests while preserving tool-call SSE events.
  */
-const ollamaProxyFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+const ollamaProxyFetch = (projectPath?: string) => (async (_input: RequestInfo | URL, init?: RequestInit) => {
   if (typeof init?.body !== "string") {
     throw new Error("Ollama proxy expected a JSON request body.");
   }
@@ -65,7 +65,7 @@ const ollamaProxyFetch = (async (_input: RequestInfo | URL, init?: RequestInit) 
   });
 
   try {
-    const response = await rpc.startOllamaOpenAIProxy(requestId, init.body);
+    const response = await rpc.startOllamaOpenAIProxy(requestId, init.body, projectPath);
     return new Response(stream, {
       status: response.status,
       statusText: response.statusText,
@@ -82,13 +82,13 @@ const unavailableFetch = (async () => {
   throw new Error("Ollama Cloud is not connected. Configure the API key in Settings.");
 }) as unknown as typeof fetch;
 
-export function createOllamaTransport(modelName: string) {
+export function createOllamaTransport(modelName: string, projectPath?: string) {
   console.log("[ollama-transport] Creating transport for model:", modelName);
   const ollama = createOpenAICompatible({
     name: "ollama",
     baseURL: "http://scholarpen.internal/v1",
     apiKey: "proxied-by-bun",
-    fetch: ollamaProxyFetch,
+    fetch: ollamaProxyFetch(projectPath),
   });
   const model = ollama(modelName);
   console.log("[ollama-transport] Model created:", typeof model);
@@ -109,12 +109,13 @@ export function createOllamaTransport(modelName: string) {
 export function createOllamaTransportWithSystemPrompt(
   modelName: string,
   systemPrompt: string,
+  projectPath?: string,
 ) {
   const ollama = createOpenAICompatible({
     name: "ollama",
     baseURL: "http://scholarpen.internal/v1",
     apiKey: "proxied-by-bun",
-    fetch: ollamaProxyFetch,
+    fetch: ollamaProxyFetch(projectPath),
   });
   const model = ollama(modelName);
   return new ClientSideTransport({

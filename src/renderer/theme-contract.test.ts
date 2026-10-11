@@ -8,7 +8,7 @@ const themeAwareSurfaces = [
   "./blocks/math-block.tsx",
   "./components/editor/DOIInputDialog.tsx",
   "./components/editor/EditorPaneGroup.tsx",
-  "./components/sidebar/IconRail.tsx",
+  "./components/editor/PaneToggle.tsx",
 ] as const;
 
 const lightOnlyStyle = /\b(?:bg-white(?:\/\d+)?|bg-gray-(?:50|100|200)|text-gray-(?:400|500|600|700|800)|border-gray-(?:100|200|300)|hover:bg-blue-50)\b|#1e1b4b/i;

@@ -91,7 +91,10 @@ export function enqueueDraft(
   if (zone.trust !== "edit") throw new Error("Set this section to “AI drafts” before asking the AI to draft it.");
   const title = section.heading.node.firstChild?.textContent.trim() ?? "Section";
   return agent.enqueue(attachment, { kind: "draft", label: title, blockId: section.heading.id },
-    (job, att, signal) => runDraft(att, section.heading!.id, complete, signal));
+    (job, att, signal) => runDraft(att, section.heading!.id, async (messages, callSignal) => {
+      const policy = await agent.policyFor(att.session, "structural");
+      return complete(messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\n${policy}` } : message), callSignal);
+    }, signal));
 }
 
 async function runDraft(

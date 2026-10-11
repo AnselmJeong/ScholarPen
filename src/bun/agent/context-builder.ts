@@ -1,6 +1,7 @@
 import { validateAgentImages } from "../../shared/agent-images";
 import { AI_WRITING_STYLE } from "../../shared/ai-writing-style";
 import { projectMemoryPrompt, type ProjectMemoryHit } from "../../shared/project-memory";
+import { authorLearning } from "../memory/runtime";
 import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
@@ -381,6 +382,7 @@ export async function buildAgentMessages(
     ),
     buildProjectSourcePrompt(projectSources),
     projectMemoryPrompt(memories),
+    params.projectPath ? await authorLearning.guidance(params.projectPath).catch(() => "") : "",
     memoryUnavailable ? "Project memory retrieval was unavailable for this request. Do not claim to have consulted stored project memories." : "",
     webContext(webResults),
   ].filter(Boolean);

@@ -78,7 +78,7 @@ export interface CollabAgentDeps {
   /** Per-model-call deadline, not a limit on processing the whole manuscript. */
   completionTimeoutMs?: number;
   /** The project's glossary and manuscript map, followed by every AI edit; none when absent. */
-  projectGuide?: (session: CollabSession) => Promise<{ glossary: Glossary; map: ManuscriptMap }>;
+  projectGuide?: (session: CollabSession) => Promise<{ glossary: Glossary; map: ManuscriptMap; preferences?: string }>;
   /** The project around a document for coordinated revisions; defaults to its files on disk. */
   bulkSources?: (session: CollabSession) => BulkSources | Promise<BulkSources>;
   /** Decides suggestion vs direct edits for a block (zones refine this in stage 5). */
@@ -368,7 +368,7 @@ export class CollabAgent {
   /** The author's standing rules for one job: how far edits may go, and the project's terms and chapters. */
   async policyFor(session: CollabSession, level: EditLevel) {
     const guide = await this.deps.projectGuide?.(session).catch(() => null);
-    return [editLevelGuidance(level), guide ? glossaryGuidance(guide.glossary) : "", guide ? mapGuidance(guide.map, session.filename) : ""]
+    return [editLevelGuidance(level), guide ? glossaryGuidance(guide.glossary) : "", guide ? mapGuidance(guide.map, session.filename) : "", guide?.preferences ?? ""]
       .filter(Boolean).join("\n\n");
   }
 

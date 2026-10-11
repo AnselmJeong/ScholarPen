@@ -101,6 +101,15 @@ my-paper/
     └── references.bib           # Canonical BibTeX file
 ```
 
+## Project memory and author learning
+
+- Hindsight uses one durable bank identity per project in `.scholarpen/hindsight.json`. The bank's display name is the project folder name. Do not replace an existing identity when reopening or moving a project.
+- Opening a project in the app starts `memory/runtime.ts`'s background sync. Filesystem CRUD and tests must not provision remote banks. `bunfig.toml` preloads `scripts/test-env.ts` to disable the production Hindsight singleton; tests inject a loopback service.
+- `renderer/collab/author-learning.ts` records trusted direct typing/IME edits in the shared Y.Doc's `authorEdits` map, coalesced by paragraph. It ignores paste, programmatic and remote AI changes and removes undone observations. Existing accepted/rejected revision records are additional evidence; pending/directly-applied AI revisions and raw manuscript snapshots do not demonstrate author preference.
+- `bun/memory/learning.ts` infers conditional preferences with the configured provider. A preference needs evidence from at least three different paragraphs and independent author actions, including a direct edit or explicit author request. The local `.scholarpen/author-preferences.json` keeps preferences and excluded evidence. Project tab shows the interpretations and their sources and lets the author exclude a mistaken interpretation.
+- `hindsight-sync.json` persists asynchronous ingestion receipts. Poll for completion after relaunch; source IDs are deterministic so changed observations replace their own records instead of multiplying memories. Automatic source records and the supported preference profile are retained in the same project bank.
+- Learned guidance reaches comment/whole-document editing, section drafting, sidebar assistance, inline editing and BlockNote AI. Current instructions, glossary, edit level and scientific accuracy remain authoritative; learned guidance never grants permission to edit outside existing review/trust settings.
+
 ## Citation Management
 
 `src/bun/citation/client.ts` resolves DOIs via CrossRef and searches via OpenAlex. Citekey format: `{firstAuthorLastName}{year}{titleFirstWord}` (lowercase, sanitized). BibTeX is built as a string — no external tools needed.
