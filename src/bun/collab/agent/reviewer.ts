@@ -32,11 +32,14 @@ import { clip } from "./prompts";
 import { RESOLVED_REVIEW_BLOCKS_MAP } from "./resolved-review";
 import { StaleClaimSweeper } from "./stale-claims";
 import { DISMISSED_FINDINGS_MAP, purgeResolvedThreads } from "./resolved-purge";
+import { checkTerminology, glossaryGuidance, type Glossary } from "../../../shared/glossary";
 
 export interface ReviewerDeps {
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
   /** Citekeys in the project's bibliography, or null when it cannot be read. */
   citekeys(projectPath: string): Promise<Set<string> | null>;
+  /** The project glossary; terminology checks and review prompts follow it. */
+  glossary?(projectPath: string): Promise<Glossary>;
   now?: () => number;
   /** Minimum gap between automatic reviews of one document. */
   autoIntervalMs?: number;
@@ -161,7 +164,7 @@ export function locateQuote(block: BlockRef, quote: string) {
   return { from: chars[at], to: chars[at + length - 1] + 1 };
 }
 
-function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[], settings: ReviewSettings): OllamaMessage[] {
+function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[], settings: ReviewSettings, glossary = ""): OllamaMessage[] {
   const system =
     `You are ${SCHOLARPEN_AI.name}, reviewing a section of an academic manuscript together with its author. ` +
     "Protect the author's attention: report concrete problems, not opportunities to improve an already defensible passage. " +
@@ -184,6 +187,7 @@ function buildReviewMessages(title: string, paragraphs: string[], context: strin
     `Only report these enabled categories: ${allowed.join(", ")}. Do not invent categories or rename disabled issues to an enabled type. ` +
     REVIEW_CATEGORIES.filter(category => allowed.includes(category.id)).map(category => `${category.id}: ${category.description}`).join("\n") + "\n" +
     "Write each comment in the language of the manuscript, in one or two sentences, and say what to check or change. " +
+    (glossary ? `${glossary}\nA term used against this glossary is a consistency finding; undefined abbreviations are checked separately, do not report them.\n` : "") +
     AI_WRITING_STYLE + "\n\n" +
     "Return JSON only, in this shape:\n" +
     `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${allowed.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
@@ -341,7 +345,20 @@ export class Reviewer {
     if (!prose.length) return;
     const originalText = new Map(prose.map((block) => [block.id,
       readableText(doc, blockContent(block).from, blockContent(block).to)]));
-    const findings: Array<ReviewFinding & { blockId: string }> = [];
+    // Rule findings come from deterministic checks the author configured, so no severity threshold hides them.
+    const findings: Array<ReviewFinding & { blockId: string; rule?: boolean }> = [];
+    const glossary = await this.deps.glossary?.(session.projectPath).catch(() => null) ?? null;
+    if (glossary && (allowed.includes("definition") || allowed.includes("consistency"))) {
+      // First use is a whole-document property; only this section's paragraphs get comments.
+      const inSection = new Set(prose.map(block => block.id));
+      const all = [...iterateTop(doc)].flatMap(flatten).filter(block => hasInlineContent(block) && block.node.firstChild?.type.name !== "heading");
+      for (const finding of checkTerminology(all.map(block => ({ blockId: block.id,
+        text: readableText(doc, blockContent(block).from, blockContent(block).to) })), glossary)) {
+        const category = finding.kind === "abbreviation" ? "definition" : "consistency";
+        if (!inSection.has(finding.blockId) || !allowed.includes(category)) continue;
+        findings.push({ blockId: finding.blockId, paragraph: -1, quote: finding.quote, category, severity: "medium", comment: finding.comment, rule: true });
+      }
+    }
 
     // Deterministic check first: citations whose key is not in the bibliography.
     const keys = allowed.includes("citation") ? await this.deps.citekeys(session.projectPath) : null;
@@ -383,7 +400,7 @@ export class Reviewer {
         clip(contextText(contextBlocks.filter(block => block.pos > last.pos)), 2000, "start");
       attachment.presence.claim(first.id, "reviewing");
       const response = await this.deps.complete(
-        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed, settings), signal);
+        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed, settings, glossary ? glossaryGuidance(glossary) : ""), signal);
       if (signal.aborted) throw new Error("Cancelled");
       for (const finding of parseFindings(response, batch.length)) {
         findings.push({ ...finding, blockId: batch[finding.paragraph].id });
@@ -405,7 +422,7 @@ export class Reviewer {
     for (const finding of findings) {
       // Discard even a different issue if the author resolved this paragraph in flight.
       if (reason === "auto" && resolved.has(finding.blockId)) continue;
-      if (SEVERITY_RANK[finding.severity] < SEVERITY_RANK[currentSettings.minSeverity]) continue;
+      if (!finding.rule && SEVERITY_RANK[finding.severity] < SEVERITY_RANK[currentSettings.minSeverity]) continue;
       if (currentSettings.muted.includes(finding.category)) continue;
       const fingerprint = `${SCHOLARPEN_AI.id}:${finding.blockId}:${finding.category}:${normalize(finding.quote || finding.comment)}`;
       // Never raise a finding twice, including one the author already resolved.

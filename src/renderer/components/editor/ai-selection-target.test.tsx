@@ -328,3 +328,16 @@ for (const change of ["edit", "delete"] as const) {
     expect(JSON.stringify(editor.document)).toBe(before);
   });
 }
+
+test("Improve applies a JSON segment answer around the protected citation and formatting", async () => {
+  await mount();
+  const { editableSegments } = await import("../../../shared/ai-text-segments");
+  const segments = editableSegments([snapshot.protection]);
+  await clickButton("Improve");
+  await finishImprove(JSON.stringify({ edits: segments.filter(segment => segment.text.includes("proves causation") || segment.text.includes("typo"))
+    .map(segment => ({ id: segment.id, text: segment.text.replace("proves causation", "reports an association").replace("typo", "correction") })) }));
+  const accepted = JSON.stringify(acceptedDocument(editor));
+  expect(listChangeSets(editor.prosemirrorView.state.doc)).toHaveLength(1);
+  expect(accepted).toContain("smith2026");
+  expect(document.body.textContent).not.toContain("protected BlockNote marker");
+});

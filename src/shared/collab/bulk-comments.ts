@@ -1,6 +1,7 @@
 import type * as Y from "yjs";
 import { COLLAB_THREADS_MAP } from "./protocol";
 import { createThread, readThreads, updateThreadMeta, type ThreadSnapshot } from "./threads";
+import { editLevelOf, WRITING_MAP, type EditLevel } from "./writing";
 
 /** `include` limits bulk actions to the comments the author is looking at. */
 type ThreadFilter = (thread: ThreadSnapshot) => boolean;
@@ -10,21 +11,25 @@ export function openClaimThreads(threads: ThreadSnapshot[], include: ThreadFilte
     !thread.meta.documentAction && thread.comments.some(comment => !comment.deleted));
 }
 
+/** True while ScholarPen AI works on a comment or a coordinated revision is queued. */
+export function aiTaskRunning(threads: ThreadSnapshot[]) {
+  return threads.some(thread => !thread.resolved && (thread.meta.status === "in-progress" ||
+    (thread.meta.documentAction === "resolve-comments" && thread.meta.assignee === "ai")));
+}
+
 /** One request, rather than one independently queued edit per comment. */
-export function requestBulkComments(ydoc: Y.Doc, instructions = "", include?: ThreadFilter) {
+export function requestBulkComments(ydoc: Y.Doc, instructions = "", include?: ThreadFilter,
+  level: EditLevel = editLevelOf(ydoc.getMap(WRITING_MAP))) {
   const map = ydoc.getMap(COLLAB_THREADS_MAP);
   const all = readThreads(map);
-  if (all.some(thread => !thread.resolved && (thread.meta.status === "in-progress" ||
-    (thread.meta.documentAction === "resolve-comments" && thread.meta.assignee === "ai")))) {
-    throw new Error("Wait for the current AI task to finish before asking for a coordinated revision.");
-  }
+  if (aiTaskRunning(all)) throw new Error("Wait for the current AI task to finish before asking for a coordinated revision.");
   const targets = openClaimThreads(all, include);
   if (!targets.length) throw new Error("There are no open comments to address.");
   let id = "";
   ydoc.transact(() => {
     id = createThread(map, "me", instructions.trim() ||
       "Address all open comments together across the whole manuscript. Keep issues requiring my decision open, and propose one consistent revision.", {
-      assignee: "ai", scope: "document", documentAction: "resolve-comments",
+      assignee: "ai", scope: "document", documentAction: "resolve-comments", editLevel: level,
       bulkThreadIds: targets.map(thread => thread.id), requestedAt: Date.now(),
     });
     for (const thread of targets) updateThreadMeta(map, thread.id, {
@@ -40,7 +45,7 @@ export function resolveAllComments(ydoc: Y.Doc, include: ThreadFilter = () => tr
   const targets = readThreads(map).filter(thread => include(thread) && !thread.resolved && thread.meta.status !== "resolved");
   ydoc.transact(() => {
     for (const thread of targets) updateThreadMeta(map, thread.id, {
-      status: "resolved", assignee: "me", manual: true, bulkRequestId: undefined,
+      status: "resolved", assignee: "me", manual: true, bulkRequestId: undefined, decision: undefined,
       statusNote: "Dismissed with Resolve all; manuscript unchanged.",
     });
   });

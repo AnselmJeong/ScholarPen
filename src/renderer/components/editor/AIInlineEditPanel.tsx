@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { rpc, onAiChunk } from "../../rpc";
 import {
   buildInlineEditMessages,
-  parseInlineEditResponse,
   protectedRewritePreview,
   removeDiscouragedPunctuation,
   type InlineEditDocumentContext,
   type InlineEditWorkflow,
   type ProtectedSelection,
 } from "./ai-inline-edit-protection";
+import { resolveInlineEditResponse } from "../../../shared/ai-text-segments";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -206,11 +206,12 @@ export function AIInlineEditPanel({
         setLoading(false);
         activeRef.current = false;
         if (streamFailedRef.current) return;
+        // The model returns plain-text segments; rebuild the annotated passage around the protected markers.
+        // Clean punctuation here too, so the previewed result is what Accept applies.
         let revised = "";
         try {
-          // Clean here too, so the previewed result is what Accept applies.
           revised = accumulatedRef.current.trim()
-            ? removeDiscouragedPunctuation(parseInlineEditResponse(accumulatedRef.current, snapshot.protection))
+            ? removeDiscouragedPunctuation(resolveInlineEditResponse(accumulatedRef.current, snapshot.protection))
             : "";
         } catch (err) {
           setError((err as Error).message);

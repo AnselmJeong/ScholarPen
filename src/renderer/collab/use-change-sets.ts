@@ -3,6 +3,7 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../shared/collab/change-sets";
 import { COLLAB_THREADS_MAP } from "../../shared/collab/protocol";
 import { readThreads, updateThreadMeta } from "../../shared/collab/threads";
+import { REVISIONS_MAP, settleRevision, type RevisionEntry } from "../../shared/collab/revision-log";
 import { getEditorCollab } from "./editor-collab";
 import { listChangeSets, resolveAllChangeSets, resolveChangeSet, type PendingChangeSet } from "./suggestions";
 
@@ -63,6 +64,9 @@ function settleThreads(editor: BlockNoteEditor<any, any, any>, ids: Array<string
         continue;
       }
       const acceptedEntirely = accept && !info?.rejected;
+      // The history keeps what became of each revision after its suggestions are gone.
+      settleRevision(collab.ydoc.getMap<RevisionEntry>(REVISIONS_MAP), id,
+        acceptedEntirely ? "accepted" : accept ? "partial" : "rejected", Date.now());
       for (const threadId of new Set([info?.threadId, ...(info?.addressedThreadIds ?? [])])) {
         if (!threadId) continue;
         const thread = readThreads(threads).find(item => item.id === threadId);

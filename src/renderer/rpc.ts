@@ -35,6 +35,9 @@ import type {
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "../shared/collab/protocol";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
+import type { Glossary } from "../shared/glossary";
+import type { ManuscriptMapView } from "../shared/manuscript-map";
+import type { ConsistencyView } from "../shared/consistency-report";
 
 type MenuActionHandler = (action: string) => void;
 type ImportMarkdownHandler = (content: string, suggestedFilename: string) => void;
@@ -83,6 +86,9 @@ const strictRpcMethods = new Set([
   "collabSetReviewCategory",
   "collabDraftSection",
   "collabUndoAI",
+  "saveGlossary",
+  "updateManuscriptMap",
+  "runConsistencyCheck",
 ]);
 
 // Create Electrobun RPC client for webview using defineRPC
@@ -235,6 +241,9 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     loadManuscript: [],
     loadDocument: [],
     listProjectReferences: [],
+    getGlossary: { entries: [] },
+    getManuscriptMap: { documents: [], job: { state: "idle" } },
+    getConsistencyReport: { report: null, job: { state: "idle" } },
     loadBibtex: "",
     mergeBibtex: {
       bibtex: "",
@@ -522,4 +531,10 @@ export const rpc = {
   collabReviewSection: (docKey: string, blockId: string) =>
     call<void>("collabReviewSection", { docKey, blockId }),
   collabDraftSection: (docKey: string, blockId: string) => call<void>("collabDraftSection", { docKey, blockId }),
+  getGlossary: (projectPath: string) => call<Glossary>("getGlossary", { projectPath }),
+  saveGlossary: (projectPath: string, glossary: Glossary) => call<Glossary>("saveGlossary", { projectPath, glossary }),
+  getManuscriptMap: (projectPath: string) => call<ManuscriptMapView>("getManuscriptMap", { projectPath }),
+  updateManuscriptMap: (projectPath: string) => call<ManuscriptMapView>("updateManuscriptMap", { projectPath }),
+  getConsistencyReport: (projectPath: string) => call<ConsistencyView>("getConsistencyReport", { projectPath }),
+  runConsistencyCheck: (projectPath: string) => call<ConsistencyView>("runConsistencyCheck", { projectPath }),
 };

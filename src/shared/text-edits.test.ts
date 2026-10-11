@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { Schema } from "prosemirror-model";
 import { protectSelectionSlice, restoreProtectedSelection } from "./ai-text-protection";
-import { editableSegments, parseTextEdits } from "./text-edits";
+import { editableSegments, parseTextEdits } from "./ai-text-segments";
 
 const schema = new Schema({ nodes: {
   doc: { content: "paragraph+" }, paragraph: { content: "inline*" }, text: { group: "inline" },

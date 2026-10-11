@@ -1,5 +1,6 @@
 import * as Y from "yjs";
 import { SCHOLARPEN_AI, isAIUser, mentionedPersona } from "./personas";
+import type { EditLevel } from "./writing";
 
 // Comment threads live in the shared Y.Doc in BlockNote's YjsThreadStore format
 // (see @blocknote/core comments/threadstore/yjs/yjsHelpers). These helpers let
@@ -52,6 +53,10 @@ export interface ThreadMeta {
   requestedAt?: number;
   /** Suggestion id of the change set the AI proposed in answer to this thread. */
   changeSet?: number;
+  /** The AI cannot continue without the author's decision or evidence; shown in the decision queue. */
+  decision?: { question: string; askedAt: number };
+  /** Edit level captured when a coordinated revision was requested. */
+  editLevel?: EditLevel;
 }
 
 export interface ThreadComment {

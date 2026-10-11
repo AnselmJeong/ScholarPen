@@ -2,6 +2,7 @@ import { afterAll, afterEach, expect, mock, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import type { CollabSession } from "../registry";
+import type { BulkSources } from "./bulk-sources";
 
 const dom = new Window();
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
@@ -21,7 +22,7 @@ const Y = await import("yjs");
 const { CollabRegistry } = await import("../registry");
 const { CollabAgent } = await import("./agent");
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
-const { readDoc, findBlock, blockContent, writeBlock, anchorThread } = await import("./doc-model");
+const { readDoc, findBlock, blockContent, writeBlock, anchorThread, threadRange } = await import("./doc-model");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
 const { CHANGE_SETS_MAP } = await import("../../../shared/collab/change-sets");
 const { createThread, readThreads, updateThreadMeta, addThreadComment, AI_USER_ID } = await import("../../../shared/collab/threads");
@@ -54,7 +55,11 @@ function answer(messages: OllamaMessage[]) {
     })),
   });
 }
-async function setup(respond: (messages: OllamaMessage[]) => Promise<string> = async messages => answer(messages), extra = 0) {
+function fakeSources(overrides: Partial<BulkSources> = {}): BulkSources {
+  return { documents: async () => [], loadBibtex: async () => "", saveBibtex: async () => {},
+    resolveDOI: async doi => { throw new Error(`offline: ${doi}`); }, findCitations: async () => [], ...overrides };
+}
+async function setup(respond: (messages: OllamaMessage[]) => Promise<string> = async messages => answer(messages), extra = 0, sources = fakeSources()) {
   const blocks = [
     { id: "p1", type: "paragraph" as const, content: "These findings prove the hypothesis." },
     ...Array.from({ length: extra }, (_, index) => ({ id: `middle-${index}`, type: "paragraph" as const, content: `Middle paragraph ${index}.` })),
@@ -66,7 +71,8 @@ async function setup(respond: (messages: OllamaMessage[]) => Promise<string> = a
   await registry.open({ projectPath: "/p", filename: "doc.scholarpen.json", peerId: "editor", schema: schemaToSpecJSON(editor.pmSchema) });
   const session = registry.get("/p::doc.scholarpen.json")!;
   const calls: OllamaMessage[][] = [];
-  agent = new CollabAgent(registry, { complete: async messages => { calls.push(messages); return respond(messages); }, onActivity: () => {}, pollMs: 1 });
+  agent = new CollabAgent(registry, { complete: async messages => { calls.push(messages); return respond(messages); }, onActivity: () => {}, pollMs: 1,
+    bulkSources: () => sources });
   const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
   const ai = createThread(map, AI_USER_ID, "Qualify the causal inference.", { assignee: "me", blockId: "p1" });
   const human = createThread(map, "me", "Keep the conclusion consistent with the introduction.", { manual: true, blockId: "p2" });
@@ -364,4 +370,200 @@ test("edits for a comment the verification defers are withdrawn and the remainde
   expect(changedParagraphs(session)).toEqual(["p1"]);
   expect(threadsOf(session).find(thread => thread.id === ai)?.meta.status).toBe("proposed");
   expect(threadsOf(session).find(thread => thread.id === human)?.meta.status).toBe("open");
+});
+
+const BIB = "@article{smith2020trial,\n  author = {Smith, Ann and Lee, Bo},\n  title = {A randomized trial of the hypothesis},\n  journal = {Trials},\n  year = {2020},\n  doi = {10.1000/trial}\n}\n";
+const RESOLVED = "@article{kim2021cohort,\n  author = {Kim, Chan},\n  title = {Cohort evidence for the hypothesis},\n  journal = {Epidemiology},\n  year = {2021},\n  doi = {10.1000/cohort}\n}\n";
+function citing(cite: string, extra: Record<string, unknown> = {}) {
+  return async (messages: OllamaMessage[]) => {
+    const data = JSON.parse(answer(messages));
+    if (!payloadOf(messages).candidateManuscript) {
+      data.edits = data.edits.map((edit: { id: string; text: string }) => ({ ...edit, text: edit.text.replace("hypothesis.", `hypothesis ${cite}.`) }));
+      Object.assign(data, extra);
+    }
+    return JSON.stringify(data);
+  };
+}
+/** `[@` left in a text node means a citation was not turned into a citation node. */
+function literalCitationText(session: CollabSession) {
+  let found = false;
+  readDoc(session).descendants(node => { if (node.isText && node.text!.includes("[@")) found = true; return true; });
+  return found;
+}
+function citationsIn(session: CollabSession) {
+  const keys: string[] = [];
+  readDoc(session).descendants(node => { if (node.type.name === "citation") keys.push(node.attrs.citekey); return true; });
+  return keys;
+}
+
+test("the other project documents and references.bib are read before revising", async () => {
+  const sources = fakeSources({
+    documents: async () => [{ path: "documents/chapter-2.scholarpen.json", text: "Chapter 2 defines the hypothesis as H1." }],
+    loadBibtex: async () => BIB,
+  });
+  const { session, calls } = await setup(undefined, 0, sources);
+  requestBulkComments(session.ydoc);
+  await done(session);
+  const payload = JSON.parse(String(calls[0][1].content));
+  expect(payload.projectDocuments).toEqual([{ path: "documents/chapter-2.scholarpen.json", text: "Chapter 2 defines the hypothesis as H1.", truncated: false }]);
+  expect(payload.library.entries[0]).toStartWith("smith2020trial: Smith, Ann; Lee, Bo (2020). A randomized trial of the hypothesis.");
+  expect(String(calls[0][0].content)).toContain("projectDocuments are the project's OTHER chapters");
+  // The verifier checks the revision against the same project.
+  expect(JSON.parse(String(calls[1][1].content)).projectDocuments).toHaveLength(1);
+});
+
+test("a citation from references.bib is inserted as a structured [@citekey] citation", async () => {
+  let saved = false;
+  const { session } = await setup(citing("[@Smith2020Trial, p. 4]"), 0, fakeSources({ loadBibtex: async () => BIB, saveBibtex: async () => { saved = true; } }));
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(citationsIn(session)).toEqual(["smith2020trial", "smith2020trial"]);
+  let locator = "";
+  readDoc(session).descendants(node => { if (node.type.name === "citation") locator = node.attrs.locator; return true; });
+  expect(locator).toBe("p. 4");
+  expect(literalCitationText(session)).toBe(false);
+  expect(saved).toBe(false);
+  expect(listChangeSets(readDoc(session))).toHaveLength(1);
+  expect(agent.undoLast(session.docKey)).toBe(true);
+  expect(citationsIn(session)).toEqual([]);
+});
+
+test("a new work is verified and added to references.bib before it is cited", async () => {
+  let bib = BIB;
+  const events: string[] = [];
+  let session!: CollabSession;
+  const sources = fakeSources({
+    loadBibtex: async () => bib,
+    saveBibtex: async (next, expected) => {
+      expect(expected).toBe(bib);
+      events.push(`saved with ${citationsIn(session).length} citations in the text`);
+      bib = next;
+    },
+    resolveDOI: async doi => {
+      events.push(`resolved ${doi}`);
+      return { doi, citekey: "kim2021cohort", title: "Cohort evidence for the hypothesis", authors: ["Kim, Chan"], year: 2021, journal: "Epidemiology", bibtex: RESOLVED };
+    },
+  });
+  ({ session } = await setup(citing("[@doi:10.1000/cohort]", {
+    newReferences: [{ doi: "10.1000/cohort", title: "Cohort evidence for the hypothesis", reason: "Supports the qualified claim." }],
+  }), 0, sources));
+  const request = requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(events).toEqual(["resolved 10.1000/cohort", "saved with 0 citations in the text"]);
+  expect(bib).toContain("@article{smith2020trial");
+  expect(bib).toContain("@article{kim2021cohort");
+  expect(citationsIn(session)).toEqual(["kim2021cohort", "kim2021cohort"]);
+  expect(threadsOf(session).find(thread => thread.id === request)?.comments.at(-1)?.text).toContain("Added to references.bib before citing: @kim2021cohort");
+});
+
+test("a DOI already in references.bib reuses its citekey without touching the file", async () => {
+  let saved = false;
+  const { session } = await setup(citing("[@doi:10.1000/TRIAL]"), 0, fakeSources({ loadBibtex: async () => BIB, saveBibtex: async () => { saved = true; } }));
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(citationsIn(session)).toEqual(["smith2020trial", "smith2020trial"]);
+  expect(saved).toBe(false);
+});
+
+for (const kind of ["unknown citekey", "unverifiable DOI", "mismatched title", "no bibliography"] as const) {
+  test(`an ${kind} is removed from the text and reported, never cited`, async () => {
+    let saved = false;
+    const cite = kind === "unknown citekey" ? "[@ghost1999]" : "[@doi:10.1000/cohort]";
+    const sources = fakeSources({
+      loadBibtex: async () => { if (kind === "no bibliography") throw new Error("unreadable"); return BIB; },
+      saveBibtex: async () => { saved = true; },
+      resolveDOI: async doi => {
+        if (kind === "unverifiable DOI") throw new Error("CrossRef error: HTTP 404");
+        return { doi, citekey: "kim2021cohort", title: "An unrelated study of fish", authors: [], year: 2021, bibtex: RESOLVED };
+      },
+    });
+    const { session } = await setup(citing(cite, { newReferences: [{ doi: "10.1000/cohort", title: "Cohort evidence for the hypothesis" }] }), 0, sources);
+    const request = requestBulkComments(session.ydoc);
+    await done(session);
+    expect(agent.jobs(session.docKey)[0].state).toBe("done");
+    expect(citationsIn(session)).toEqual([]);
+    expect(literalCitationText(session)).toBe(false);
+    expect(readDoc(session).textContent).toContain("suggest the hypothesis.");
+    expect(saved).toBe(false);
+    expect(threadsOf(session).find(thread => thread.id === request)?.comments.at(-1)?.text).toContain("Removed citations that could not be verified");
+  });
+}
+
+test("comments asking for evidence get searched candidates, marked when already in the library", async () => {
+  const searched: string[] = [];
+  const sources = fakeSources({
+    loadBibtex: async () => BIB,
+    findCitations: async passage => {
+      searched.push(passage);
+      return [
+        { doi: "10.1000/trial", title: "A randomized trial of the hypothesis", authors: ["Smith, Ann"], year: 2020, source: "OpenAlex" },
+        { doi: "10.1000/cohort", title: "Cohort evidence for the hypothesis", authors: ["Kim, Chan"], year: 2021, source: "Crossref" },
+      ];
+    },
+  });
+  const { session, calls } = await setup(undefined, 0, sources);
+  createThread(session.ydoc.getMap(COLLAB_THREADS_MAP), AI_USER_ID, "This claim needs a citation.", { assignee: "me", blockId: "p2" });
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(searched).toEqual(["Our conclusions prove the hypothesis."]);
+  const candidates = JSON.parse(String(calls[0][1].content)).citationCandidates;
+  expect(candidates.map((item: { doi: string; citekey?: string }) => [item.doi, item.citekey])).toEqual([["10.1000/trial", "smith2020trial"], ["10.1000/cohort", undefined]]);
+});
+
+const { REVISIONS_MAP, readRevisions } = await import("../../../shared/collab/revision-log");
+const { WRITING_MAP } = await import("../../../shared/collab/writing");
+
+test("needs-user outcomes enter the decision queue and the revision is logged at its edit level", async () => {
+  const { session, ai, decision } = await setup();
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(threadsOf(session).find(thread => thread.id === decision)?.meta.decision?.question).toBe("Which primary endpoint do you intend?");
+  expect(threadsOf(session).find(thread => thread.id === ai)?.meta.decision).toBeUndefined();
+  const [entry] = readRevisions(session.ydoc.getMap(REVISIONS_MAP));
+  expect(entry).toMatchObject({ kind: "coordinated", status: "pending", level: "sentence" });
+  expect(entry.items.map(item => item.outcome).sort()).toEqual(["addressed", "addressed", "needs-user"]);
+  expect(entry.items.find(item => item.threadId === ai)).toMatchObject({ comment: "Qualify the causal inference.", commentBy: "ai" });
+  expect(entry.paragraphs.map(paragraph => paragraph.blockId)).toEqual(["p1", "p2"]);
+});
+
+test("the Proofread level keeps a paragraph rewrite out and the affected comment open", async () => {
+  const { session, calls, ai, human } = await setup(async messages => {
+    const payload = payloadOf(messages);
+    if (String(messages[0].content).includes("Repair only")) {
+      return JSON.stringify({ outcomes: payload.comments.filter(comment => comment.target).map(comment => comment.comments[0].text.includes("Qualify")
+        ? { threadId: comment.id, status: "addressed", reason: "Corrected the wording.", blockIds: ["P2"] }
+        : { threadId: comment.id, status: "needs-user", reason: "This needs a larger rewrite; raise the edit level?", blockIds: [] }) });
+    }
+    if (payload.candidateManuscript) return JSON.stringify({ consistent: true, outcomes: payload.proposedOutcomes });
+    return JSON.stringify({ summary: "Revise.", edits: [
+      { id: payload.editable_segments[0].id, text: "A wholly different opening statement about unrelated matters." },
+      { id: payload.editable_segments[1].id, text: payload.editable_segments[1].text.replace("prove", "suggest") },
+    ], outcomes: payload.comments.filter(comment => comment.target).map(comment => ({ threadId: comment.id, status: "addressed", reason: "Done.", blockIds: ["P1", "P2"] })) });
+  });
+  session.ydoc.getMap(WRITING_MAP).set("editLevel", "proofread");
+  const request = requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(String(calls[0][0].content)).toContain("EDIT LEVEL: PROOFREAD");
+  expect(readDoc(session).textContent).toContain("These findings prove the hypothesis.");
+  expect(readDoc(session).textContent).not.toContain("wholly different");
+  expect(threadsOf(session).find(thread => thread.id === ai)?.meta.status).toBe("proposed");
+  expect(threadsOf(session).find(thread => thread.id === human)?.meta.decision?.question).toContain("raise the edit level");
+  expect(threadsOf(session).find(thread => thread.id === request)?.comments.at(-1)?.text).toContain("exceeded the Proofread edit level");
+});
+
+const { postIssues } = await import("./project-consistency");
+
+test("consistency issues of an open document become anchored comments, never posted twice", async () => {
+  const { session } = await setup();
+  const issue = { id: "x", kind: "contradiction" as const, filename: "doc.scholarpen.json", blockId: "p1", quote: "prove the hypothesis",
+    comment: "Chapter 3 calls this preliminary.", related: { filename: "ch3.scholarpen.json", quote: "preliminary evidence" } };
+  expect(postIssues([session], [issue, { ...issue, filename: "other.scholarpen.json" }])).toBe(1);
+  expect(postIssues([session], [issue])).toBe(0);
+  const thread = threadsOf(session).find(item => item.meta.fingerprint?.startsWith("consistency:"))!;
+  expect(thread.comments[0].text).toContain('See ch3.scholarpen.json: "preliminary evidence"');
+  const range = threadRange(readDoc(session), thread.id)!;
+  expect(readDoc(session).textBetween(range.from, range.to)).toBe("prove the hypothesis");
 });

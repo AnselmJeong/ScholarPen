@@ -52,7 +52,8 @@ afterEach(async () => {
   await registry?.dispose();
 });
 
-async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, clock = { now: Date.now() }, blocks = BLOCKS, saved?: Uint8Array) {
+async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, clock = { now: Date.now() }, blocks = BLOCKS, saved?: Uint8Array,
+  glossary?: import("../../../shared/glossary").Glossary) {
   const seeded = blocksToYDoc(editor, blocks as any, "document-store");
   registry = new CollabRegistry({
     read: async () => ({ state: saved ?? Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
@@ -67,6 +68,7 @@ async function setup(complete: (messages: OllamaMessage[]) => Promise<string>, c
   reviewer = new Reviewer(agent, {
     complete: respond,
     citekeys: async () => new Set(["real2020"]),
+    ...(glossary ? { glossary: async () => glossary } : {}),
     now: () => clock.now,
     tickMs: 0,
   });
@@ -816,4 +818,20 @@ test("an undismissed watermark result keeps its resolved thread until the author
   updateThreadMeta(map, id, { resultDismissedAt: Date.now() });
   reviewer.tick();
   expect(map.has(id)).toBe(false);
+});
+
+test("glossary rules are posted regardless of the severity threshold and reach the review prompt", async () => {
+  const blocks = [
+    { id: "h1", type: "heading", props: { level: 1 }, content: "Methods" },
+    { id: "p1", type: "paragraph", content: "We scanned every participant with functional MRI and analysed BOLD signals." },
+  ];
+  const { session, prompts } = await setup(findings([]), undefined, blocks, undefined,
+    { entries: [{ term: "functional magnetic resonance imaging", abbreviation: "fMRI", avoid: ["functional MRI"] }] });
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(String(prompts[0][0].content)).toContain("PROJECT GLOSSARY");
+  const posted = threads(session);
+  expect(posted.map(thread => [thread.meta.category, thread.meta.severity]).sort()).toEqual([["consistency", "medium"], ["definition", "medium"]]);
+  expect(posted.find(thread => thread.meta.category === "consistency")!.comments[0].text).toContain('instead of "functional MRI"');
+  expect(posted.find(thread => thread.meta.category === "definition")!.comments[0].text).toContain("BOLD is used here for the first time");
 });

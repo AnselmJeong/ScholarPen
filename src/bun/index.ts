@@ -32,6 +32,7 @@ import { CollabRegistry } from "./collab/registry";
 import { createFileCollabStorage } from "./collab/storage";
 import { CollabAgent } from "./collab/agent/agent";
 import { Reviewer } from "./collab/agent/reviewer";
+import { ProjectWriting } from "./collab/project-writing";
 import { enqueueDraft, zoneEditMode } from "./collab/agent/zones";
 import { parseBibtexCitekeys } from "../shared/bibtex-utils";
 import { completeAgentModel } from "./agent/providers";
@@ -94,8 +95,14 @@ async function completeWithSettings(messages: Parameters<typeof completeAgentMod
   }, settings);
 }
 
+// Project-wide writing support: glossary, manuscript map and consistency check.
+const projectWriting = new ProjectWriting(collabRegistry, {
+  complete: (messages, signal, maxTokens) => completeWithSettings(messages, signal, maxTokens),
+});
+
 // The AI co-author: a Bun-side peer that answers comment threads with edits…
 const collabAgent = new CollabAgent(collabRegistry, {
+  projectGuide: (session) => projectWriting.guide(session.projectPath),
   complete: completeWithSettings,
   completeBulk: (messages, signal) => completeWithSettings(messages, signal, 16384),
   onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
@@ -105,6 +112,7 @@ const collabAgent = new CollabAgent(collabRegistry, {
 // …and reviews the whole manuscript, independently of the author’s edits.
 const collabReviewer = new Reviewer(collabAgent, {
   complete: (messages, signal) => completeWithSettings(messages, signal, 8192),
+  glossary: (projectPath) => projectWriting.guide(projectPath).then((guide) => guide.glossary),
   citekeys: async (projectPath) => {
     const bibtex = await fileSystem.loadBibtex(projectPath).catch(() => "");
     return bibtex.trim() ? new Set(parseBibtexCitekeys(bibtex)) : null;
@@ -609,6 +617,12 @@ async function main() {
         collabReviewSection: ({ docKey, blockId }) => {
           collabReviewer.reviewSection(docKey, blockId, "manual");
         },
+        getGlossary: ({ projectPath }) => projectWriting.getGlossary(projectPath),
+        saveGlossary: ({ projectPath, glossary }) => projectWriting.saveGlossary(projectPath, glossary),
+        getManuscriptMap: ({ projectPath }) => projectWriting.mapView(projectPath),
+        updateManuscriptMap: ({ projectPath }) => projectWriting.updateMap(projectPath),
+        getConsistencyReport: ({ projectPath }) => projectWriting.consistencyView(projectPath),
+        runConsistencyCheck: ({ projectPath }) => projectWriting.runConsistency(projectPath),
         collabDraftSection: ({ docKey, blockId }) => {
           enqueueDraft(collabAgent, docKey, blockId, completeWithSettings);
         },
