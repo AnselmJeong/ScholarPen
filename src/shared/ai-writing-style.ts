@@ -2,6 +2,7 @@
 export const AI_WRITING_STYLE =
   "MANDATORY WRITING RULE: Never use em dashes (U+2014) or semicolons in any sentence you write or rewrite, in Korean or English, including manuscript prose, explanations, and comments. " +
   "This is a strict author preference, not a suggestion to merely reduce their frequency. Do not imitate em dashes or semicolons in the source manuscript or examples. " +
+  "When you improve, rephrase, translate, deepen, or correct a passage, also recast every em dash and semicolon already in its prose, including in sentences you otherwise leave unchanged. " +
   "Instead of an em dash, use a comma, parentheses, a colon, or separate sentences as grammatically appropriate. Do not substitute en dashes or double hyphens as rhetorical sentence breaks. " +
   "Instead of a semicolon joining clauses, write separate sentences or join the clauses with a conjunction. Do not substitute a comma splice. " +
   "Preserve exact source quotations, bibliographic titles, protected control markers, code, math, URLs, and required literal text. Do not alter those to enforce a prose style rule. " +

@@ -7,6 +7,7 @@ import {
   buildInlineEditMessages,
   parseInlineEditResponse,
   protectedRewritePreview,
+  removeDiscouragedPunctuation,
   type InlineEditDocumentContext,
   type InlineEditWorkflow,
   type ProtectedSelection,
@@ -207,7 +208,10 @@ export function AIInlineEditPanel({
         if (streamFailedRef.current) return;
         let revised = "";
         try {
-          revised = accumulatedRef.current.trim() ? parseInlineEditResponse(accumulatedRef.current, snapshot.protection) : "";
+          // Clean here too, so the previewed result is what Accept applies.
+          revised = accumulatedRef.current.trim()
+            ? removeDiscouragedPunctuation(parseInlineEditResponse(accumulatedRef.current, snapshot.protection))
+            : "";
         } catch (err) {
           setError((err as Error).message);
           return;

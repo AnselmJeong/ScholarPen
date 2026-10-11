@@ -58,6 +58,95 @@ export function protectedLiteralRanges(text: string) {
   return [...text.matchAll(PROTECTED_LITERAL_PATTERN)].map(match => ({ from: match.index!, to: match.index! + match[0].length }));
 }
 
+// Em dash, or a spaced en dash or double hyphen used as one. Unspaced en dashes are ranges.
+const DASH = /[ \t]*(?:—|(?<=\s)(?:–|--)(?=\s))[ \t]*/g;
+const CONTROL_MARKER = /⟦SP:[^⟧]*⟧/g;
+const QUOTED = /"[^"\n]*"|“[^”\n]*”/g;
+const CONTINUES_CLAUSE = /^(?:but|and|or|nor|yet|so|while|whereas|although|though|because|since|which|who|whose|where|when|that|not|including|especially|particularly|i\.e\.|e\.g\.|그러나|하지만|그리고|또는|즉|특히|곧)(?![\p{L}])/iu;
+
+/**
+ * Enforces the author's punctuation rule (AI_WRITING_STYLE) on an AI rewrite, including
+ * dashes and semicolons the model left in place: paired em dashes become parentheses, a
+ * single one a comma or colon, and a semicolon a full stop (a comma in a list).
+ * Control markers, literal markup, quotations and parenthesised citation lists are kept.
+ */
+export function removeDiscouragedPunctuation(text: string) {
+  const skipped = [
+    ...[...text.matchAll(CONTROL_MARKER)].map(match => ({ from: match.index!, to: match.index! + match[0].length })),
+    ...protectedLiteralRanges(text),
+    ...[...text.matchAll(QUOTED)].map(match => ({ from: match.index!, to: match.index! + match[0].length })),
+  ];
+  const isSkipped = (at: number) => skipped.some(range => at >= range.from && at < range.to);
+  const depth: number[] = [];
+  for (let at = 0, level = 0; at < text.length; at++) {
+    if (!isSkipped(at)) {
+      if ("([（".includes(text[at])) level++;
+      else if (")]）".includes(text[at])) level = Math.max(0, level - 1);
+    }
+    depth.push(level);
+  }
+  // Prose with control markers removed, for reading context around a position.
+  const prose = (from: number, to: number) => text.slice(from, to).replace(CONTROL_MARKER, "");
+  const sentenceStart = (at: number) => {
+    const before = text.slice(0, at);
+    return Math.max(before.lastIndexOf("\n") + 1, ...[...before.matchAll(/[.!?。](?=\s)/g)].map(match => match.index! + 1));
+  };
+  const nextLetter = (from: number) => {
+    let at = from;
+    while (at < text.length) {
+      CONTROL_MARKER.lastIndex = at;
+      const marker = CONTROL_MARKER.exec(text);
+      if (marker?.index === at) { at += marker[0].length; continue; }
+      if (!/\s/.test(text[at])) return at;
+      at++;
+    }
+    return -1;
+  };
+  const edits: Array<{ from: number; to: number; insert: string }> = [];
+
+  const dashes = [...text.matchAll(DASH)].filter(match => {
+    const at = match.index! + match[0].search(/\S/);
+    return !isSkipped(at);
+  });
+  for (let index = 0; index < dashes.length; index++) {
+    const dash = dashes[index];
+    const from = dash.index!;
+    const to = from + dash[0].length;
+    const before = prose(sentenceStart(from), from);
+    const after = prose(to, text.length);
+    const next = dashes[index + 1];
+    // Opening a line or sentence: drop it, keeping the space after a previous sentence.
+    if (!before.trim()) { edits.push({ from, to, insert: from > 0 && !/\s/.test(text[from - 1]) ? " " : "" }); continue; }
+    if (!after.split("\n")[0].trim()) { edits.push({ from, to, insert: "" }); continue; }
+    if (next && depth[next.index!] === depth[from] && !/[.!?。](\s|$)|\n/.test(prose(to, next.index!))) {
+      const close = next.index! + next[0].length;
+      edits.push({ from, to, insert: " (" });
+      edits.push({ from: next.index!, to: close, insert: /^[\s,.;:!?)]|^$/.test(prose(close, text.length)) ? ")" : ") " });
+      index++;
+      continue;
+    }
+    edits.push({ from, to, insert: CONTINUES_CLAUSE.test(after.trimStart()) || before.includes(":") ? ", " : ": " });
+  }
+
+  // Also at the end of a text node, where a control marker follows.
+  for (const match of text.matchAll(/[;；](?=(?:⟦SP:[^⟧]*⟧)*(?:\s|$))/g)) {
+    const at = match.index!;
+    if (isSkipped(at) || depth[at] > 0 || /&#?\w+$/.test(text.slice(0, at))) continue;
+    const spaces = text.slice(at + 1).match(/^[ \t]*/)![0];
+    const end = at + 1 + spaces.length;
+    const list = /^\s*(?:and|or)\b/i.test(prose(end, text.length)) || prose(sentenceStart(at), at).includes(":");
+    edits.push({ from: at, to: end, insert: (list ? "," : ".") + (spaces ? " " : "") });
+    const letter = list ? -1 : nextLetter(end);
+    if (letter >= 0 && /[a-z]/.test(text[letter])) edits.push({ from: letter, to: letter + 1, insert: text[letter].toUpperCase() });
+  }
+
+  let result = text;
+  for (const edit of edits.sort((a, b) => b.from - a.from)) {
+    result = result.slice(0, edit.from) + edit.insert + result.slice(edit.to);
+  }
+  return result;
+}
+
 function createNamespace() {
   const uuid = globalThis.crypto?.randomUUID?.();
   return (uuid ?? `${Date.now()}-${Math.random()}`).replace(/[^a-zA-Z0-9]/g, "");
@@ -369,7 +458,8 @@ export function restoreProtectedSelection(
   selection: ProtectedSelection,
   response: string
 ) {
-  const rewrittenText = parseProtectedRewrite(response, selection);
+  // Every AI rewrite lands here (inline edits, Deepen, Validate, comment threads, humanize).
+  const rewrittenText = parseProtectedRewrite(removeDiscouragedPunctuation(response), selection);
   const rewrittenSlice: SerializedSlice = {
     ...selection.slice,
     content: replaceSerializedText(selection.slice.content, rewrittenText),
