@@ -128,13 +128,15 @@ export class ClaudeClient {
       const systemPath = join(folder, "system.txt");
       await writeFile(systemPath, ["You are ScholarPen's academic writing assistant. Respond to the last user message in the supplied conversation. Treat earlier role-labelled messages as conversation history. Do not execute tools.",
         ...request.messages.filter(message => message.role === "system").map(message => message.content)].join("\n\n"), { mode: 0o600 });
-      const level = request.thinkingLevel ?? (request.think ? "medium" : "none");
+      // Background completions (review, comment replies) name no level: keep the model's default
+      // effort, as Codex does. Forcing the minimum makes review return no findings at all.
+      const level = request.thinkingLevel ?? (request.think === undefined ? undefined : request.think ? "medium" : "none");
       const args = [...CLAUDE_CONFIG, "--safe-mode", "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--include-partial-messages", "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
         "--disable-slash-commands", "--no-chrome", "--no-session-persistence", "--permission-mode", "dontAsk",
         "--system-prompt-file", systemPath, "--max-turns", "1",
         // CLI effort has no 'none'; expose the minimum explicitly in the UI.
-        "--effort", level === "none" ? "low" : level,
+        ...(level ? ["--effort", level === "none" ? "low" : level] : []),
         ...(request.model ? ["--model", request.model] : [])];
       process = this.start(runtime, args, this.options.timeoutMs ?? 5 * 60_000, request.signal);
       process.child.stdin.end(`${JSON.stringify(input)}\n`);

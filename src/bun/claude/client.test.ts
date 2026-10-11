@@ -37,6 +37,15 @@ test("streams UTF-8 once, preserves context and disables tools, hooks, persisten
   expect(await readdir(join(home, "workspace"))).toEqual([]);
 });
 
+test("keeps the model's default effort when a background completion names no level", async () => {
+  const { client, requests } = await fixture("success");
+  await collect(client.stream(request));
+  await collect(client.stream({ ...request, thinkingLevel: "none" }));
+  const [background, minimal] = (await requests()).filter(call => call.args?.includes("--print")).map(call => call.args);
+  expect(background).not.toContain("--effort");
+  expect(minimal[minimal.indexOf("--effort") + 1]).toBe("low");
+});
+
 test("supports result-only output", async () => {
   const { client } = await fixture("result-only");
   expect(await collect(client.stream(request))).toBe("안녕하세요");
