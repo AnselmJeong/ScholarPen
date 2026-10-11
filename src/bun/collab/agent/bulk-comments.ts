@@ -8,7 +8,7 @@ import { isAIUser, SCHOLARPEN_AI } from "../../../shared/collab/personas";
 import { AI_WRITING_STYLE } from "../../../shared/ai-writing-style";
 import { applyBlockRewrite, captureBlock, nextSuggestionId, type EditMode } from "./block-edit";
 import { blockContent, blocksInRange, hasInlineContent, hasSuggestionMarks, listBlocks, readDoc, readableText, threadRange } from "./doc-model";
-import { editableSegments, parseTextEdits } from "./text-edits";
+import { editableSegments, parseTextEdits } from "../../../shared/text-edits";
 import type { MentionedFileContext } from "../../agent/mention-resolver";
 
 const AI_ORIGIN = "ai-agent";
@@ -16,7 +16,7 @@ const AI_META_ORIGIN = "ai-meta";
 // Never silently drop the end of a manuscript or some of its comments.
 const MAX_CONTEXT_CHARS = 240_000;
 const BULK_RULES = `You are ScholarPen AI, coordinating one academic manuscript revision across ALL supplied comments.
-Read the entire manuscript, all open comments and replies, and resolved comments as constraints on prior decisions BEFORE choosing edits.
+Read the entire manuscript and all open comments and replies BEFORE choosing edits.
 First reconcile overlapping and conflicting requests into one coherent plan. Apply each underlying fix once, and propagate necessary terminology, scope, chronology and conclusion changes throughout the document, including its final paragraphs.
 AI comments are fallible review suggestions, not established facts. Author comments are requests; preserve the author's substantive position and the distinction between state, phase, course and outcome.
 If comments conflict and no solution follows from the text and author instructions, leave those issues as needs-user with a specific question. Also defer choices of thesis, missing data, unverified citations, or substantive methodological decisions. Never invent evidence, quotations, references or results. Do not claim that unavailable source text supports or refutes a claim. Qualify a claim only when doing so preserves the author's intent; do not erase a disputed argument simply to close a comment.
@@ -132,7 +132,9 @@ export async function runBulkComments(session: CollabSession, request: ThreadSna
   const selections = bases.map(base => base.protection);
   const slots = editableSegments(selections);
   const slotIds = new Map(slots.map(slot => [slot.id, slot]));
-  const contextThreads = all.filter(thread => thread.id !== request.id && !thread.meta.documentAction);
+  // Resolved comments are settled: they are neither work nor constraints, and only dilute the context.
+  const contextThreads = all.filter(thread => thread.id !== request.id && !thread.meta.documentAction &&
+    !thread.resolved && thread.meta.status !== "resolved");
   const commentLabels = new Map(contextThreads.map((thread, index) => [thread.id, `C${index + 1}`]));
   const blockLabels = new Map(blocks.map((block, index) => [block.id, `P${index + 1}`]));
   const refs: OutcomeReferences = {
@@ -151,7 +153,7 @@ export async function runBulkComments(session: CollabSession, request: ThreadSna
   });
   const claims = contextThreads.map(thread => {
     const range = threadRange(doc, thread.id);
-    return { id: commentLabels.get(thread.id), resolved: thread.resolved, target: ids.has(thread.id),
+    return { id: commentLabels.get(thread.id), target: ids.has(thread.id),
       blockIds: (range ? blocksInRange(doc, range.from, range.to).map(block => block.id) : [thread.meta.blockId]).flatMap(id => id && blockLabels.has(id) ? [blockLabels.get(id)] : []),
       comments: thread.comments.filter(comment => !comment.deleted).map(comment => ({
         author: isAIUser(comment.userId) ? "ai" : "author", text: comment.text,
@@ -173,7 +175,8 @@ export async function runBulkComments(session: CollabSession, request: ThreadSna
   deps.progress(`Reconciling ${targets.length} comments across the whole manuscript`);
   const plan = await complete(BULK_RULES + `
 Return JSON only: {"summary":"coherent revision plan", "edits":[{"id":"b0s0","text":"replacement text"}], "outcomes":[{"threadId":"C1","status":"addressed|needs-user","reason":"explanation or specific question","blockIds":["P1"]}]}.
-Copy each ID from targetCommentIds exactly once. Do not return outcomes for target=false context comments. Comment IDs are C1, C2, etc.; paragraph IDs are P1, P2, etc.; editable segment IDs are b0s0, b0s1, etc. Never confuse these ID types. Return exactly one outcome for EVERY target comment. Only call it addressed if the proposed edits fully resolve it. Use needs-user for unresolved or unsupported requests; do not count a promised future edit as addressed.
+Copy each ID from targetCommentIds exactly once. Do not return outcomes for target=false context comments.
+Every paragraph you change must appear in the blockIds of an addressed comment. When fixing one comment requires a consistent change elsewhere (terminology, scope, conclusions), list that paragraph under the comment that required it. Do not change a paragraph for any other reason. Comment IDs are C1, C2, etc.; paragraph IDs are P1, P2, etc.; editable segment IDs are b0s0, b0s1, etc. Never confuse these ID types. Return exactly one outcome for EVERY target comment. Only call it addressed if the proposed edits fully resolve it. Use needs-user for unresolved or unsupported requests; do not count a promised future edit as addressed.
 Return ONLY changed editable_segments. IDs identify plain text gaps; preserve their leading/trailing spaces. Unlisted segments remain unchanged. Never emit control markers, add new citations, move text between segments, or erase a segment. Other blocks are read-only context.`, {
     ...context, editable_segments,
   });
@@ -185,13 +188,16 @@ Return ONLY changed editable_segments. IDs identify plain text gaps; preserve th
     }
     replacements.set(edit.id, edit.text);
   }
-  const parsed = parseTextEdits(JSON.stringify({ reply: plan.summary,
-    edits: slots.map(slot => ({ id: slot.id, text: replacements.get(slot.id) ?? slot.text })),
-  }), selections);
-  if (!parsed?.parts) throw new Error("The AI returned no valid revision.");
-  const changed = bases.map((base, index) => ({ base, text: parsed.parts![index] }))
-    .filter(item => item.text !== item.base.protection.protectedText);
-  const changedIds = new Set(changed.map(item => item.base.blockId));
+  const proposalOf = () => {
+    const parsed = parseTextEdits(JSON.stringify({ reply: plan.summary,
+      edits: slots.map(slot => ({ id: slot.id, text: replacements.get(slot.id) ?? slot.text })),
+    }), selections);
+    if (!parsed?.parts) throw new Error("The AI returned no valid revision.");
+    return bases.map((base, index) => ({ base, text: parsed.parts![index] }))
+      .filter(item => item.text !== item.base.protection.protectedText);
+  };
+  let changed = proposalOf();
+  let changedIds = new Set(changed.map(item => item.base.blockId));
   const blockIds = new Set(blocks.map(block => block.id));
   const readOutcomes = async (value: unknown, stage: "revision" | "verification", candidateManuscript?: ReturnType<typeof manuscript>) => {
     try { return outcomesOf(value, ids, blockIds, changedIds, refs); }
@@ -212,45 +218,85 @@ Copy every targetCommentIds entry exactly once; omit context-only comments. Use 
       }
     }
   };
-  let outcomes = await readOutcomes(plan.outcomes, "revision");
-  const assertEditsAddressComments = (results: Outcome[]) => {
+  /** Changed paragraphs that no addressed comment accounts for. */
+  const unattributed = (results: Outcome[]) => {
     const justified = new Set(results.filter(result => result.status === "addressed").flatMap(result => result.blockIds));
-    if ([...changedIds].some(id => !justified.has(id))) {
-      throw new Error("Some proposed edits do not belong to a verified comment resolution. No edits were applied.");
-    }
+    return [...changedIds].filter(id => !justified.has(id));
   };
-  assertEditsAddressComments(outcomes);
+  const labels = (blockIds: string[]) => blockIds.map(id => blockLabels.get(id) ?? id).join(", ");
+  /** Never publish an edit no comment asked for: withdraw it, so the rest can still be verified. */
+  const withdraw = (paragraphs: string[]) => {
+    const dropped = new Set(paragraphs);
+    for (const slot of slots) if (dropped.has(bases[slot.block].blockId)) replacements.delete(slot.id);
+    changed = proposalOf();
+    changedIds = new Set(changed.map(item => item.base.blockId));
+  };
+  const sameStatuses = (next: Outcome[], previous: Outcome[]) =>
+    next.every(outcome => previous.find(item => item.threadId === outcome.threadId)?.status === outcome.status);
+
+  let outcomes = await readOutcomes(plan.outcomes, "revision");
+  let stray = unattributed(outcomes);
+  if (stray.length) {
+    // Usually a consistent follow-on change listed under no comment. Ask once to attribute it.
+    deps.progress(`Linking ${stray.length} changed paragraphs to the comments that required them`);
+    const linked = await complete(BULK_RULES + `
+These changed paragraphs are not listed under any addressed comment: ${labels(stray)}.
+For each, add it to the blockIds of the addressed target comment whose fix required the change, or list it in "revert" if no target comment requires it.
+Do not change edits or any comment's status. Return JSON only: {"outcomes":[{"threadId":"C1","status":"addressed|needs-user","reason":"explanation","blockIds":["P1"]}],"revert":["P3"]}.
+Copy every targetCommentIds entry exactly once; omit context-only comments.`, {
+      ...context, editable_segments, proposedEdits: plan.edits, proposedOutcomes: outcomes.map(externalOutcome),
+      changedParagraphIds: [...changedIds].map(id => blockLabels.get(id)), unlinkedParagraphIds: stray.map(id => blockLabels.get(id)),
+    });
+    try {
+      const relinked = outcomesOf(linked.outcomes, ids, blockIds, changedIds, refs);
+      if (sameStatuses(relinked, outcomes)) outcomes = relinked;
+    } catch (error) {
+      if (!(error instanceof OutcomeFormatError)) throw error;
+    }
+    stray = unattributed(outcomes);
+    if (stray.length) {
+      deps.progress(`Withdrawing edits to ${labels(stray)}, which no comment required`);
+      withdraw(stray);
+    }
+  }
   if (changed.length && !outcomes.some(outcome => outcome.status === "addressed")) {
     throw new Error("The proposed edits do not resolve any comments. No edits were applied.");
   }
-  // Scratch documents share the original CRDT history, but never touch the live manuscript.
-  const scratchDoc = new Y.Doc();
-  Y.applyUpdate(scratchDoc, Y.encodeStateAsUpdate(session.ydoc));
-  const scratch = { ...session, ydoc: scratchDoc };
-  try {
-    for (const item of changed) {
-      const result = applyBlockRewrite(scratch, item.base, item.text, "direct", AI_ORIGIN);
-      if (result.kind !== "applied") throw new Error("A proposed edit could not be validated. No edits were applied.");
-    }
-    if (changed.length) {
+  // A verification that defers a comment leaves its edits unaccounted for; withdraw them and verify once more.
+  for (let round = 0; changed.length; round++) {
+    // Scratch documents share the original CRDT history, but never touch the live manuscript.
+    const scratchDoc = new Y.Doc();
+    Y.applyUpdate(scratchDoc, Y.encodeStateAsUpdate(session.ydoc));
+    const scratch = { ...session, ydoc: scratchDoc };
+    try {
+      for (const item of changed) {
+        const result = applyBlockRewrite(scratch, item.base, item.text, "direct", AI_ORIGIN);
+        if (result.kind !== "applied") throw new Error("A proposed edit could not be validated. No edits were applied.");
+      }
       deps.progress("Checking the entire revision for conflicting resolutions");
+      const candidate = manuscript(readDoc(scratch));
       const verification = await complete(BULK_RULES + `
-You are now verifying the COMPLETE candidate manuscript against the original, every comment and prior resolution.
-Check that fixes do not contradict each other, create new unsupported claims, reverse a resolved decision, or make a choice reserved for the author.
+You are now verifying the COMPLETE candidate manuscript against the original and every open comment.
+Check that fixes do not contradict each other, create new unsupported claims, or make a choice reserved for the author.
 Return JSON only: {"consistent":true,"outcomes":[{"threadId":"C1","status":"addressed|needs-user","reason":"verified explanation or specific remaining question","blockIds":["P1"]}]}.
 Copy every targetCommentIds entry exactly once and omit context-only comments. Use the provided P-prefixed paragraph IDs. Account for every target comment. Downgrade unfulfilled claims to needs-user. Never upgrade a needs-user outcome to addressed. If any edit introduces a conflict, unsupported fact, or unauthorized author decision, set consistent=false.`, {
-        ...context, revisionPlan: plan.summary, proposedOutcomes: outcomes.map(externalOutcome), candidateManuscript: manuscript(readDoc(scratch)),
+        ...context, revisionPlan: plan.summary, proposedOutcomes: outcomes.map(externalOutcome), candidateManuscript: candidate,
       });
       if (verification.consistent !== true) throw new Error("The consistency check found a conflict in the proposed revision. No edits were applied; ask AI again or clarify the conflicting requests.");
-      const checked = await readOutcomes(verification.outcomes, "verification", manuscript(readDoc(scratch)));
+      const checked = await readOutcomes(verification.outcomes, "verification", candidate);
       if (checked.some(outcome => outcome.status === "addressed" && outcomes.find(previous => previous.threadId === outcome.threadId)?.status !== "addressed")) {
         throw new Error("The consistency check tried to close a deferred decision. No edits were applied.");
       }
       outcomes = checked;
-      assertEditsAddressComments(outcomes);
-      if (!outcomes.some(outcome => outcome.status === "addressed")) throw new Error("No proposed resolution passed verification. No edits were applied.");
+    } finally { scratchDoc.destroy(); }
+    stray = unattributed(outcomes);
+    if (!stray.length) break;
+    if (round >= 1) {
+      throw new Error(`Paragraphs ${labels(stray)} were changed without a verified comment resolution. No edits were applied.`);
     }
-  } finally { scratchDoc.destroy(); }
+    deps.progress(`Withdrawing edits to ${labels(stray)}, whose comments were deferred, and checking again`);
+    withdraw(stray);
+  }
   assertCurrent();
   const suggestionDoc = new Y.Doc();
   Y.applyUpdate(suggestionDoc, Y.encodeStateAsUpdate(session.ydoc));

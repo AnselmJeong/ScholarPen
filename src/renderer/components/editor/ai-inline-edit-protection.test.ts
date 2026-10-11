@@ -3,6 +3,7 @@ import { Schema } from "prosemirror-model";
 import {
   buildInlineEditDocumentContext,
   buildInlineEditMessages,
+  parseInlineEditResponse,
   protectSelectionSlice,
   restoreProtectedSelection,
 } from "./ai-inline-edit-protection";
@@ -105,7 +106,9 @@ describe("AI inline edit protection", () => {
     expect(messages.user).toContain("<complete_document_context reference_only=\"true\">");
     expect(messages.user).toContain("The introduction defines the paper's central problem.");
     expect(messages.user).toContain("The conclusion returns to the same qualified claim.");
-    expect(messages.user).toContain(selection.protectedText);
+    // The model reads the passage with citations rendered, and never sees control markers.
+    expect(messages.user).toContain("원문 [@kim2025, p. 7] **강조**");
+    expect(messages.user).not.toContain("⟦SP:");
   });
 
   test("runs the embedded humanizer audit only for Academic Improve", () => {
@@ -124,7 +127,7 @@ describe("AI inline edit protection", () => {
     expect(improveMessages.system).toContain("Preserve the author's real voice");
     expect(improveMessages.system).toContain("do not change a passage based on a single possible tell");
     expect(improveMessages.system).toContain("Does the rewrite introduce or remove any fact");
-    expect(improveMessages.system).toContain("Output only the final protected passage");
+    expect(improveMessages.system).toContain("Output only the final JSON edits");
     expect(generalMessages.system).not.toContain("clusters of AI-writing patterns");
   });
 
@@ -141,7 +144,27 @@ describe("AI inline edit protection", () => {
     expect(messages.system).toContain("epistemic calibration");
     expect(messages.system).toContain("Do not invent, strengthen, generalize, or delete");
     expect(messages.system).toContain("Never alter a protected control marker");
-    expect(messages.system).toContain("Copy every control marker exactly once");
+    expect(messages.system).toContain("return every segment id exactly once");
+  });
+
+  test("segment edits restore around citations and formatting without the model copying markers", () => {
+    const selection = makeProtectedSelection();
+    const response = JSON.stringify({ edits: [{ id: "b0s0", text: "개선된 원문 " }, { id: "b0s1", text: " " }, { id: "b0s2", text: "핵심 표현" }] });
+    const restored = restoreProtectedSelection(schema, selection, parseInlineEditResponse("```json\n" + response + "\n```", selection));
+    expect(restored.content.toJSON()).toEqual([
+      { type: "text", marks: [{ type: "bold" }], text: "개선된 원문 " },
+      { type: "citation", attrs: { citekey: "kim2025", locator: "p. 7" } },
+      { type: "text", marks: [{ type: "italic" }], text: " **핵심 표현**" },
+    ]);
+  });
+
+  test("an omitted segment keeps its text; unknown or emptied segments are rejected", () => {
+    const selection = makeProtectedSelection();
+    const kept = parseInlineEditResponse('<think>plan</think>{"edits":[{"id":"b0s0","text":"새 원문 "}]}', selection);
+    expect(restoreProtectedSelection(schema, selection, kept).content.toJSON()[2]).toMatchObject({ text: " **강조**" });
+    expect(() => parseInlineEditResponse('{"edits":[{"id":"b9s9","text":"x"}]}', selection)).toThrow("unknown text segment");
+    expect(() => parseInlineEditResponse('{"edits":[{"id":"b0s0","text":""}]}', selection)).toThrow("removed an entire text segment");
+    expect(() => parseInlineEditResponse('{"edits":[', selection)).toThrow("malformed JSON");
   });
 
   test("captures all document text before and after the selected passage", () => {

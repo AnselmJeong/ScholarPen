@@ -44,7 +44,7 @@ import {
 import { manuscriptLanguage } from "./humanize/language";
 import { englishHumanizeGuidance } from "./humanize/english";
 import { cleanDocumentWatermarks } from "./watermark/document";
-import { editableSegments, parseTextEdits } from "./text-edits";
+import { editableSegments, parseTextEdits } from "../../../shared/text-edits";
 import { completeWithDeadline } from "./completion";
 import { protectedRewritePreview, restoreProtectedSelection } from "../../../shared/ai-text-protection";
 import type { Node as PMNode } from "prosemirror-model";

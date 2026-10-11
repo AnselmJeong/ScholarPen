@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { rpc, onAiChunk } from "../../rpc";
 import {
   buildInlineEditMessages,
+  parseInlineEditResponse,
   protectedRewritePreview,
   type InlineEditDocumentContext,
   type InlineEditWorkflow,
@@ -80,6 +81,8 @@ export function AIInlineEditPanel({
 }: AIInlineEditPanelProps) {
   const [prompt, setPrompt] = useState("");
   const [result, setResult] = useState("");
+  /** Characters received so far; the JSON answer is only shown once complete. */
+  const [received, setReceived] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [translateOpen, setTranslateOpen] = useState(false);
@@ -201,10 +204,21 @@ export function AIInlineEditPanel({
       if (done) {
         setLoading(false);
         activeRef.current = false;
-        if (workflowRef.current === "academic-improve" && !streamFailedRef.current) {
-          const suggestionError = accumulatedRef.current
-            ? onSuggest(snapshot, accumulatedRef.current, "Improve")
-            : "AI가 수정안을 반환하지 않았습니다. 다시 실행해 주세요.";
+        if (streamFailedRef.current) return;
+        let revised = "";
+        try {
+          revised = accumulatedRef.current.trim() ? parseInlineEditResponse(accumulatedRef.current, snapshot.protection) : "";
+        } catch (err) {
+          setError((err as Error).message);
+          return;
+        }
+        if (!revised) {
+          setError("AI가 수정안을 반환하지 않았습니다. 다시 실행해 주세요.");
+          return;
+        }
+        setResult(revised);
+        if (workflowRef.current === "academic-improve") {
+          const suggestionError = onSuggest(snapshot, revised, "Improve");
           if (suggestionError) setError(suggestionError);
         }
         return;
@@ -216,7 +230,7 @@ export function AIInlineEditPanel({
       }
       if (content) {
         accumulatedRef.current += content;
-        setResult(accumulatedRef.current);
+        setReceived(accumulatedRef.current.length);
       }
     });
   }, [onSuggest, snapshot]);
@@ -226,6 +240,7 @@ export function AIInlineEditPanel({
       if (!instruction.trim()) return;
       setResult("");
       setError("");
+      setReceived(0);
       setLoading(true);
       accumulatedRef.current = "";
       workflowRef.current = workflow;
@@ -424,8 +439,8 @@ export function AIInlineEditPanel({
       {/* ── Streaming phase ── */}
       {phase === "streaming" && (
         <>
-          <div className="text-sm text-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[72px] max-h-[min(42vh,24rem)] overflow-y-auto overscroll-contain whitespace-pre-wrap leading-relaxed">
-            {resultPreview}
+          <div role="status" className="text-sm text-muted-foreground bg-accent/30 border border-border rounded-lg px-3 py-2.5 min-h-[72px] leading-relaxed">
+            {received ? `Writing the revision… (${received.toLocaleString()} characters)` : "Waiting for the AI…"}
             <span className="animate-pulse text-primary ml-0.5">▋</span>
           </div>
           <div className="flex justify-end">

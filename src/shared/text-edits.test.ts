@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Schema } from "prosemirror-model";
-import { protectSelectionSlice, restoreProtectedSelection } from "../../../shared/ai-text-protection";
+import { protectSelectionSlice, restoreProtectedSelection } from "./ai-text-protection";
 import { editableSegments, parseTextEdits } from "./text-edits";
 
 const schema = new Schema({ nodes: {

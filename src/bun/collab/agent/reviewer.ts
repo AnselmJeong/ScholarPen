@@ -6,6 +6,7 @@ import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
 import {
   REVIEW_MAP,
   REVIEW_CATEGORIES,
+  canonicalFindingFingerprint,
   enabledReviewCategories,
   isReviewSeverity,
   normalizeReviewCategory,
@@ -30,6 +31,7 @@ import {
 import { clip } from "./prompts";
 import { RESOLVED_REVIEW_BLOCKS_MAP } from "./resolved-review";
 import { StaleClaimSweeper } from "./stale-claims";
+import { DISMISSED_FINDINGS_MAP, purgeResolvedThreads } from "./resolved-purge";
 
 export interface ReviewerDeps {
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
@@ -264,7 +266,11 @@ export class Reviewer {
   tick() {
     const attachments = this.agent.attachmentList();
     // Independent of automatic review: claims on passages the author rewrote no longer apply.
-    for (const { session } of attachments) this.sweeper.sweep(session, AI_META_ORIGIN);
+    // Then delete what is settled, keeping only the small ledgers review needs.
+    for (const { session } of attachments) {
+      this.sweeper.sweep(session, AI_META_ORIGIN);
+      purgeResolvedThreads(session, AI_META_ORIGIN, this.now());
+    }
     const docStart = attachments.findIndex((att) => att.session.docKey === this.lastDocument) + 1;
     for (let offset = 0; offset < attachments.length; offset++) {
       const attachment = attachments[(docStart + offset) % attachments.length];
@@ -391,6 +397,8 @@ export class Reviewer {
     if (reason === "auto" && !currentSettings.autoReview) return;
     const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
     const existing = readThreads(threads);
+    // Resolved threads are deleted; their fingerprints stay in this ledger.
+    const dismissed = session.ydoc.getMap<boolean>(DISMISSED_FINDINGS_MAP);
     let added = 0;
 
     doc = readDoc(session);
@@ -401,7 +409,7 @@ export class Reviewer {
       if (currentSettings.muted.includes(finding.category)) continue;
       const fingerprint = `${SCHOLARPEN_AI.id}:${finding.blockId}:${finding.category}:${normalize(finding.quote || finding.comment)}`;
       // Never raise a finding twice, including one the author already resolved.
-      const duplicate = existing.some((thread) => canonicalFingerprint(thread.meta) === fingerprint ||
+      const duplicate = dismissed.has(fingerprint) || existing.some((thread) => canonicalFindingFingerprint(thread.meta) === fingerprint ||
         (!thread.resolved && thread.meta.blockId === finding.blockId &&
           normalize(thread.comments[0]?.text ?? "") === normalize(finding.comment)));
       if (duplicate) continue;
@@ -461,10 +469,4 @@ function hashText(text: string) {
   let hash = 5381;
   for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
   return `${text.length}:${hash >>> 0}`;
-}
-
-/** Resolved legacy citation findings remain deduplicated after merging the labels. */
-function canonicalFingerprint(meta: ThreadMeta) {
-  const category = normalizeReviewCategory(meta.category);
-  return category && meta.category ? meta.fingerprint?.replace(`:${meta.category}:`, `:${category}:`) : meta.fingerprint;
 }

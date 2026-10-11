@@ -1,5 +1,6 @@
 import { Slice, type Node as ProseMirrorNode, type Schema } from "prosemirror-model";
 import { AI_WRITING_STYLE } from "./ai-writing-style";
+import { editableSegments, parseTextEdits } from "./text-edits";
 
 type SourceLanguage = "Korean" | "English" | "the original language";
 
@@ -47,7 +48,7 @@ export const ACADEMIC_HUMANIZER_INSTRUCTIONS =
   "Remove chatbot artifacts, sycophancy, knowledge-cutoff disclaimers, and speculative gap-filling. Prefer plain, precise constructions and varied sentence rhythm. " +
   "Preserve the author's real voice, disciplinary vocabulary, technical terms, specific details, quotations, titles, proper names, citations, argumentative role, and epistemic calibration. Do not flatten formal academic prose merely because it is polished, and do not change a passage based on a single possible tell. " +
   "Do not invent, strengthen, generalize, or delete any substantive claim, fact, name, number, date, quotation, or citation. Preserve all source information even when changing sentence shape within the protected text boundaries. " +
-  "Work in embedded mode. Internally produce an academic draft, then ask: 'What still makes this sound obviously AI-generated?' and 'Does the rewrite introduce or remove any fact, name, number, date, quotation, citation, claim, or degree of certainty?' Revise once more from that audit. Output only the final protected passage, never the draft, audit, or commentary.";
+  "Work in embedded mode. Internally produce an academic draft, then ask: 'What still makes this sound obviously AI-generated?' and 'Does the rewrite introduce or remove any fact, name, number, date, quotation, citation, claim, or degree of certainty?' Revise once more from that audit. Output only the final JSON edits, never the draft, audit, or commentary.";
 
 const PROTECTED_LITERAL_PATTERN =
   /(`{1,3}[^`\n]*`{1,3}|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^$\n]+\$|!\[[^\]\n]*\]\([^\n)]+\)|\[[^\]\n]+\]\([^\n)]+\)|\[@[^\]\n]+\]|\[\^[^\]\n]+\]|\\(?:cite|citep|citet|autocite|parencite|textcite|ref|eqref|label)\*?(?:\[[^\]\n]*\])?\{[^}\n]+\}|(?<![\w@])@[A-Za-z][\w:.-]*|[*_~]{2,}|[*_]|^(?:#{1,6}|>|(?:[-+] |\d+\. ))(?=\s?))/gm;
@@ -231,11 +232,14 @@ export function buildInlineEditMessages(
     "Do not introduce new facts, evidence, quotations, citations, references, causal claims, or conclusions. Do not add a citation that is not already present. " +
     workflowInstructions +
     " " + AI_WRITING_STYLE + " " +
-    "The passage contains ScholarPen control markers beginning with ⟦SP:. They encode text-node boundaries, " +
-    "rich-text marks, Markdown or Quarto typesetting, citations, footnotes, inline math, links, and other custom inline nodes. " +
-    "Copy every control marker exactly once and in exactly the same order. Never add, delete, edit, translate, reorder, or move a marker. " +
-    "Rewrite only the natural-language text inside each T:OPEN and matching T:CLOSE marker. " +
-    "Return ONLY the annotated rewritten passage, with no explanation, preamble, code fence, or surrounding quotation marks.";
+    // Models often corrupt long control markers, so they never see or copy them.
+    "The selected passage is split into editable_segments: runs of prose between citations, footnotes, math, " +
+    "formatting changes and other protected elements, which the app keeps in place automatically. " +
+    "Rewrite the plain text of the segments and return every segment id exactly once, including unchanged segments. " +
+    "Keep the leading and trailing spaces and punctuation needed to join a segment to its neighbours. " +
+    "Do not move words between segments, leave a segment empty, or type citation keys into a segment. " +
+    'Return one JSON object, escaping quotes and newlines: {"edits":[{"id":"b0s0","text":"Revised text"}]}. ' +
+    "No explanation, Markdown, code fence, or text outside this JSON object.";
 
   const beforeSelection = documentContext?.beforeSelection ?? "";
   const afterSelection = documentContext?.afterSelection ?? "";
@@ -243,10 +247,32 @@ export function buildInlineEditMessages(
     `<editing_task>\n${instruction}\n</editing_task>\n\n` +
     "<complete_document_context reference_only=\"true\">\n" +
     `<before_selection>\n${beforeSelection}\n</before_selection>\n\n` +
-    `<selected_passage>\n${selection.protectedText}\n</selected_passage>\n\n` +
+    `<selected_passage>\n${protectedRewritePreview(selection.protectedText, selection)}\n</selected_passage>\n\n` +
     `<after_selection>\n${afterSelection}\n</after_selection>\n` +
-    "</complete_document_context>";
+    "</complete_document_context>\n\n" +
+    `<editable_segments>\n${JSON.stringify(editableSegments([selection]).map(({ id, text }) => ({ id, text })))}\n</editable_segments>`;
   return { system, user };
+}
+
+/**
+ * Turns the model's segment edits back into the annotated passage that
+ * `restoreProtectedSelection` expects. An omitted segment keeps its text.
+ * A response in the older annotated format is passed through for the strict validator.
+ */
+export function parseInlineEditResponse(response: string, selection: ProtectedSelection) {
+  const cleaned = response.replace(/<think>[\s\S]*?<\/think>/g, "").trim()
+    .replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, "$1").trim();
+  if (!cleaned.startsWith("{")) return cleaned;
+  let data: { edits?: unknown };
+  try { data = JSON.parse(cleaned); }
+  catch { throw new Error("The AI returned malformed JSON. Retry the rewrite; the document was not modified."); }
+  if (!Array.isArray(data.edits)) throw new Error("The AI returned no edits. Retry the rewrite; the document was not modified.");
+  const given = new Map<string, unknown>();
+  for (const edit of data.edits) if (edit && typeof edit.id === "string") given.set(edit.id, edit.text);
+  const edits = editableSegments([selection]).map(({ id, text }) => ({ id, text: given.has(id) ? given.get(id) : text }));
+  const unknown = [...given.keys()].filter(id => !edits.some(edit => edit.id === id));
+  if (unknown.length) throw new Error("The AI returned an unknown text segment. Retry the rewrite; the document was not modified.");
+  return parseTextEdits(JSON.stringify({ reply: "", edits }), [selection])!.parts![0];
 }
 
 function parseProtectedRewrite(response: string, selection: ProtectedSelection) {

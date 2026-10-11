@@ -671,6 +671,9 @@ test("raising severity while the model is working filters the in-flight response
   expect(threads(session).map(t => t.meta.severity)).toEqual(["high"]);
 });
 
+/** Open, or gone: resolved claims are deleted shortly after resolution. */
+const isOpen = (session: CollabSession, id: string) => threads(session).some(t => t.id === id && !t.resolved);
+
 function authorReplace(session: CollabSession, blockId: string, text: string) {
   const doc = readDoc(session);
   const block = findBlock(doc, blockId)!;
@@ -700,27 +703,17 @@ test("claims on passages the author deleted or rewrote resolve after a grace per
   reviewer.tick();
   clock.now += 60_000;
   reviewer.tick();
-  expect(threads(session)[0].resolved).toBe(false);
+  expect(isOpen(session, claim.id)).toBe(true);
 
   // Rewriting the passage makes the claim stale, but only once it stays that way.
   authorReplace(session, "p1", "Our findings suggest a modest benefit in some patients.");
   reviewer.tick();
-  expect(threads(session)[0].resolved).toBe(false);
+  expect(isOpen(session, claim.id)).toBe(true);
   clock.now += 25_000;
   reviewer.tick();
-  const resolved = threads(session)[0];
-  expect(resolved.resolved).toBe(true);
-  expect(resolved.meta.autoResolved).toBe("stale");
+  expect(threads(session).some(t => t.id === claim.id)).toBe(false);
   // The rewritten paragraph is not retired from future reviews.
   expect(session.ydoc.getMap("resolvedReviewBlocks").has("p1")).toBe(false);
-
-  // A claim the author reopens stays open.
-  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
-  session.ydoc.transact(() => updateThreadMeta(map, claim.id, { status: "open" }), "editor");
-  clock.now += 60_000;
-  reviewer.tick();
-  reviewer.tick();
-  expect(threads(session)[0].resolved).toBe(false);
 });
 
 test("deleting a claimed passage resolves the claim after the grace period unless the author replied to it", async () => {
@@ -738,14 +731,15 @@ test("deleting a claimed passage resolves the claim after the grace period unles
 
   authorReplace(session, "p1", "Placeholder.");
   expect(threadRange(readDoc(session), discussed.id)).toBeNull();
+  const overclaim = threads(session).find(t => t.meta.category === "overclaim")!;
   reviewer.tick();
   clock.now += 10_000;
   reviewer.tick();
-  expect(threads(session).every(t => !t.resolved)).toBe(true);
+  expect(isOpen(session, overclaim.id) && isOpen(session, discussed.id)).toBe(true);
   clock.now += 15_000;
   reviewer.tick();
-  const byCategory = Object.fromEntries(threads(session).map(t => [t.meta.category, t.resolved]));
-  expect(byCategory).toEqual({ overclaim: true, generalisation: false });
+  expect(isOpen(session, overclaim.id)).toBe(false);
+  expect(isOpen(session, discussed.id)).toBe(true);
 });
 
 test("stale claims wait while a coordinated revision is reading the comments", async () => {
@@ -759,14 +753,67 @@ test("stale claims wait while a coordinated revision is reading the comments", a
   const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
   const request = createThread(map, "me", "Address all comments.", { assignee: "ai", scope: "document", documentAction: "resolve-comments" });
   authorReplace(session, "p1", "Placeholder.");
+  const overclaim = threads(session).find(t => t.meta.category === "overclaim")!;
   reviewer.tick();
   clock.now += 60_000;
   reviewer.tick();
-  expect(threads(session).find(t => t.meta.category === "overclaim")!.resolved).toBe(false);
+  expect(isOpen(session, overclaim.id)).toBe(true);
 
   session.ydoc.transact(() => updateThreadMeta(map, request, { status: "resolved" }));
   reviewer.tick();
   clock.now += 25_000;
   reviewer.tick();
-  expect(threads(session).find(t => t.meta.category === "overclaim")!.resolved).toBe(true);
+  expect(isOpen(session, overclaim.id)).toBe(false);
+});
+
+test("resolved and deleted comments are removed with their marks; the finding is never raised again", async () => {
+  const clock = { now: Date.now() };
+  const respond = findings([
+    { paragraph: 1, quote: "prove that the treatment works", category: "overclaim", severity: "high", comment: "Too strong." },
+  ]);
+  const { session } = await setup(respond, clock);
+  session.ydoc.getMap(REVIEW_MAP).set("projectCategories", { disabledCategories: ["citation"] });
+  session.ydoc.getMap(REVIEW_MAP).set("autoReview", false);
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const [claim] = threads(session);
+  const note = createThread(map, "me", "My own note.", { manual: true });
+  anchorThread(session, "p3", note, "editor");
+  const hasMark = (id: string) => threadRange(readDoc(session), id) !== null;
+  expect(hasMark(claim.id) && hasMark(note)).toBe(true);
+
+  session.ydoc.transact(() => {
+    updateThreadMeta(map, claim.id, { status: "resolved" });
+    (map.get(note) as InstanceType<typeof Y.Map>).set("deletedAt", Date.now());
+  }, "editor");
+  // Within the grace period nothing is removed.
+  reviewer.tick();
+  expect(map.has(claim.id) && map.has(note)).toBe(true);
+  clock.now += 10_000;
+  reviewer.tick();
+  expect(map.size).toBe(0);
+  expect(hasMark(claim.id) || hasMark(note)).toBe(false);
+  expect(readDoc(session).textContent).toContain("prove that the treatment works");
+  // The paragraph stays retired from automatic review, and the same finding is not raised again.
+  expect(session.ydoc.getMap("resolvedReviewBlocks").has("p1")).toBe(true);
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session)).toHaveLength(0);
+});
+
+test("an undismissed watermark result keeps its resolved thread until the author closes the card", async () => {
+  const clock = { now: Date.now() };
+  const { session } = await setup(findings([]), clock);
+  session.ydoc.getMap(REVIEW_MAP).set("autoReview", false);
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const id = createThread(map, "me", "Remove watermarks.", { documentAction: "remove-watermark", scope: "document",
+    status: "resolved", watermarkResult: { scanned: 3, skipped: 0, removed: 1, replaced: 0 } });
+  updateThreadMeta(map, id, { status: "resolved" });
+  clock.now += 60_000;
+  reviewer.tick();
+  expect(map.has(id)).toBe(true);
+  updateThreadMeta(map, id, { resultDismissedAt: Date.now() });
+  reviewer.tick();
+  expect(map.has(id)).toBe(false);
 });

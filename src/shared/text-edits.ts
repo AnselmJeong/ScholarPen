@@ -1,4 +1,4 @@
-import type { ProtectedSelection } from "../../../shared/ai-text-protection";
+import type { ProtectedSelection } from "./ai-text-protection";
 
 export interface EditableSegment { id: string; text: string }
 

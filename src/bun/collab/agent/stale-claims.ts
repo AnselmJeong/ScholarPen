@@ -10,8 +10,6 @@ export const STALE_CLAIM_GRACE_MS = 20_000;
 /** Share of the claimed words the author must have replaced before the claim no longer applies. */
 const REWRITTEN_SHARE = 0.5;
 
-export const STALE_CLAIM_NOTE = "Resolved automatically: the commented passage was deleted or rewritten.";
-
 function words(text: string) {
   return text.toLowerCase().split(/\s+/).filter(Boolean);
 }
@@ -35,15 +33,14 @@ function isUntouchedClaim(thread: ThreadSnapshot) {
   const { meta } = thread;
   if (thread.resolved || (meta.status ?? "open") !== "open") return false;
   if (!normalizeReviewCategory(meta.category) || !isAIUser(meta.agent)) return false;
-  // A claim the author reopened after it was retired stays until they resolve it.
-  if (meta.autoResolved || meta.assignee === "ai" || meta.bulkRequestId || meta.changeSet !== undefined || meta.scope === "document") return false;
+  if (meta.assignee === "ai" || meta.bulkRequestId || meta.changeSet !== undefined || meta.scope === "document") return false;
   return thread.comments.every(comment => comment.deleted || isAIUser(comment.userId));
 }
 
 /**
  * Retires AI review claims the author's editing made irrelevant: the claimed
- * passage is gone, or most of its words were rewritten. Resolved, not deleted,
- * so a claim can be reopened from the Resolved tab.
+ * passage is gone, or most of its words were rewritten. Resolved claims are
+ * then deleted by `purgeResolvedThreads`.
  */
 export class StaleClaimSweeper {
   /** First time each thread was seen stale, per document. */
@@ -79,7 +76,7 @@ export class StaleClaimSweeper {
     if (!due.length) return 0;
     session.ydoc.transact(() => {
       for (const id of due) {
-        updateThreadMeta(map, id, { status: "resolved", autoResolved: "stale", statusNote: STALE_CLAIM_NOTE });
+        updateThreadMeta(map, id, { status: "resolved", autoResolved: "stale" });
         since.delete(id);
       }
     }, origin);

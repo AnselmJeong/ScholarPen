@@ -79,6 +79,12 @@ export function reviewCategoryLabel(value: unknown): string {
   return REVIEW_CATEGORIES.find(category => category.id === id)?.label ?? "Review";
 }
 
+/** Finding identity with legacy category labels merged, so a dismissed finding stays dismissed. */
+export function canonicalFindingFingerprint(meta: { category?: string; fingerprint?: string }) {
+  const category = normalizeReviewCategory(meta.category);
+  return category && meta.category ? meta.fingerprint?.replace(`:${meta.category}:`, `:${category}:`) : meta.fingerprint;
+}
+
 /** A review finding whose type the project turned off. Comments without a review type never are. */
 export function isDisabledReviewType(category: unknown, disabled: readonly ReviewCategory[]) {
   const id = normalizeReviewCategory(category);

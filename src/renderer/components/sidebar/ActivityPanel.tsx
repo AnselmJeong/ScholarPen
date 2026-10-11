@@ -2,7 +2,7 @@ import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
-import { BellOff, Bot, Check, CircleDot, Download, MessageSquare, RotateCcw, User, X } from "lucide-react";
+import { BellOff, Bot, Check, CircleDot, Download, MessageSquare, User, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import {
@@ -28,7 +28,8 @@ import { WatermarkResultCard } from "./WatermarkResultCard";
 import { exportUnresolvedComments, unresolvedCommentsFilename } from "../../../shared/collab/comment-export";
 import { openClaimThreads, requestBulkComments, resolveAllComments } from "../../../shared/collab/bulk-comments";
 
-type Filter = "open" | "ai" | "mine" | "resolved";
+// Resolved comments are deleted shortly after resolution (see resolved-purge.ts), so there is no Resolved tab.
+type Filter = "open" | "ai" | "mine";
 
 const STATUS_LABEL: Record<ThreadStatus, string> = {
   open: "Open",
@@ -112,11 +113,12 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   useEffect(() => { setExportResult(null); }, [editor, projectPath]);
   useEffect(() => { setBulkInstructions(""); setBulkError(null); }, [editor, projectPath]);
   // Lists, counts and bulk actions all work on the comments the panel shows.
-  const inScope = (thread: ThreadSnapshot) => showDisabledTypes || threadStatus(thread) === "resolved" ||
-    !isDisabledReviewType(thread.meta.category, disabledTypes);
+  const inScope = (thread: ThreadSnapshot) => threadStatus(thread) !== "resolved" &&
+    (showDisabledTypes || !isDisabledReviewType(thread.meta.category, disabledTypes));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- inScope reads exactly these values.
   const scoped = useMemo(() => threads.filter(inScope), [threads, disabledTypes, showDisabledTypes]);
-  const hiddenByType = threads.length - scoped.length;
+  const hiddenByType = showDisabledTypes ? 0 : threads.filter(thread => threadStatus(thread) !== "resolved" &&
+    isDisabledReviewType(thread.meta.category, disabledTypes)).length;
   const bulkTargets = openClaimThreads(scoped);
   const bulkBusy = threads.some(thread => !thread.resolved && (thread.meta.status === "in-progress" ||
     (thread.meta.documentAction === "resolve-comments" && thread.meta.assignee === "ai")));
@@ -164,9 +166,6 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
 
   const visible = useMemo(() => {
     const filtered = scoped.filter((thread) => {
-      const status = threadStatus(thread);
-      if (filter === "resolved") return status === "resolved";
-      if (status === "resolved") return false;
       if (filter === "ai") return thread.meta.assignee === "ai" || isAIUser(thread.comments[0]?.userId);
       if (filter === "mine") return thread.meta.assignee === "me";
       return true;
@@ -176,11 +175,9 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   }, [scoped, filter, positions]);
 
   const counts = useMemo(() => ({
-    open: scoped.filter((t) => threadStatus(t) !== "resolved").length,
-    ai: scoped.filter((t) => threadStatus(t) !== "resolved" &&
-      (t.meta.assignee === "ai" || isAIUser(t.comments[0]?.userId))).length,
-    mine: scoped.filter((t) => threadStatus(t) !== "resolved" && t.meta.assignee === "me").length,
-    resolved: scoped.filter((t) => threadStatus(t) === "resolved").length,
+    open: scoped.length,
+    ai: scoped.filter((t) => t.meta.assignee === "ai" || isAIUser(t.comments[0]?.userId)).length,
+    mine: scoped.filter((t) => t.meta.assignee === "me").length,
   }), [scoped]);
 
   const setMeta = (threadId: string, patch: Parameters<typeof updateThreadMeta>[2]) => {
@@ -215,7 +212,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
         <span className="mr-auto truncate text-xs font-medium text-foreground">
           Comments{documentName ? ` · ${documentName.replace(".scholarpen.json", "")}` : ""}
         </span>
-        {(["open", "ai", "mine", "resolved"] as Filter[]).map((value) => (
+        {(["open", "ai", "mine"] as Filter[]).map((value) => (
           <button
             key={value}
             type="button"
@@ -282,7 +279,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
             key={thread.id}
             thread={thread}
             reference={thread.meta.scope === "document" ? "Whole manuscript" : referenceText(thread.id)}
-            detached={thread.meta.scope !== "document" && threadStatus(thread) !== "resolved" && !positions.has(thread.id)}
+            detached={thread.meta.scope !== "document" && !positions.has(thread.id)}
             onSelect={() => editor.getExtension(CommentsExtension)?.selectThread(thread.id)}
             onAssign={(assignee) => setMeta(thread.id, {
               assignee, status: "open", statusNote: undefined,
@@ -299,7 +296,6 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
               void rpc.collabSetReviewCategory(collab.docKey, category, false)
                 .catch(error => setCategoryError(error instanceof Error ? error.message : String(error)));
             } : undefined}
-            onReopen={() => setMeta(thread.id, { status: "open" })}
           />
         ))}
       </div>
@@ -307,7 +303,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   );
 }
 
-function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve, onReopen, onMute, onDecideChange, coordinated }: {
+function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve, onMute, onDecideChange, coordinated }: {
   thread: ThreadSnapshot;
   reference: string | null;
   /** The commented text is no longer in the document, so there is nothing to highlight. */
@@ -315,7 +311,6 @@ function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve,
   onSelect: () => void;
   onAssign: (assignee: "ai" | "me") => void;
   onResolve: () => void;
-  onReopen: () => void;
   /** Disables this category project-wide; its open comments are hidden, not resolved. */
   onMute?: () => void;
   /** Accepts or rejects the AI's change set for this thread, when one is pending. */
@@ -386,22 +381,16 @@ function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve,
             </button>
           </>
         )}
-        {status === "resolved" ? (
-          <SmallButton icon={<RotateCcw className="h-3 w-3" />} label="Reopen" onClick={onReopen} />
-        ) : (
-          <>
-            {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && (
-              <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
-                onClick={() => onAssign("ai")} />
-            )}
-            {thread.meta.assignee !== "me" && (
-              <SmallButton icon={<User className="h-3 w-3" />} label="I'll handle" onClick={() => onAssign("me")} />
-            )}
-            <SmallButton icon={<Check className="h-3 w-3" />} label="Resolve" onClick={onResolve} />
-            {onMute && fromAI && (
-              <SmallButton icon={<BellOff className="h-3 w-3" />} label="Disable type in project" onClick={onMute} />
-            )}
-          </>
+        {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && (
+          <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
+            onClick={() => onAssign("ai")} />
+        )}
+        {thread.meta.assignee !== "me" && (
+          <SmallButton icon={<User className="h-3 w-3" />} label="I'll handle" onClick={() => onAssign("me")} />
+        )}
+        <SmallButton icon={<Check className="h-3 w-3" />} label="Resolve" onClick={onResolve} />
+        {onMute && fromAI && (
+          <SmallButton icon={<BellOff className="h-3 w-3" />} label="Disable type in project" onClick={onMute} />
         )}
       </div>
     </div>

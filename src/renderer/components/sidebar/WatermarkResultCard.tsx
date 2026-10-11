@@ -20,7 +20,7 @@ export function WatermarkResultCard({ threads, onDismiss }: {
     <div className="flex items-center gap-1.5">
       <Check className="h-3.5 w-3.5 text-emerald-600" />
       <span className="flex-1 text-xs font-medium">Remove watermark · 실행 결과</span>
-      <button type="button" aria-label="워터마크 정리 결과 닫기" title="결과 닫기 · 기록은 Resolved에 유지됩니다"
+      <button type="button" aria-label="워터마크 정리 결과 닫기" title="결과 닫기 · 닫으면 실행 기록도 정리됩니다"
         onClick={() => onDismiss(latest.id)} className="rounded p-0.5 text-muted-foreground hover:bg-muted">
         <X className="h-3.5 w-3.5" />
       </button>

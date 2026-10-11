@@ -1,4 +1,4 @@
-import type { EditableSegment } from "./text-edits";
+import type { EditableSegment } from "../../../shared/text-edits";
 import type { ProtectedSelection } from "../../../shared/ai-text-protection";
 import { AI_WRITING_STYLE } from "../../../shared/ai-writing-style";
 import type { OllamaMessage } from "../../../shared/rpc-types";

@@ -37,7 +37,8 @@ interface Payload {
   manuscript: Array<{ id: string; text: string }>;
   candidateManuscript?: Array<{ id: string; text: string }>;
   editable_segments: Array<{ id: string; blockId: string; text: string }>;
-  comments: Array<{ id: string; target: boolean; resolved: boolean; comments: Array<{ text: string }> }>;
+  comments: Array<{ id: string; target: boolean; comments: Array<{ text: string }> }>;
+  unlinkedParagraphIds?: string[];
   proposedOutcomes?: Array<{ threadId: string; status: string; reason: string; blockIds: string[] }>;
 }
 const payloadOf = (messages: OllamaMessage[]) => JSON.parse(String(messages[1].content)) as Payload;
@@ -90,7 +91,8 @@ test("AI and author comments become one verified suggestion, with decisions left
   expect(agent.jobs(session.docKey)[0].state).toBe("done");
   expect(calls).toHaveLength(2);
   expect(payloadOf(calls[0]).manuscript).toHaveLength(67);
-  expect(payloadOf(calls[0]).comments.find(comment => comment.comments[0].text.includes("historical"))?.resolved).toBe(true);
+  // Resolved comments are settled; they are not sent at all.
+  expect(payloadOf(calls[0]).comments.some(comment => comment.comments[0].text.includes("historical"))).toBe(false);
   expect(payloadOf(calls[1]).candidateManuscript!.at(-1)!.text).toContain("suggest");
   const sets = listChangeSets(readDoc(session), session.ydoc.getMap(CHANGE_SETS_MAP));
   expect(sets).toHaveLength(1);
@@ -234,7 +236,6 @@ test("short stable references, harmless duplicate outcomes and deferred field va
       data.outcomes[2].status = " NEEDS_USER ";
       delete data.outcomes[2].blockIds;
       data.outcomes.push({ ...data.outcomes[0] });
-      data.outcomes.push({ threadId: payload.comments.find(comment => comment.resolved)!.id, status: "resolved" });
     }
     return JSON.stringify(data);
   });
@@ -298,4 +299,69 @@ test("an author edit during automatic metadata repair still discards the proposa
   await done(session);
   expect(agent.jobs(session.docKey)[0].detail).toContain("comments changed");
   expect(listChangeSets(readDoc(session))).toHaveLength(0);
+});
+
+const changedParagraphs = (session: CollabSession) =>
+  listChangeSets(readDoc(session), session.ydoc.getMap(CHANGE_SETS_MAP)).flatMap(set => set.paragraphs.map(paragraph => paragraph.blockId));
+const onlyP1 = (messages: OllamaMessage[]) => {
+  const data = JSON.parse(answer(messages));
+  for (const outcome of data.outcomes) if (outcome.status === "addressed") outcome.blockIds = ["p1"];
+  return data;
+};
+
+test("a follow-on edit listed under no comment is linked to the comment that required it", async () => {
+  const { session, calls, ai, human } = await setup(async messages => {
+    const payload = payloadOf(messages);
+    if (payload.unlinkedParagraphIds) {
+      expect(payload.unlinkedParagraphIds).toEqual(["P2"]);
+      return JSON.stringify({ outcomes: JSON.parse(answer(messages)).outcomes, revert: [] });
+    }
+    return payload.candidateManuscript ? answer(messages) : JSON.stringify(onlyP1(messages));
+  });
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(calls).toHaveLength(3);
+  expect(changedParagraphs(session)).toEqual(["p1", "p2"]);
+  for (const id of [ai, human]) expect(threadsOf(session).find(thread => thread.id === id)?.meta.status).toBe("proposed");
+});
+
+test("an edit no comment required is withdrawn and the rest is verified and proposed", async () => {
+  let candidate = "";
+  const { session } = await setup(async messages => {
+    const payload = payloadOf(messages);
+    if (payload.unlinkedParagraphIds) return JSON.stringify({ outcomes: onlyP1(messages).outcomes, revert: ["P2"] });
+    if (payload.candidateManuscript) {
+      candidate = payload.candidateManuscript.map(paragraph => paragraph.text).join("\n");
+      return JSON.stringify({ consistent: true, outcomes: payload.proposedOutcomes });
+    }
+    return JSON.stringify(onlyP1(messages));
+  });
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(candidate).toContain("These findings suggest");
+  expect(candidate).toContain("Our conclusions prove");
+  expect(changedParagraphs(session)).toEqual(["p1"]);
+});
+
+test("edits for a comment the verification defers are withdrawn and the remainder is checked again", async () => {
+  let verifications = 0;
+  const { session, ai, human } = await setup(async messages => {
+    const payload = payloadOf(messages);
+    if (!payload.candidateManuscript) return answer(messages);
+    verifications++;
+    const outcomes = payload.proposedOutcomes!.map(outcome => outcome.status !== "addressed" ? outcome
+      : outcome.reason.includes("Qualified") && payload.comments.find(comment => comment.id === outcome.threadId)!.comments[0].text.includes("conclusion")
+        ? { ...outcome, status: "needs-user", reason: "Which conclusion do you want?", blockIds: [] }
+        : { ...outcome, blockIds: ["P1"] });
+    return JSON.stringify({ consistent: true, outcomes });
+  });
+  requestBulkComments(session.ydoc);
+  await done(session);
+  expect(agent.jobs(session.docKey)[0].state).toBe("done");
+  expect(verifications).toBe(2);
+  expect(changedParagraphs(session)).toEqual(["p1"]);
+  expect(threadsOf(session).find(thread => thread.id === ai)?.meta.status).toBe("proposed");
+  expect(threadsOf(session).find(thread => thread.id === human)?.meta.status).toBe("open");
 });
