@@ -168,8 +168,47 @@ test("automatically reviews untouched sections, then stops until content or pref
   authorEdit(session, "p1");
   reviewer.tick();
   await idle();
+  // The edited paragraph waits until the author has left it alone.
+  expect(prompts).toHaveLength(2);
+  clock.now += 30_000;
+  reviewer.tick();
+  await idle();
   expect(prompts).toHaveLength(3);
   expect(reviewedTarget(prompts[2])).toContain(" More.");
+});
+
+test("an edit re-reviews only the changed paragraph, not the opening of its section", async () => {
+  const clock = { now: 1_000_000 };
+  const blocks = [BLOCKS[0], ...["Opening claim.", "Second point.", "Third point.", "Closing point."].map((content, i) => ({
+    id: `q${i + 1}`, type: "paragraph", content,
+  }))];
+  const { session, prompts } = await setup(findings([]), clock, blocks);
+  const presence = agent.attachmentFor(session.docKey)!.presence;
+  const claims: string[] = [];
+  const claim = presence.claim.bind(presence);
+  presence.claim = (blockId, label) => { claims.push(`${blockId} ${label}`); claim(blockId, label); };
+
+  reviewer.tick();
+  await idle();
+  expect(claims).toEqual(["q1 reviewing 4 paragraphs"]);
+
+  authorEdit(session, "q3");
+  clock.now += 30_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(claims[1]).toBe("q3 reviewing");
+  expect(reviewedTarget(prompts[1])).toContain("Third point. More.");
+  expect(reviewedTarget(prompts[1])).not.toContain("Opening claim.");
+  // The unchanged paragraphs are still context, in order.
+  expect(String(prompts[1][1].content)).toMatch(/Opening claim\.[\s\S]*Second point\.[\s\S]*Closing point\./);
+
+  // The paragraphs it did not reread stay reviewed.
+  clock.now += 30_000;
+  reviewer.tick();
+  await idle();
+  expect(prompts).toHaveLength(2);
+  expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
 });
 
 test("the author can hand an AI finding back to the AI to fix", async () => {
@@ -464,7 +503,7 @@ test("resolving and editing a paragraph does not restart its section; other para
   expect(session.ydoc.getMap(REVIEW_MAP).get("progress")).toEqual({ reviewedSections: 1, totalSections: 1 });
 
   authorEdit(session, "p2");
-  clock.now += 20_000;
+  clock.now += 30_000;
   reviewer.tick();
   await idle();
   expect(prompts).toHaveLength(2);
@@ -649,7 +688,7 @@ test("stricter settings do not restart completed reviews, including a legacy med
   expect(threads(session)).toHaveLength(1); // Existing comments are preserved.
   expect(threads(session)[0].resolved).toBe(false);
   authorEdit(session, "p1");
-  clock.now += 20_000;
+  clock.now += 30_000;
   reviewer.tick();
   await idle();
   expect(prompts).toHaveLength(2);

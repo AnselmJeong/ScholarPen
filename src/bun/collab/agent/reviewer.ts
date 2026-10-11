@@ -43,6 +43,8 @@ export interface ReviewerDeps {
   now?: () => number;
   /** Minimum gap between automatic reviews of one document. */
   autoIntervalMs?: number;
+  /** An edited paragraph is reviewed automatically once the author has left it alone this long. */
+  settleMs?: number;
   maxAutoPerHour?: number;
   tickMs?: number;
 }
@@ -52,6 +54,7 @@ const MAX_FINDINGS_PER_BATCH = 10;
 const MAX_PARAGRAPHS_PER_BATCH = 8;
 const MAX_BATCH_CHARS = 8_000;
 const REVIEW_VERSION = 2;
+const SETTLE_MS = 30_000;
 
 interface SectionReview {
   hash: string;
@@ -123,6 +126,24 @@ function sectionFingerprint(doc: ReturnType<typeof readDoc>, section: Section) {
 function paragraphFingerprint(doc: ReturnType<typeof readDoc>, block: BlockRef) {
   const { from, to } = blockContent(block);
   return hashText(readableText(doc, from, to));
+}
+
+/** The earlier review's per-paragraph record, when a new review may extend it instead of starting over. */
+function reusableParagraphs(previous: SectionReview | undefined, settings: ReviewSettings, section: Section) {
+  if (previous?.version !== REVIEW_VERSION || !previousReviewCoversSettings(previous.settings, settings)) return null;
+  if (!previous.paragraphs || previous.heading !== sectionTitle(section)) return null;
+  return previous.paragraphs;
+}
+
+/** Eligible paragraphs an automatic review still has to read: new or changed ones, or all after a policy or heading change. */
+function unreviewedProse(doc: ReturnType<typeof readDoc>, section: Section, eligible: BlockRef[],
+  previous: SectionReview | undefined, settings: ReviewSettings) {
+  const reviewed = reusableParagraphs(previous, settings, section);
+  if (reviewed) return eligible.filter(block => reviewed[block.id] !== paragraphFingerprint(doc, block));
+  // A record without paragraphs covers the section text as a whole.
+  const whole = previous?.version === REVIEW_VERSION && !previous.paragraphs &&
+    previousReviewCoversSettings(previous.settings, settings) && previous.hash === hashText(sectionFingerprint(doc, section));
+  return whole ? [] : eligible;
 }
 
 function normalize(text: string) {
@@ -266,6 +287,11 @@ export class Reviewer {
     }, (_job, att, signal) => this.runReview(att, key, reason, signal));
   }
 
+  /** True once the author has not edited the paragraph for a while (or never did in this session). */
+  private settled(attachment: Attachment, blockId: string) {
+    return this.now() - attachment.presence.lastTouched(blockId) >= (this.deps.settleMs ?? SETTLE_MS);
+  }
+
   /** Round-robin across documents and sections; no edit or cursor prerequisite. */
   tick() {
     const attachments = this.agent.attachmentList();
@@ -285,7 +311,7 @@ export class Reviewer {
       const reviewed = (map.get("sections") as Record<string, SectionReview> | undefined) ?? {};
       const resolved = session.ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
       const seen = new Set<string>();
-      const sections: Array<{ key: string; current: boolean }> = [];
+      const sections: Array<{ key: string; current: boolean; settled: boolean }> = [];
       for (const block of iterateTop(doc)) {
         const section = sectionOf(doc, block.id);
         if (!section) continue;
@@ -294,12 +320,8 @@ export class Reviewer {
         seen.add(key);
         if (!proseOf(section).length) continue;
         const eligible = proseOf(section).filter(block => !resolved.has(block.id));
-        const previous = reviewed[key];
-        sections.push({ key, current: !eligible.length || (previous?.version === REVIEW_VERSION &&
-          previousReviewCoversSettings(previous.settings, settings) && (previous.paragraphs
-            ? previous.heading === sectionTitle(section) && eligible.every(block =>
-              previous.paragraphs![block.id] === paragraphFingerprint(doc, block))
-            : previous.hash === hashText(sectionFingerprint(doc, section)))) });
+        const pending = unreviewedProse(doc, section, eligible, reviewed[key], settings);
+        sections.push({ key, current: !pending.length, settled: pending.some(block => this.settled(attachment, block.id)) });
       }
       const progress: ReviewProgress = {
         reviewedSections: sections.filter((section) => section.current).length,
@@ -317,7 +339,8 @@ export class Reviewer {
       const start = sections.findIndex((section) => section.key === map.get("cursor")) + 1;
       for (let index = 0; index < sections.length; index++) {
         const section = sections[(start + index) % sections.length];
-        if (section.current) continue;
+        // A paragraph the author is still writing waits; reviewing it now would be discarded as stale.
+        if (section.current || !section.settled) continue;
         // Save before starting, so failures/restarts cannot trap us at the beginning.
         session.ydoc.transact(() => map.set("cursor", section.key), AI_META_ORIGIN);
         history.push(this.now());
@@ -341,7 +364,13 @@ export class Reviewer {
     const resolved = session.ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
     const eligible = (block: BlockRef) => reason === "manual" || !resolved.has(block.id);
     const originalHash = hashText(sectionFingerprint(doc, section));
-    const prose = proseOf(section).filter(eligible);
+    const sectionProse = proseOf(section).filter(eligible);
+    const previous = (reviewMap.get("sections") as Record<string, SectionReview> | undefined)?.[key];
+    // A manual review reads the whole section. An automatic one reads only what changed since
+    // the last review, and leaves a paragraph the author is still writing for a later pass.
+    const carried = reason === "auto" ? reusableParagraphs(previous, settings, section) ?? {} : {};
+    const prose = reason === "manual" ? sectionProse
+      : unreviewedProse(doc, section, sectionProse, previous, settings).filter(block => this.settled(attachment, block.id));
     if (!prose.length) return;
     const originalText = new Map(prose.map((block) => [block.id,
       readableText(doc, blockContent(block).from, blockContent(block).to)]));
@@ -388,17 +417,19 @@ export class Reviewer {
       if (!batch.length) continue;
       const paragraphs = batch.map((block) => originalText.get(block.id)!);
       const first = batch[0];
-      const last = batch[batch.length - 1];
+      const inBatch = new Set(batch.map(block => block.id));
+      // Changed paragraphs need not be adjacent; unchanged ones between them stay in the context.
       const contextBlocks = [...iterateTop(doc)].flatMap(flatten)
-        .filter(block => hasInlineContent(block) && eligible(block));
+        .filter(block => hasInlineContent(block) && eligible(block) && !inBatch.has(block.id));
       const contextText = (blocks: BlockRef[]) => blocks.map(block => {
         const { from, to } = blockContent(block);
         return readableText(doc, from, to);
       }).join("\n");
       const context = clip(contextText(contextBlocks.filter(block => block.pos < first.pos)), 3000, "end") +
         "\n[…reviewed paragraphs…]\n" +
-        clip(contextText(contextBlocks.filter(block => block.pos > last.pos)), 2000, "start");
-      attachment.presence.claim(first.id, "reviewing");
+        clip(contextText(contextBlocks.filter(block => block.pos > first.pos)), 2000, "start");
+      // The cursor marks the batch's first paragraph; the label says how much is being read.
+      attachment.presence.claim(first.id, batch.length > 1 ? `reviewing ${batch.length} paragraphs` : "reviewing");
       const response = await this.deps.complete(
         buildReviewMessages(sectionTitle(section), paragraphs, context, allowed, settings, glossary ? glossaryGuidance(glossary) : ""), signal);
       if (signal.aborted) throw new Error("Cancelled");
@@ -455,7 +486,11 @@ export class Reviewer {
       sections[key] = { hash: originalHash, at: this.now(), reason, added,
         version: REVIEW_VERSION, settings: settingsFingerprint(settings),
         heading: sectionTitle(section),
-        paragraphs: Object.fromEntries([...originalText].map(([id, text]) => [id, hashText(text)])),
+        // Paragraphs this run did not read keep the record of the review that did.
+        paragraphs: {
+          ...Object.fromEntries(sectionProse.filter(block => carried[block.id]).map(block => [block.id, carried[block.id]])),
+          ...Object.fromEntries([...originalText].map(([id, text]) => [id, hashText(text)])),
+        },
       } satisfies SectionReview;
       reviewMap.set("sections", sections);
     }, AI_META_ORIGIN);
