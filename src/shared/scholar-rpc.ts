@@ -123,6 +123,7 @@ type BunRequests = RPCSchema<{
     // Export
     discoverQuartoExtensions: { params: { projectPath: string }; response: QuartoExtensionDiscovery };
     exportFile: { params: { projectPath: string; filename: string; content: string }; response: string };
+    exportBinaryFile: { params: { projectPath: string; filename: string; base64: string }; response: string };
     renderQuartoBook: {
       params: { projectPath: string; format: QuartoRenderFormat };
       response: QuartoRenderResult;

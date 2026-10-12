@@ -96,7 +96,7 @@ describe("Quarto export frontmatter", () => {
     expect(first.match(/^# /gm)).toHaveLength(1);
     expect(first).toContain("# 상태공간과 동역학 {#sec-state-space}");
     expect(first).toContain("## 상태와 파라미터 {#sec-state-vs-parameter}");
-    expect(first).toContain("bibliography: references.bib\nnumber-sections: true");
+    expect(first).not.toContain("number-sections");
     expect(first).toMatch(/^date: "\d{4}-\d{2}-\d{2}"$/m);
     expect(first).toEndWith("Body text");
     expect(JSON.stringify(blocks)).toBe(original);

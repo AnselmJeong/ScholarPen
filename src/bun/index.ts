@@ -474,6 +474,8 @@ async function main() {
           discoverQuartoExtensionFormats(await fileSystem.getQuartoProjectDirectory(projectPath)),
         exportFile: ({ projectPath, filename, content }) =>
           fileSystem.exportFile(projectPath, filename, content),
+        exportBinaryFile: ({ projectPath, filename, base64 }) =>
+          fileSystem.exportBinaryFile(projectPath, filename, base64),
 
         renderQuartoBook: async ({ projectPath, format }) => {
           const result = await renderQuartoBookProject({

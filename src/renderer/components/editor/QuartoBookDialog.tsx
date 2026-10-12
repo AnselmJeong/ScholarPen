@@ -22,8 +22,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { parseQuartoBookConfig } from "@shared/quarto-config";
-import type { QuartoBookFormat } from "@shared/quarto-config";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { DEFAULT_QUARTO_BOOK_OPTIONS, parseQuartoBookConfig } from "@shared/quarto-config";
+import type {
+  QuartoBookFormat,
+  QuartoBookOptions,
+  QuartoFigureNumbering,
+  QuartoSectionNumbering,
+} from "@shared/quarto-config";
 import type { QuartoExtensionDiscovery } from "@shared/rpc-types";
 
 export interface QuartoBookSetup {
@@ -38,6 +51,8 @@ export interface QuartoBookSetup {
   formats: QuartoBookFormat[];
   existingYaml: string | null;
   extensionFormats: string[];
+  options: QuartoBookOptions;
+  referenceDocFile: File | null;
 }
 
 interface QuartoBookDialogProps {
@@ -61,6 +76,94 @@ function moveItem(items: string[], index: number, direction: -1 | 1): string[] {
 
 const FORMAT_ORDER = ["docx", "html", "pdf"] as const satisfies readonly QuartoBookFormat[];
 
+const SECTION_NUMBERING_CHOICES: Array<{
+  value: QuartoSectionNumbering;
+  title: string;
+  preview: [string, string];
+}> = [
+  { value: "all", title: "Numbered", preview: ["1  Introduction", "1.1  Background"] },
+  { value: "chapters", title: "Chapters only", preview: ["1  Introduction", "Background"] },
+  { value: "none", title: "Unnumbered", preview: ["Introduction", "Background"] },
+];
+
+const FIGURE_NUMBERING_CHOICES: Array<{
+  value: QuartoFigureNumbering;
+  title: string;
+  preview: string;
+}> = [
+  { value: "chapter", title: "By chapter", preview: "Figure 2.1 · Chapter 2" },
+  { value: "continuous", title: "Continuous", preview: "Figure 3 · Section 2" },
+];
+
+/** Typst page sizes; Quarto's default is US Letter. */
+const PAPER_SIZES = [
+  { value: "a4", label: "A4" },
+  { value: "us-letter", label: "US Letter" },
+  { value: "a5", label: "A5" },
+  { value: "jis-b5", label: "B5 (JIS)" },
+];
+const DEFAULT_PAPER_SIZE = "default";
+
+function numberingHint(numbering: QuartoSectionNumbering): string {
+  if (numbering === "all") {
+    return "Section cross-references such as @sec-methods print the number: “Section 2.1”.";
+  }
+  const unnumbered = numbering === "none" ? "headings" : "sections below a chapter";
+  return `In Word, @sec- cross-references to ${unnumbered} still print a number (“Section 1.1”) the heading doesn’t show; HTML uses the heading title instead. Keep numbering if the text refers to sections.`;
+}
+
+function ChoiceCard({
+  name,
+  checked,
+  onSelect,
+  title,
+  children,
+}: {
+  name: string;
+  checked: boolean;
+  onSelect: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={`cursor-pointer rounded-xl border px-3 py-2.5 transition-colors ${checked ? "border-primary/50 bg-primary/[0.06]" : "border-border hover:bg-muted/40"}`}>
+      <div className="flex items-center gap-2">
+        <input
+          type="radio"
+          name={name}
+          checked={checked}
+          onChange={onSelect}
+          className="h-3.5 w-3.5 accent-primary"
+        />
+        <span className="text-xs font-semibold">{title}</span>
+      </div>
+      <div className="mt-1.5 pl-[22px] text-[10px] leading-snug text-muted-foreground">
+        {children}
+      </div>
+    </label>
+  );
+}
+
+function OptionRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-xs font-medium">{title}</p>
+        <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{description}</p>
+      </div>
+      <div className="flex-shrink-0">{children}</div>
+    </div>
+  );
+}
+
 export function QuartoBookDialog({
   open,
   onOpenChange,
@@ -80,10 +183,13 @@ export function QuartoBookDialog({
   const [outputDir, setOutputDir] = useState("_book");
   const [bibliographyFiles, setBibliographyFiles] = useState(["references.bib"]);
   const [formats, setFormats] = useState<QuartoBookFormat[]>(["docx"]);
+  const [options, setOptions] = useState<QuartoBookOptions>({ ...DEFAULT_QUARTO_BOOK_OPTIONS });
+  const [referenceDocFile, setReferenceDocFile] = useState<File | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const referenceDocInputRef = useRef<HTMLInputElement>(null);
   const customFormats = useMemo(() => {
     let configured: string[] = [];
     try { configured = parseQuartoBookConfig(initialYaml, []).formats; } catch { /* Shown below. */ }
@@ -104,6 +210,8 @@ export function QuartoBookDialog({
       setOutputDir(values.outputDir);
       setBibliographyFiles(values.bibliographyFiles);
       setFormats(values.formats);
+      setOptions(values.options);
+      setReferenceDocFile(null);
       setError(null);
       setInitializationError(null);
     } catch (parseError) {
@@ -135,6 +243,11 @@ export function QuartoBookDialog({
     && normalizedBibliographies.length > 0
     && formats.length > 0,
   );
+
+  const updateOption = <Key extends keyof QuartoBookOptions>(
+    key: Key,
+    value: QuartoBookOptions[Key],
+  ) => setOptions((current) => ({ ...current, [key]: value }));
 
   const updateAuthor = (index: number, value: string) => {
     setAuthors((current) =>
@@ -190,6 +303,8 @@ export function QuartoBookDialog({
         formats,
         existingYaml: initialYaml,
         extensionFormats: customFormats,
+        options: { ...options, subtitle: options.subtitle.trim() },
+        referenceDocFile,
       });
       onOpenChange(false);
     } catch (generationError) {
@@ -205,6 +320,10 @@ export function QuartoBookDialog({
 
   const visibleError = loadError ?? initializationError ?? error;
   const editingExistingConfig = Boolean(initialYaml?.trim());
+  const paperSizes = options.typstPaperSize
+    && !PAPER_SIZES.some((size) => size.value === options.typstPaperSize)
+    ? [...PAPER_SIZES, { value: options.typstPaperSize, label: options.typstPaperSize }]
+    : PAPER_SIZES;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -237,6 +356,19 @@ export function QuartoBookDialog({
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder="Enter the rendered book title"
                   autoFocus
+                />
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="quarto-book-subtitle">Subtitle</Label>
+                  <span className="text-[11px] text-muted-foreground">Optional</span>
+                </div>
+                <Input
+                  id="quarto-book-subtitle"
+                  value={options.subtitle}
+                  onChange={(event) => updateOption("subtitle", event.target.value)}
+                  placeholder="Shown under the title"
                 />
               </div>
 
@@ -383,6 +515,164 @@ export function QuartoBookDialog({
               </div>
 
               <div className="space-y-2.5">
+                <Label>Heading numbers</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {SECTION_NUMBERING_CHOICES.map((choice) => (
+                    <ChoiceCard
+                      key={choice.value}
+                      name="quarto-section-numbering"
+                      checked={options.sectionNumbering === choice.value}
+                      onSelect={() => updateOption("sectionNumbering", choice.value)}
+                      title={choice.title}
+                    >
+                      <p className="font-medium text-foreground/80">{choice.preview[0]}</p>
+                      <p className="pl-2">{choice.preview[1]}</p>
+                    </ChoiceCard>
+                  ))}
+                </div>
+                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                  {numberingHint(options.sectionNumbering)}
+                  {formats.includes("pdf") && options.sectionNumbering !== "all"
+                    && " PDF books always number chapters and sections."}
+                </p>
+              </div>
+
+              {formats.includes("docx") && (
+                <div className="space-y-3.5 rounded-xl border border-border px-3.5 py-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                    <FileText className="h-3.5 w-3.5 text-primary" />
+                    Word options
+                  </div>
+                  <OptionRow
+                    title="Table of contents"
+                    description="List chapters and sections at the start of the document."
+                  >
+                    <Switch
+                      checked={options.docxToc}
+                      onCheckedChange={(checked) => updateOption("docxToc", checked)}
+                      aria-label="Word table of contents"
+                    />
+                  </OptionRow>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-xs font-medium">Figure and table numbers</p>
+                      <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                        Continuous suits articles: it also calls top-level headings “Section” in cross-references.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {FIGURE_NUMBERING_CHOICES.map((choice) => (
+                        <ChoiceCard
+                          key={choice.value}
+                          name="quarto-figure-numbering"
+                          checked={options.docxFigureNumbering === choice.value}
+                          onSelect={() => updateOption("docxFigureNumbering", choice.value)}
+                          title={choice.title}
+                        >
+                          {choice.preview}
+                        </ChoiceCard>
+                      ))}
+                    </div>
+                    {options.sectionNumbering === "none" && options.docxFigureNumbering === "chapter" && (
+                      <p className="rounded-lg bg-amber-500/10 px-2.5 py-2 text-[10px] leading-relaxed text-amber-700 dark:text-amber-400">
+                        Chapters are unnumbered, so “Figure 2.1” refers to a chapter number readers can’t see. Continuous numbering avoids this.
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-xs font-medium">Template</p>
+                      <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                        A .docx whose styles set fonts, heading styles, spacing and margins.
+                      </p>
+                    </div>
+                    <input
+                      ref={referenceDocInputRef}
+                      type="file"
+                      accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                      className="hidden"
+                      onChange={(event) => {
+                        const selected = event.target.files?.[0] ?? null;
+                        setReferenceDocFile(selected);
+                        if (selected) updateOption("docxReferenceDoc", selected.name);
+                        setError(null);
+                      }}
+                    />
+                    <div className="flex items-stretch gap-2">
+                      <button
+                        type="button"
+                        onClick={() => referenceDocInputRef.current?.click()}
+                        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-dashed border-border px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-primary/[0.03]"
+                      >
+                        <Upload className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium">
+                            {options.docxReferenceDoc || "Quarto’s default styles"}
+                          </span>
+                          <span className="block text-[10px] text-muted-foreground">
+                            {referenceDocFile
+                              ? "This file will be copied beside the YAML."
+                              : options.docxReferenceDoc
+                                ? "Referenced by the current _quarto.yml. Choose a file to replace it."
+                                : "Choose a .docx template"}
+                          </span>
+                        </span>
+                      </button>
+                      {options.docxReferenceDoc && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateOption("docxReferenceDoc", "");
+                            setReferenceDocFile(null);
+                            if (referenceDocInputRef.current) referenceDocInputRef.current.value = "";
+                          }}
+                          className="flex w-9 flex-shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                          aria-label="Use Quarto's default Word styles"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {formats.includes("pdf") && (
+                <div className="space-y-3 rounded-xl border border-border px-3.5 py-3">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold">
+                    <FileCode2 className="h-3.5 w-3.5 text-primary" />
+                    PDF options
+                  </div>
+                  <OptionRow
+                    title="Paper size"
+                    description="Quarto’s PDF book layout always adds chapter numbers and a table of contents."
+                  >
+                    <Select
+                      value={options.typstPaperSize || DEFAULT_PAPER_SIZE}
+                      onValueChange={(value) => updateOption(
+                        "typstPaperSize",
+                        value === DEFAULT_PAPER_SIZE ? "" : value,
+                      )}
+                    >
+                      <SelectTrigger className="w-40 text-xs" aria-label="PDF paper size">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={DEFAULT_PAPER_SIZE} className="text-xs">
+                          Default (US Letter)
+                        </SelectItem>
+                        {paperSizes.map((size) => (
+                          <SelectItem key={size.value} value={size.value} className="text-xs">
+                            {size.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </OptionRow>
+                </div>
+              )}
+
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <Label>Bibliography</Label>
                   <button
@@ -468,6 +758,17 @@ export function QuartoBookDialog({
                   )}
                 </div>
               </div>
+
+              <OptionRow
+                title="Link citations to the reference list"
+                description="Clicking a citation such as [12] jumps to its entry in the bibliography."
+              >
+                <Switch
+                  checked={options.linkCitations}
+                  onCheckedChange={(checked) => updateOption("linkCitations", checked)}
+                  aria-label="Link citations to the reference list"
+                />
+              </OptionRow>
 
               <div className="overflow-hidden rounded-xl border border-border">
                 <div className="flex items-center justify-between gap-3 bg-muted/45 px-3.5 py-2.5">

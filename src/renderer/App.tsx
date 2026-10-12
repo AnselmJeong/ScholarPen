@@ -42,6 +42,7 @@ import type { FindCitationRequest } from "./ai/find-citation";
 import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
+import { toBase64 } from "lib0/buffer";
 import { ActivityPanel, ActivityPanelHeader } from "./components/sidebar/ActivityPanel";
 import { ProjectPanel } from "./components/sidebar/ProjectPanel";
 
@@ -483,6 +484,8 @@ export function App() {
     formats,
     existingYaml,
     extensionFormats,
+    options,
+    referenceDocFile,
   }: QuartoBookSetup) => {
     if (!activeProject) throw new Error("Open a project first.");
 
@@ -508,10 +511,18 @@ export function App() {
       formats,
       existingYaml,
       extensionFormats,
+      options,
     });
 
     if (cslFile) {
       await rpc.exportFile(activeProject.path, cslFile.name, await cslFile.text());
+    }
+    if (referenceDocFile && formats.includes("docx")) {
+      await rpc.exportBinaryFile(
+        activeProject.path,
+        referenceDocFile.name,
+        toBase64(new Uint8Array(await referenceDocFile.arrayBuffer())),
+      );
     }
     const configPath = await rpc.exportFile(
       activeProject.path,

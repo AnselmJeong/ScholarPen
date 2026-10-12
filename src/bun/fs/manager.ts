@@ -307,14 +307,14 @@ class FileSystemManager {
     }
   }
 
-  private async writeFileAtomically(filePath: string, content: string): Promise<void> {
+  private async writeFileAtomically(filePath: string, content: string | Uint8Array): Promise<void> {
     await mkdir(dirname(filePath), { recursive: true });
     const temporaryPath = join(
       dirname(filePath),
       `.${basename(filePath)}.${randomUUID()}.tmp`,
     );
     try {
-      await writeFile(temporaryPath, content, "utf-8");
+      await writeFile(temporaryPath, content, typeof content === "string" ? "utf-8" : undefined);
       await rename(temporaryPath, filePath);
     } catch (error) {
       try {
@@ -899,6 +899,15 @@ class FileSystemManager {
       content = prepared.content;
     }
     await this.writeFileAtomically(filePath, content);
+    return filePath;
+  }
+
+  /** Copies a binary resource, such as a Word template, beside the exports. */
+  async exportBinaryFile(projectPath: string, filename: string, base64: string): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    filename = this.safeFilename(filename);
+    const filePath = join(projectPath, "exports", filename);
+    await this.writeFileAtomically(filePath, Buffer.from(base64, "base64"));
     return filePath;
   }
 

@@ -127,3 +127,13 @@ test("supports SVG base64 and does not process non-Markdown export files", async
   const config = `text: "![](${data})"`;
   expect(await readFile(await fileSystem.exportFile(root, "_quarto.yml", config), "utf8")).toBe(config);
 });
+
+test("copies a binary Word template into exports without text conversion", async () => {
+  const root = await project();
+  await fileSystem.openProjectByPath(root);
+  const bytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0xfe, 0x80]);
+  const file = await fileSystem.exportBinaryFile(root, "journal.docx", bytes.toString("base64"));
+  expect(file).toEndWith("/exports/journal.docx");
+  expect(Buffer.compare(await readFile(file), bytes)).toBe(0);
+  await expect(fileSystem.exportBinaryFile(root, "../journal.docx", "")).rejects.toThrow();
+});

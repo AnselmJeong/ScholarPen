@@ -228,11 +228,8 @@ export async function blocksToScholarMarkdown(
 
   // Quarto: add YAML frontmatter
   if (format === "qmd") {
-    let frontmatter = buildQuartoFrontmatter();
-    if (collectReferenceTargets(blocks).some((target) => target.type === "heading")) {
-      frontmatter = frontmatter.replace("bibliography: references.bib", "bibliography: references.bib\nnumber-sections: true");
-    }
-    lines.push(frontmatter);
+    // Numbering is a book-wide _quarto.yml choice; a chapter's own value would override it.
+    lines.push(buildQuartoFrontmatter());
   }
 
   for (const block of blocks) {

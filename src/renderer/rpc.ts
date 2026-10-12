@@ -71,6 +71,7 @@ const strictRpcMethods = new Set([
   "deduplicateBibliography",
   "validateAndCleanBibliography",
   "exportFile",
+  "exportBinaryFile",
   "renderQuartoBook",
   "renameFile",
   "deleteFile",
@@ -442,6 +443,8 @@ export const rpc = {
   // ── Export ────────────────────────────────────────────
   exportFile: (projectPath: string, filename: string, content: string) =>
     call<string>("exportFile", { projectPath, filename, content }),
+  exportBinaryFile: (projectPath: string, filename: string, base64: string) =>
+    call<string>("exportBinaryFile", { projectPath, filename, base64 }),
   renderQuartoBook: (projectPath: string, format: QuartoRenderFormat) =>
     call<QuartoRenderResult>("renderQuartoBook", { projectPath, format }),
   discoverQuartoExtensions: (projectPath: string) =>

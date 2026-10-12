@@ -4,6 +4,7 @@ import type { FileNode } from "./rpc-types";
 import {
   buildQuartoBookConfig,
   collectQuartoChapterFilenames,
+  DEFAULT_QUARTO_BOOK_OPTIONS,
   findQuartoConfigNode,
   getQuartoRenderFormats,
   parseQuartoBookConfig,
@@ -146,6 +147,7 @@ format:
       outputDir: "_book",
       bibliographyFiles: ["references.bib"],
       formats: ["docx"],
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, docxToc: false },
     });
   });
 
@@ -172,10 +174,8 @@ format:
     expect(parsed.bibliography).toBe("references.bib");
     expect(parsed.csl).toBe("journal-style.csl");
     expect(parsed.citeproc).toBe(true);
-    expect(parsed.format.docx).toEqual({
-      toc: false,
-      "number-sections": true,
-    });
+    expect(parsed["number-sections"]).toBe(true);
+    expect(parsed.format.docx).toEqual({ toc: false });
     expect(parsed.format.html).toEqual({});
     expect(parsed.format.typst).toEqual({});
     expect(parsed.format.pdf).toBeUndefined();
@@ -276,5 +276,140 @@ format:
       typst: { papersize: "a4" },
       epub: { toc: false },
     });
+  });
+
+  test("reads numbering, Word, PDF and citation options from either level", () => {
+    const yaml = `book:
+  title: Book
+  subtitle: A history
+link-citations: true
+format:
+  docx:
+    toc: false
+    number-sections: false
+    reference-doc: templates/journal.docx
+    crossref:
+      chapters: false
+  typst:
+    papersize: a4
+`;
+
+    expect(parseQuartoBookConfig(yaml, []).options).toEqual({
+      subtitle: "A history",
+      sectionNumbering: "none",
+      linkCitations: true,
+      docxToc: false,
+      docxFigureNumbering: "continuous",
+      docxReferenceDoc: "templates/journal.docx",
+      typstPaperSize: "a4",
+    });
+    expect(parseQuartoBookConfig("number-depth: 1\nformat: docx\n", []).options)
+      .toMatchObject({ sectionNumbering: "chapters", docxToc: true });
+    expect(parseQuartoBookConfig("format:\n  html:\n    number-sections: true\nnumber-sections: false\n", []).options.sectionNumbering)
+      .toBe("all");
+  });
+
+  test("turns numbering off book-wide and numbers Word figures continuously", () => {
+    const existingYaml = `project:
+  type: book
+book:
+  title: Mood stabilizers
+citeproc: true
+format:
+  docx:
+    toc: false
+    number-sections: true
+`;
+    const values = parseQuartoBookConfig(existingYaml, []);
+    const yaml = buildQuartoBookConfig({
+      ...values,
+      authors: ["Author"],
+      cslFilename: "style.csl",
+      qmdFilenames: ["index.qmd"],
+      formats: ["docx", "html", "pdf"],
+      existingYaml,
+      options: {
+        ...values.options,
+        subtitle: "A review",
+        sectionNumbering: "none",
+        linkCitations: true,
+        docxFigureNumbering: "continuous",
+        docxReferenceDoc: "journal.docx",
+        typstPaperSize: "a4",
+      },
+    });
+    const parsed = parse(yaml);
+
+    expect(parsed.book.subtitle).toBe("A review");
+    expect(Object.keys(parsed.book).slice(0, 2)).toEqual(["title", "subtitle"]);
+    expect(parsed["number-sections"]).toBe(false);
+    expect(parsed["link-citations"]).toBe(true);
+    expect(parsed.format).toEqual({
+      docx: { toc: false, crossref: { chapters: false }, "reference-doc": "journal.docx" },
+      html: {},
+      typst: { papersize: "a4" },
+    });
+    expect(yaml.indexOf("number-sections")).toBeLessThan(yaml.indexOf("format:"));
+  });
+
+  test("writes chapter-only numbering and restores full numbering without losing a custom depth", () => {
+    const base = {
+      title: "Book", authors: ["Author"], cslFilename: "style.csl", qmdFilenames: ["index.qmd"],
+      language: "en", outputDir: "_book", bibliographyFiles: ["references.bib"],
+    };
+    const chapters = buildQuartoBookConfig({
+      ...base,
+      formats: ["docx"],
+      existingYaml: "format:\n  docx: default\n  html:\n    number-depth: 3\n",
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, sectionNumbering: "chapters", docxToc: true },
+    });
+    expect(parse(chapters)).toMatchObject({
+      "number-sections": true,
+      "number-depth": 1,
+      format: { docx: { toc: true } },
+    });
+
+    const all = buildQuartoBookConfig({
+      ...base, formats: ["docx"], existingYaml: chapters,
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, sectionNumbering: "all" },
+    });
+    expect(parse(all)["number-depth"]).toBeUndefined();
+    expect(parseQuartoBookConfig(all, []).options.sectionNumbering).toBe("all");
+
+    const custom = buildQuartoBookConfig({
+      ...base, formats: ["html"], existingYaml: "number-depth: 2\nformat:\n  html: {}\n",
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, sectionNumbering: "all" },
+    });
+    expect(parse(custom)["number-depth"]).toBe(2);
+  });
+
+  test("keeps a top-level continuous setting from leaking into Word when chapter numbering is chosen", () => {
+    const yaml = buildQuartoBookConfig({
+      title: "Book", authors: ["Author"], cslFilename: "style.csl", qmdFilenames: ["index.qmd"],
+      language: "en", outputDir: "_book", bibliographyFiles: ["references.bib"], formats: ["docx"],
+      existingYaml: "crossref:\n  chapters: false\nformat:\n  docx:\n    crossref:\n      chapters: false\n      fig-prefix: Fig.\n",
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, docxFigureNumbering: "chapter" },
+    });
+    expect(parse(yaml).crossref).toEqual({ chapters: false });
+    expect(parse(yaml).format.docx.crossref).toEqual({ chapters: true, "fig-prefix": "Fig." });
+  });
+
+  test("rejects unsafe Word templates and paper sizes only for selected formats", () => {
+    const input = {
+      title: "Book", authors: ["Author"], cslFilename: "style.csl", qmdFilenames: ["index.qmd"],
+      language: "en", outputDir: "_book", bibliographyFiles: ["references.bib"],
+    };
+    expect(() => buildQuartoBookConfig({
+      ...input, formats: ["docx"],
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, docxReferenceDoc: "../journal.docx" },
+    })).toThrow("Word template");
+    expect(() => buildQuartoBookConfig({
+      ...input, formats: ["pdf"],
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, typstPaperSize: "a4; rm" },
+    })).toThrow("paper size");
+    expect(() => buildQuartoBookConfig({
+      ...input, formats: ["html"],
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS, docxReferenceDoc: "../journal.docx" },
+    })).not.toThrow();
   });
 });

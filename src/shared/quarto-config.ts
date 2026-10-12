@@ -1,7 +1,41 @@
-import { Document, parseDocument } from "yaml";
+import { Document, isMap, isNode, isScalar, parseDocument } from "yaml";
+import type { YAMLMap } from "yaml";
 import type { FileNode, QuartoRenderFormat } from "./rpc-types";
 
 export type QuartoBookFormat = string;
+export type QuartoSectionNumbering = "all" | "chapters" | "none";
+export type QuartoFigureNumbering = "chapter" | "continuous";
+
+/** Optional book settings the dialog edits, each stored under one Quarto key. */
+export interface QuartoBookOptions {
+  /** `book.subtitle`. */
+  subtitle: string;
+  /** Book-wide `number-sections` and `number-depth`. */
+  sectionNumbering: QuartoSectionNumbering;
+  /** `link-citations`. */
+  linkCitations: boolean;
+  /** `format.docx.toc`. */
+  docxToc: boolean;
+  /**
+   * `format.docx.crossref.chapters`. Word only: an HTML book restarts
+   * continuous numbers in every chapter, and Typst books ignore it.
+   */
+  docxFigureNumbering: QuartoFigureNumbering;
+  /** `format.docx.reference-doc`, relative to `_quarto.yml`. */
+  docxReferenceDoc: string;
+  /** `format.typst.papersize`; empty keeps Typst's default. */
+  typstPaperSize: string;
+}
+
+export const DEFAULT_QUARTO_BOOK_OPTIONS: Readonly<QuartoBookOptions> = {
+  subtitle: "",
+  sectionNumbering: "all",
+  linkCitations: false,
+  docxToc: false,
+  docxFigureNumbering: "chapter",
+  docxReferenceDoc: "",
+  typstPaperSize: "",
+};
 
 export interface QuartoBookConfigInput {
   title: string;
@@ -15,6 +49,8 @@ export interface QuartoBookConfigInput {
   existingYaml?: string | null;
   /** Extra format keys the dialog manages; other keys are preserved. */
   extensionFormats?: string[];
+  /** Omitted options keep what the existing YAML says. */
+  options?: QuartoBookOptions;
 }
 
 export interface QuartoBookEditorValues {
@@ -26,6 +62,7 @@ export interface QuartoBookEditorValues {
   outputDir: string;
   bibliographyFiles: string[];
   formats: QuartoBookFormat[];
+  options: QuartoBookOptions;
 }
 
 const DEFAULT_LANGUAGE = "ko";
@@ -33,6 +70,8 @@ const DEFAULT_OUTPUT_DIR = "_book";
 const DEFAULT_BIBLIOGRAPHY = "references.bib";
 const QUARTO_BOOK_FORMAT_ORDER = ["docx", "html", "pdf"] as const satisfies readonly QuartoBookFormat[];
 const QUARTO_RENDER_FORMAT_ORDER = ["docx", "html", "typst"] as const satisfies readonly QuartoRenderFormat[];
+/** Built-in formats whose own numbering keys the book-wide setting replaces. */
+const NUMBERED_FORMATS = ["docx", "html", "typst"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -146,24 +185,10 @@ export function getQuartoRenderFormats(source: string): QuartoRenderFormat[] {
   ].filter(isQuartoFormatName);
 }
 
-function defaultFormatOptions(
-  format: QuartoRenderFormat,
-  isNewConfiguration: boolean,
-): Record<string, unknown> {
-  if (format === "docx" && isNewConfiguration) {
-    return {
-      toc: false,
-      "number-sections": true,
-    };
-  }
-  return {};
-}
-
 function updateManagedFormats(
   document: Document,
   currentValue: unknown,
   formats: QuartoBookFormat[],
-  isNewConfiguration: boolean,
   extensionFormats: string[],
 ): void {
   const selected = new Set(formats);
@@ -177,25 +202,21 @@ function updateManagedFormats(
     );
     const next: Record<string, unknown> = {};
     for (const key of preservedUnknownKeys) next[key] = {};
-    for (const key of selectedKeys) next[key] = defaultFormatOptions(key, isNewConfiguration);
-    document.set("format", next);
+    for (const key of selectedKeys) next[key] = {};
+    document.set("format", document.createNode(next));
     return;
   }
 
   for (const format of ["docx", "html"] as const) {
     if (selected.has(format)) {
-      if (!(format in currentValue)) {
-        document.setIn(["format", format], defaultFormatOptions(format, isNewConfiguration));
-      }
+      if (!(format in currentValue)) document.setIn(["format", format], {});
     } else {
       document.deleteIn(["format", format]);
     }
   }
 
   if (selected.has("pdf")) {
-    if (!("typst" in currentValue)) {
-      document.setIn(["format", "typst"], defaultFormatOptions("typst", isNewConfiguration));
-    }
+    if (!("typst" in currentValue)) document.setIn(["format", "typst"], {});
   } else {
     document.deleteIn(["format", "typst"]);
   }
@@ -207,6 +228,145 @@ function updateManagedFormats(
     } else {
       document.deleteIn(["format", key]);
     }
+  }
+}
+
+function formatMapping(root: Record<string, unknown>, format: string): Record<string, unknown> {
+  const formats = root.format;
+  return isRecord(formats) && isRecord(formats[format]) ? formats[format] : {};
+}
+
+/** Like Quarto, a format's own value wins over the top-level one. */
+function readFormatOption(
+  root: Record<string, unknown>,
+  formats: readonly string[],
+  key: string,
+): unknown {
+  for (const format of formats) {
+    const options = formatMapping(root, format);
+    if (Object.hasOwn(options, key)) return options[key];
+  }
+  return root[key];
+}
+
+function readBookOptions(root: Record<string, unknown>): QuartoBookOptions {
+  const book = readMapping(root, "book");
+  const docx = formatMapping(root, "docx");
+  const numbered = readFormatOption(root, NUMBERED_FORMATS, "number-sections") !== false;
+  const depth = readFormatOption(root, NUMBERED_FORMATS, "number-depth");
+  const crossref = isRecord(docx.crossref) && Object.hasOwn(docx.crossref, "chapters")
+    ? docx.crossref
+    : isRecord(root.crossref) ? root.crossref : {};
+  const toc = Object.hasOwn(docx, "toc") ? docx.toc : root.toc;
+  const referenceDoc = docx["reference-doc"];
+  const paperSize = readFormatOption(root, ["typst"], "papersize");
+
+  return {
+    subtitle: readString(book.subtitle, ""),
+    sectionNumbering: !numbered ? "none" : depth === 1 ? "chapters" : "all",
+    linkCitations: root["link-citations"] === true,
+    // Quarto gives Word books a table of contents unless `toc` is false.
+    docxToc: toc !== false,
+    docxFigureNumbering: crossref.chapters === false ? "continuous" : "chapter",
+    docxReferenceDoc: typeof referenceDoc === "string" ? referenceDoc.trim() : "",
+    typstPaperSize: typeof paperSize === "string" ? paperSize.trim() : "",
+  };
+}
+
+function keyName(key: unknown): unknown {
+  return isScalar(key) ? key.value : key;
+}
+
+/** Sets `key`, placing a new key next to `anchor` so related settings stay together. */
+function setKeyBeside(
+  document: Document,
+  map: YAMLMap,
+  key: string,
+  value: unknown,
+  anchor: string,
+  side: "before" | "after",
+): void {
+  if (map.has(key)) {
+    map.set(key, value);
+    return;
+  }
+  const index = map.items.findIndex((pair) => keyName(pair.key) === anchor);
+  const pair = document.createPair(key, value);
+  if (index < 0) map.items.push(pair);
+  else map.items.splice(side === "before" ? index : index + 1, 0, pair);
+}
+
+/** A selected format's mapping; `docx: default` becomes a mapping so options can be added. */
+function formatOptionsNode(document: Document, format: string): YAMLMap {
+  const node = document.getIn(["format", format], true);
+  if (isMap(node)) return node;
+  // An entry set earlier in this build is still a plain object, not a YAML node.
+  const mapping = document.createNode(isRecord(node) && !isNode(node) ? node : {}) as YAMLMap;
+  document.setIn(["format", format], mapping);
+  return mapping;
+}
+
+function applyBookOptions(
+  document: Document,
+  root: Record<string, unknown>,
+  options: QuartoBookOptions,
+  formats: QuartoBookFormat[],
+): void {
+  const rootMap = document.contents as YAMLMap;
+  const book = document.getIn(["book"], true) as YAMLMap;
+  const subtitle = options.subtitle.trim();
+  if (subtitle) setKeyBeside(document, book, "subtitle", subtitle, "title", "after");
+  else book.delete("subtitle");
+
+  if (options.linkCitations) setKeyBeside(document, rootMap, "link-citations", true, "format", "before");
+  else rootMap.delete("link-citations");
+
+  // Numbering is book-wide, so per-format copies would override the choice.
+  for (const format of NUMBERED_FORMATS) {
+    const node = document.getIn(["format", format], true);
+    if (!isMap(node)) continue;
+    node.delete("number-sections");
+    if (options.sectionNumbering === "chapters" || node.get("number-depth") === 1) {
+      node.delete("number-depth");
+    }
+  }
+  setKeyBeside(
+    document,
+    rootMap,
+    "number-sections",
+    options.sectionNumbering !== "none",
+    "format",
+    "before",
+  );
+  if (options.sectionNumbering === "chapters") {
+    setKeyBeside(document, rootMap, "number-depth", 1, "format", "before");
+  } else if (options.sectionNumbering === "all" && root["number-depth"] === 1) {
+    rootMap.delete("number-depth");
+  }
+
+  if (formats.includes("docx")) {
+    const docx = formatOptionsNode(document, "docx");
+    docx.set("toc", options.docxToc);
+
+    const crossref = docx.get("crossref", true);
+    const inheritsContinuous = isRecord(root.crossref) && root.crossref.chapters === false;
+    if (options.docxFigureNumbering === "continuous" || inheritsContinuous) {
+      const mapping = isMap(crossref) ? crossref : document.createNode({}) as YAMLMap;
+      mapping.set("chapters", options.docxFigureNumbering === "chapter");
+      docx.set("crossref", mapping);
+    } else if (isMap(crossref)) {
+      crossref.delete("chapters");
+      if (crossref.items.length === 0) docx.delete("crossref");
+    }
+
+    if (options.docxReferenceDoc) docx.set("reference-doc", options.docxReferenceDoc);
+    else docx.delete("reference-doc");
+  }
+
+  if (formats.includes("pdf")) {
+    const typst = formatOptionsNode(document, "typst");
+    if (options.typstPaperSize) typst.set("papersize", options.typstPaperSize);
+    else typst.delete("papersize");
   }
 }
 
@@ -225,6 +385,7 @@ export function parseQuartoBookConfig(
       outputDir: DEFAULT_OUTPUT_DIR,
       bibliographyFiles: [DEFAULT_BIBLIOGRAPHY],
       formats: ["docx"],
+      options: { ...DEFAULT_QUARTO_BOOK_OPTIONS },
     };
   }
 
@@ -249,6 +410,7 @@ export function parseQuartoBookConfig(
       ? bibliographyFiles
       : [DEFAULT_BIBLIOGRAPHY],
     formats: readBookFormats(root.format),
+    options: readBookOptions(root),
   };
 }
 
@@ -338,6 +500,24 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
     throw new Error("Invalid _quarto.yml: the document root must be a mapping.");
   }
 
+  const options = input.options
+    ?? (existingSource ? readBookOptions(rootValue) : DEFAULT_QUARTO_BOOK_OPTIONS);
+  if (
+    formats.includes("docx")
+    && options.docxReferenceDoc
+    && (!isSafeRelativePath(options.docxReferenceDoc)
+      || !options.docxReferenceDoc.toLowerCase().endsWith(".docx"))
+  ) {
+    throw new Error("Choose a valid Word template (.docx).");
+  }
+  if (
+    formats.includes("pdf")
+    && options.typstPaperSize
+    && !/^[a-z0-9][a-z0-9-]*$/i.test(options.typstPaperSize)
+  ) {
+    throw new Error("Choose a valid PDF paper size.");
+  }
+
   const existingBook = readMapping(rootValue, "book");
   readMapping(rootValue, "project");
   const existingAuthorValue = existingBook.author;
@@ -357,7 +537,8 @@ export function buildQuartoBookConfig(input: QuartoBookConfigInput): string {
   document.set("csl", cslFilename);
   // Resolve citations before Typst so adjacent Korean particles cannot become part of a label.
   document.set("citeproc", true);
-  updateManagedFormats(document, rootValue.format, formats, !existingSource, input.extensionFormats ?? []);
+  updateManagedFormats(document, rootValue.format, formats, input.extensionFormats ?? []);
+  applyBookOptions(document, rootValue, options, formats);
 
   return document.toString({ lineWidth: 0 });
 }

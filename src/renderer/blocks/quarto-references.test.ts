@@ -131,7 +131,7 @@ describe("Quarto identifiers and layout", () => {
     expect([...collectDocumentCitationKeys(saved)]).toEqual(["smith2020"]);
     expect(nodes(saved).filter((node) => node.type === "crossReference")).toHaveLength(6);
     const exported = await blocksToScholarMarkdown(editor, editor.document as any, "qmd");
-    expect(exported).toContain("number-sections: true");
+    expect(exported).not.toContain("number-sections");
     expect(exported).toContain("# State {#sec-state}");
     expect(exported).toContain('![Figure caption](<figure.svg>){#fig-one width="50%" height="2cm" fig-align="right" fig-alt="Accessible figure"}');
     expect(exported).toContain("| :--- | ---: | :---: |");
