@@ -43,7 +43,9 @@ import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
 import { toBase64 } from "lib0/buffer";
-import { ActivityPanel, ActivityPanelHeader } from "./components/sidebar/ActivityPanel";
+import { ActivityPanel, ActivityPanelHeader, type RightPanelTab } from "./components/sidebar/ActivityPanel";
+import { HistoryPanel } from "./components/sidebar/HistoryPanel";
+import { getEditorCollab } from "./collab/editor-collab";
 import { ProjectPanel } from "./components/sidebar/ProjectPanel";
 
 type AppView = "editor" | "settings";
@@ -64,7 +66,7 @@ export function App() {
   const [activeDocumentFilename, setActiveDocumentFilename] = useState<string | null>(null);
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
-  const [rightPanelTab, setRightPanelTab]             = useState<"activity" | "assistant" | "project">("activity");
+  const [rightPanelTab, setRightPanelTab]             = useState<RightPanelTab>("activity");
   const [activeEditor, setActiveEditor]               = useState<BlockNoteEditor<any, any, any> | null>(null);
   const [leftSidebarOpen, setLeftSidebarOpen]         = useState(true);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
@@ -370,9 +372,13 @@ export function App() {
               .catch(console.error);
           }
           break;
-        case "save":
+        case "save": {
           editorGroupRef.current?.saveActiveEditor();
+          // Saving also ends the current history checkpoint, so it is there to come back to.
+          const collab = editorRef.current ? getEditorCollab(editorRef.current) : null;
+          if (collab) void collab.afterPushes(() => rpc.collabHistoryCheckpoint(collab.docKey)).catch(() => undefined);
           break;
+        }
         case "exportMarkdown":
           if (activeFile?.kind === "document") {
             setExportTargets([activeFile]);
@@ -859,6 +865,13 @@ export function App() {
                   projectPath={activeProject?.path}
                   onExported={refreshFileTree}
                   documentName={activeFile?.kind === "document" ? activeFile.name : null}
+                />
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "history" ? "flex" : "none" }}>
+                <HistoryPanel
+                  editor={activeEditor}
+                  documentName={activeFile?.kind === "document" ? activeFile.name : null}
+                  active={rightPanelTab === "history"}
                 />
               </div>
               <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "project" ? "flex" : "none" }}>

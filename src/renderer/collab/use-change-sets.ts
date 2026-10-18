@@ -5,6 +5,7 @@ import { COLLAB_THREADS_MAP } from "../../shared/collab/protocol";
 import { readThreads, updateThreadMeta } from "../../shared/collab/threads";
 import { REVISIONS_MAP, settleRevision, type RevisionEntry } from "../../shared/collab/revision-log";
 import { getEditorCollab } from "./editor-collab";
+import { asCheckpoint } from "./history-restore";
 import { listChangeSets, resolveAllChangeSets, resolveChangeSet, type PendingChangeSet } from "./suggestions";
 
 /** Pending AI change sets in the editor, kept current as the document changes. */
@@ -41,12 +42,15 @@ export function decideChangeSet(
   accept: boolean,
   range?: { from: number; to: number },
 ) {
-  if (!resolveChangeSet(editor, id, accept, range)) return;
-  settleThreads(editor, [id], accept);
+  asCheckpoint(editor, accept ? "Accepted AI suggestions" : "Rejected AI suggestions", () => {
+    if (!resolveChangeSet(editor, id, accept, range)) return;
+    settleThreads(editor, [id], accept);
+  });
 }
 
 export function decideAllChangeSets(editor: BlockNoteEditor<any, any, any>, accept: boolean) {
-  settleThreads(editor, resolveAllChangeSets(editor, accept), accept);
+  asCheckpoint(editor, accept ? "Accepted all AI suggestions" : "Rejected all AI suggestions",
+    () => settleThreads(editor, resolveAllChangeSets(editor, accept), accept));
 }
 
 function settleThreads(editor: BlockNoteEditor<any, any, any>, ids: Array<string | number>, accept: boolean) {

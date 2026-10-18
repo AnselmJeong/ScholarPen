@@ -45,6 +45,20 @@ const registry = new CollabRegistry({
   awareness: (message) => queueMicrotask(() => awarenessListeners.forEach((listener) => listener(message))),
 });
 
+// Version history is recorded by the real Bun recorder over in-memory files.
+const { CollabHistory } = await import("../../bun/collab/history/history");
+const historyFiles = new Map<string, unknown>();
+const historyListeners = new Set<(docKey: string) => void>();
+const history = new CollabHistory(registry, {
+  readIndex: async (p, f) => structuredClone(historyFiles.get(`${p}/${f}`) as any) ?? null,
+  writeIndex: async (p, f, index) => { historyFiles.set(`${p}/${f}`, structuredClone(index)); },
+  readChunk: async (p, f, seq) => (historyFiles.get(`${p}/${f}#${seq}`) as Uint8Array) ?? null,
+  writeChunk: async (p, f, seq, data) => { historyFiles.set(`${p}/${f}#${seq}`, data); },
+  deleteChunk: async (p, f, seq) => { historyFiles.delete(`${p}/${f}#${seq}`); },
+  archive: async () => {},
+}, { onChanged: (docKey) => queueMicrotask(() => historyListeners.forEach((listener) => listener(docKey))) });
+afterAll(() => history.dispose());
+
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const realRpc = { ...(await import("../rpc")) };
 mock.module("../rpc", () => ({
@@ -56,6 +70,10 @@ mock.module("../rpc", () => ({
     collabAwareness: async (docKey: string, peerId: string, update: string) => registry.pushAwareness(docKey, peerId, update),
     collabClose: (docKey: string, peerId: string) => registry.close(docKey, peerId),
     loadDocument: async (projectPath: string, filename: string) => jsonFiles.get(`${projectPath}/${filename}`) ?? [],
+    collabHistoryList: (docKey: string) => history.list(docKey),
+    collabHistoryVersion: (docKey: string, entryId: string) => history.version(docKey, entryId),
+    collabHistoryCheckpoint: (docKey: string, options: any = {}) => history.checkpoint(docKey, options),
+    collabHistoryName: (docKey: string, name: string, entryId?: string) => history.name(docKey, entryId, name),
     exportFile: async (projectPath: string, filename: string, content: string) => {
       commentExports.push({ projectPath, filename, content });
       return `${projectPath}/exports/${filename}`;
@@ -64,6 +82,10 @@ mock.module("../rpc", () => ({
   onCollabUpdate: (listener: (message: CollabUpdateMessage) => void) => {
     updateListeners.add(listener);
     return () => updateListeners.delete(listener);
+  },
+  onCollabHistoryChanged: (listener: (docKey: string) => void) => {
+    historyListeners.add(listener);
+    return () => historyListeners.delete(listener);
   },
   onCollabAwareness: (listener: (message: CollabUpdateMessage) => void) => {
     awarenessListeners.add(listener);
@@ -83,6 +105,7 @@ const { TextSelection } = await import("prosemirror-state");
 const { resolveCollabUsers } = await import("./users");
 const { setEditorCollab } = await import("./editor-collab");
 const { ActivityPanel } = await import("../components/sidebar/ActivityPanel");
+const { HistoryPanel } = await import("../components/sidebar/HistoryPanel");
 const { readThreads, threadWantsAI } = await import("../../shared/collab/threads");
 const { AISelectionTargetExtension, suggestAISelection, trackAISelection } = await import("../components/editor/ai-selection-target");
 const { protectSelectionSlice } = await import("../../shared/ai-text-protection");
@@ -583,6 +606,80 @@ test("the comment list hides project-disabled types and marks comments whose tex
   await act(async () => { button("Show").click(); });
   expect(panel.textContent).toContain("Report the effect size.");
   expect(panel.textContent).toContain("Lithium");
+
+  await act(async () => { panelRoot.unmount(); a.root.unmount(); });
+  panel.remove(); a.peer.destroy(); await settle();
+});
+
+test("the History tab lists checkpoints, shows what a step removed and restores it", async () => {
+  jsonFiles.set("/p/history.scholarpen.json", [
+    { id: "keep", type: "paragraph", content: "Lithium remains the reference treatment." },
+    { id: "gone", type: "paragraph", content: "A paragraph the author deletes." },
+    { id: "edit", type: "paragraph", content: "Valproate is an alternative." },
+  ]);
+  const a = await mountPeer("A", "history.scholarpen.json");
+  await settle();
+  const docKey = a.peer.docKey;
+  await history.checkpoint(docKey);
+
+  await act(async () => { a.editor.removeBlocks(["gone"]); });
+  await act(async () => { a.editor.updateBlock("edit", { content: "Valproate is a second-line alternative." }); });
+  await settle();
+  await history.checkpoint(docKey);
+  expect(texts(a.editor).filter(Boolean)).toEqual(["Lithium remains the reference treatment.", "Valproate is a second-line alternative."]);
+
+  const panel = document.createElement("div");
+  document.body.append(panel);
+  const panelRoot = createRoot(panel);
+  await act(async () => { panelRoot.render(<HistoryPanel editor={a.editor} documentName="history.scholarpen.json" active />); });
+  await settle();
+  expect(panel.textContent).toContain("Opened from file");
+  expect(panel.textContent).toContain("Your edits");
+
+  const button = (label: string) => [...panel.querySelectorAll("button")].find(item => item.textContent?.trim().startsWith(label))!;
+  await act(async () => { button(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })).click(); });
+  await settle();
+  // The newest checkpoint: one paragraph removed, one rewritten.
+  expect(panel.querySelector("del")?.textContent).toBe("an");
+  expect(panel.querySelector("ins")?.textContent).toBe("a second-line");
+  expect(panel.textContent).toContain("A paragraph the author deletes.");
+
+  await act(async () => { button("Restore paragraph").click(); });
+  await settle();
+  expect(texts(a.editor).filter(Boolean)).toEqual([
+    "Lithium remains the reference treatment.", "A paragraph the author deletes.", "Valproate is a second-line alternative.",
+  ]);
+  const entries = await history.list(docKey);
+  expect(entries.at(-1)?.kind).toBe("restore");
+  expect(entries.at(-1)?.label).toContain("Restored a paragraph from");
+
+  // Restoring the whole version brings back the rewritten sentence too, once confirmed.
+  await act(async () => { button("All versions").click(); });
+  await settle();
+  const opened = [...panel.querySelectorAll("button")].find(item => item.textContent?.includes("Opened from file"))!;
+  await act(async () => { opened.click(); });
+  await settle();
+  await act(async () => { button("Restore this version").click(); });
+  await act(async () => { button("Restore").click(); });
+  await settle();
+  expect(texts(a.editor).filter(Boolean)).toEqual([
+    "Lithium remains the reference treatment.", "A paragraph the author deletes.", "Valproate is an alternative.",
+  ]);
+
+  await act(async () => { button("All versions").click(); });
+  await act(async () => { button("Save version").click(); });
+  const input = panel.querySelector("input")!;
+  await act(async () => {
+    input.focus();
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")!.set!.call(input, "Submitted v1");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    // React may fall back to its keyup-based change detection under happy-dom.
+    input.dispatchEvent(new dom.KeyboardEvent("keyup", { key: "a", bubbles: true }) as unknown as Event);
+  });
+  await act(async () => { input.form!.requestSubmit(); });
+  await settle();
+  expect(panel.textContent).toContain("Submitted v1");
 
   await act(async () => { panelRoot.unmount(); a.root.unmount(); });
   panel.remove(); a.peer.destroy(); await settle();

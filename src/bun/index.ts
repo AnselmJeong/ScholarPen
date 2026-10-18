@@ -32,6 +32,8 @@ import type { CollabUpdateMessage } from "../shared/collab/protocol";
 import { CollabRegistry } from "./collab/registry";
 import { createFileCollabStorage } from "./collab/storage";
 import { CollabAgent } from "./collab/agent/agent";
+import { CollabHistory } from "./collab/history/history";
+import { createFileHistoryStorage } from "./collab/history/store";
 import { Reviewer } from "./collab/agent/reviewer";
 import { ProjectWriting } from "./collab/project-writing";
 import { enqueueDraft, zoneEditMode } from "./collab/agent/zones";
@@ -119,6 +121,14 @@ const collabReviewer = new Reviewer(collabAgent, {
     const bibtex = await fileSystem.loadBibtex(projectPath).catch(() => "");
     return bibtex.trim() ? new Set(parseBibtexCitekeys(bibtex)) : null;
   },
+});
+
+// Version history: every change to an open document, grouped into checkpoints.
+let sendCollabHistoryChanged: ((payload: { docKey: string }) => void) | null = null;
+const collabHistory = new CollabHistory(collabRegistry, createFileHistoryStorage(fileSystem), {
+  aiLabel: (docKey) => collabAgent.jobs(docKey).find((job) => job.state === "working")?.label,
+  aiBusy: (docKey) => collabAgent.jobs(docKey).some((job) => job.state === "working"),
+  onChanged: (docKey) => sendCollabHistoryChanged?.({ docKey }),
 });
 
 function collabAgentStatus(docKey: string): AgentActivityMessage {
@@ -637,6 +647,10 @@ async function main() {
         collabDraftSection: ({ docKey, blockId }) => {
           enqueueDraft(collabAgent, docKey, blockId, completeWithSettings);
         },
+        collabHistoryList: ({ docKey }) => collabHistory.list(docKey),
+        collabHistoryVersion: ({ docKey, entryId }) => collabHistory.version(docKey, entryId),
+        collabHistoryCheckpoint: ({ docKey, kind, label }) => collabHistory.checkpoint(docKey, { kind, label }),
+        collabHistoryName: ({ docKey, entryId, name }) => collabHistory.name(docKey, entryId, name),
         collabSetAgentPaused: ({ paused }) => {
           collabAgent.setPaused(paused);
           for (const session of collabRegistry.list()) sendCollabActivity?.(collabAgentStatus(session.docKey));
@@ -766,6 +780,7 @@ async function main() {
   sendCollabUpdate = (payload) => win.webview.rpc?.send.collabUpdate(payload);
   sendCollabAwareness = (payload) => win.webview.rpc?.send.collabAwareness(payload);
   sendCollabActivity = (payload) => win.webview.rpc?.send.collabActivity(payload);
+  sendCollabHistoryChanged = (payload) => win.webview.rpc?.send.collabHistoryChanged(payload);
   sendOllamaProxyChunk = (payload) => win.webview.rpc?.send.ollamaProxyChunk(payload);
   sendBibliographyValidationProgress = (payload) =>
     win.webview.rpc?.send.bibliographyValidationProgress(payload);
@@ -781,7 +796,8 @@ async function main() {
       // Save first, then quit after a brief flush window
       win.webview.rpc?.send.menuAction({ action: "save" });
       setTimeout(() => {
-        void collabRegistry.flush().finally(() => Utils.quit());
+        void collabHistory.flush().catch(() => undefined)
+          .then(() => collabRegistry.flush()).finally(() => Utils.quit());
       }, 400);
     }
   });
@@ -792,7 +808,7 @@ async function main() {
 Electrobun.events.on("before-quit", () => {
   codexClient.close();
   claudeClient.close();
-  void collabRegistry.flush();
+  void collabHistory.flush().catch(() => undefined).then(() => collabRegistry.flush());
 });
 
 main().catch(console.error);

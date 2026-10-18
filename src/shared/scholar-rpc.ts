@@ -10,6 +10,7 @@ import type { ManuscriptMapView } from "./manuscript-map";
 import type { ConsistencyView } from "./consistency-report";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "./collab/protocol";
 import type { AgentActivityMessage } from "./collab/agent-types";
+import type { HistoryEntry, HistoryEntryKind, HistoryVersion } from "./collab/history";
 import type {
   OllamaStatus,
   ProjectInfo,
@@ -184,6 +185,11 @@ type BunRequests = RPCSchema<{
     collabSetReviewCategory: { params: { docKey: string; category: ReviewCategory; enabled: boolean }; response: ProjectReviewSettings };
     collabReviewSection: { params: { docKey: string; blockId: string }; response: void };
     collabDraftSection: { params: { docKey: string; blockId: string }; response: void };
+    // Version history of an open document (see bun/collab/history)
+    collabHistoryList: { params: { docKey: string }; response: HistoryEntry[] };
+    collabHistoryVersion: { params: { docKey: string; entryId: string }; response: HistoryVersion | null };
+    collabHistoryCheckpoint: { params: { docKey: string; kind?: HistoryEntryKind; label?: string }; response: HistoryEntry | null };
+    collabHistoryName: { params: { docKey: string; entryId?: string; name: string }; response: HistoryEntry | null };
     // Project-wide writing support
     getGlossary: { params: { projectPath: string }; response: Glossary };
     saveGlossary: { params: { projectPath: string; glossary: Glossary }; response: Glossary };
@@ -213,6 +219,7 @@ type WebviewRequests = RPCSchema<{
     collabUpdate: CollabUpdateMessage;
     collabAwareness: CollabUpdateMessage;
     collabActivity: AgentActivityMessage;
+    collabHistoryChanged: { docKey: string };
   };
 }>;
 

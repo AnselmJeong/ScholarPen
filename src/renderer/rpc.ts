@@ -36,6 +36,7 @@ import type {
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "../shared/collab/protocol";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
+import type { HistoryEntry, HistoryEntryKind, HistoryVersion } from "../shared/collab/history";
 import type { Glossary } from "../shared/glossary";
 import type { ManuscriptMapView } from "../shared/manuscript-map";
 import type { ConsistencyView } from "../shared/consistency-report";
@@ -89,6 +90,8 @@ const strictRpcMethods = new Set([
   "collabSetReviewCategory",
   "collabDraftSection",
   "collabUndoAI",
+  "collabHistoryVersion",
+  "collabHistoryName",
   "saveGlossary",
   "updateManuscriptMap",
   "runConsistencyCheck",
@@ -134,6 +137,9 @@ const electrobun = new Electroview({
         collabActivity: (message) => {
           collabActivityListeners.forEach((handler) => handler(message));
         },
+        collabHistoryChanged: ({ docKey }) => {
+          collabHistoryListeners.forEach((handler) => handler(docKey));
+        },
       },
     },
   }),
@@ -159,6 +165,13 @@ const collabActivityListeners = new Set<(message: AgentActivityMessage) => void>
 export function onCollabActivity(handler: (message: AgentActivityMessage) => void) {
   collabActivityListeners.add(handler);
   return () => { collabActivityListeners.delete(handler); };
+}
+
+const collabHistoryListeners = new Set<(docKey: string) => void>();
+/** A document's version history gained or renamed a checkpoint. */
+export function onCollabHistoryChanged(handler: (docKey: string) => void) {
+  collabHistoryListeners.add(handler);
+  return () => { collabHistoryListeners.delete(handler); };
 }
 
 export function onCollabAwareness(handler: CollabMessageHandler) {
@@ -539,6 +552,13 @@ export const rpc = {
   collabReviewSection: (docKey: string, blockId: string) =>
     call<void>("collabReviewSection", { docKey, blockId }),
   collabDraftSection: (docKey: string, blockId: string) => call<void>("collabDraftSection", { docKey, blockId }),
+  collabHistoryList: (docKey: string) => call<HistoryEntry[] | null>("collabHistoryList", { docKey }),
+  collabHistoryVersion: (docKey: string, entryId: string) =>
+    call<HistoryVersion | null>("collabHistoryVersion", { docKey, entryId }),
+  collabHistoryCheckpoint: (docKey: string, options: { kind?: HistoryEntryKind; label?: string } = {}) =>
+    call<HistoryEntry | null>("collabHistoryCheckpoint", { docKey, ...options }),
+  collabHistoryName: (docKey: string, name: string, entryId?: string) =>
+    call<HistoryEntry | null>("collabHistoryName", { docKey, entryId, name }),
   getGlossary: (projectPath: string) => call<Glossary>("getGlossary", { projectPath }),
   saveGlossary: (projectPath: string, glossary: Glossary) => call<Glossary>("saveGlossary", { projectPath, glossary }),
   getManuscriptMap: (projectPath: string) => call<ManuscriptMapView>("getManuscriptMap", { projectPath }),

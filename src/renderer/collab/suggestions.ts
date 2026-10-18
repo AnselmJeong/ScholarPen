@@ -24,11 +24,17 @@ function hasSuggestions(doc: PMNode) {
  * snapshot, export and search see.
  */
 export function acceptedDocument(editor: BlockNoteEditor<any, any, any>) {
+  if (!hasSuggestions(editor.prosemirrorState.doc)) return editor.document;
+  return docToBlocks(acceptedPMDoc(editor));
+}
+
+/** The accepted document as a ProseMirror node. */
+export function acceptedPMDoc(editor: BlockNoteEditor<any, any, any>) {
   const state = editor.prosemirrorState;
-  if (!hasSuggestions(state.doc)) return editor.document;
+  if (!hasSuggestions(state.doc)) return state.doc;
   let doc = state.doc;
   revertSuggestions(EditorState.create({ schema: state.schema, doc }), (tr) => { doc = tr.doc; });
-  return docToBlocks(doc);
+  return doc;
 }
 
 /** One paragraph's part of a change set. */

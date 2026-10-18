@@ -1,4 +1,4 @@
-import { realpath, chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename } from "fs/promises";
+import { realpath, chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename, rm } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import { createHash, randomUUID } from "crypto";
@@ -479,6 +479,13 @@ class FileSystemManager {
     return join(projectPath, ".scholarpen", "collab", `${filename}.ydoc`);
   }
 
+  /** Folder holding a document's version history (checkpoints of its Y.Doc). */
+  async historyDir(projectPath: string, filename: string): Promise<string> {
+    projectPath = await this.assertKnownProjectPath(projectPath);
+    await this.documentFilePath(projectPath, filename);
+    return join(projectPath, ".scholarpen", "history", filename);
+  }
+
   /** Moves (or deletes, when newPath is null) the Y.Doc state that belongs to a document file. */
   private async moveCollabState(oldPath: string, newPath: string | null) {
     const marker = "/documents/";
@@ -499,6 +506,20 @@ class FileSystemManager {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[collab] state move failed", error);
       }
+    }
+    // The version history follows its document; a deleted document takes its history with it.
+    const historyDir = join(projectPath, ".scholarpen", "history");
+    const historyFrom = join(historyDir, oldPath.slice(at + marker.length));
+    try {
+      if (newPath && newPath.startsWith(projectPath + marker)) {
+        const historyTo = join(historyDir, newPath.slice(at + marker.length));
+        await mkdir(dirname(historyTo), { recursive: true });
+        await rename(historyFrom, historyTo);
+      } else {
+        await rm(historyFrom, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.warn("[collab] history move failed", error);
     }
   }
 

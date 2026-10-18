@@ -27,6 +27,10 @@ export interface CollabPeer {
   threadStore: YjsThreadStore;
   bootstrap: CollabOpenResult["bootstrap"];
   snapshotStale: boolean;
+  /** Resolves once every local change made so far has reached Bun. */
+  sync(): Promise<void>;
+  /** Runs a request after every local change made so far has reached Bun and before any later one. */
+  afterPushes<T>(task: () => Promise<T>): Promise<T>;
   destroy(): void;
 }
 
@@ -146,6 +150,16 @@ export async function openCollabPeer(projectPath: string, filename: string): Pro
     threadStore,
     bootstrap: opened.bootstrap,
     snapshotStale: opened.snapshotStale,
+    sync() {
+      flush();
+      return pushChain;
+    },
+    afterPushes(task) {
+      flush();
+      const run = pushChain.then(task);
+      pushChain = run.then(() => undefined, () => undefined);
+      return run;
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;

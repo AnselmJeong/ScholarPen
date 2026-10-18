@@ -418,9 +418,9 @@ function SmallButton({ icon, label, onClick }: { icon: React.ReactNode; label: s
   );
 }
 
-export type RightPanelTab = "activity" | "assistant" | "project";
+export type RightPanelTab = "activity" | "history" | "assistant" | "project";
 
-const TAB_LABEL: Record<RightPanelTab, string> = { activity: "Activity", project: "Project", assistant: "Assistant" };
+const TAB_LABEL: Record<RightPanelTab, string> = { activity: "Activity", history: "History", project: "Project", assistant: "Assistant" };
 
 export function ActivityPanelHeader({ tab, onTab, onClose }: {
   tab: RightPanelTab;
@@ -429,7 +429,7 @@ export function ActivityPanelHeader({ tab, onTab, onClose }: {
 }) {
   return (
     <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-      {(["activity", "project", "assistant"] as const).map((value) => (
+      {(["activity", "history", "project", "assistant"] as const).map((value) => (
         <button
           key={value}
           type="button"
