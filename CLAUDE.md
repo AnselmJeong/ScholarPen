@@ -115,6 +115,10 @@ my-paper/
 
 `src/bun/citation/client.ts` resolves DOIs via CrossRef and searches via OpenAlex. Citekey format: `{firstAuthorLastName}{year}{titleFirstWord}` (lowercase, sanitized). BibTeX is built as a string — no external tools needed.
 
+**Check Citations** (Edit with AI popup, shown when the selection has citations) checks whether each cited work supports the sentence that cites it:
+- `bun/citation-check/source-index.ts` extracts every PDF under `resources/` once (again only when its size or mtime changes), chunks it (`pdf-text.ts`: page-1 lead, body, bibliography marked `refs` and excluded) and indexes it with FTS5 in `db/citation-sources.sqlite`. The scan runs in the background when a project opens and, debounced, when the watcher sees a PDF under `resources/`. Bib entries are linked to PDFs by a DOI on the first pages plus the title (in the text or file name); a DOI-only match must share most title words, and a PDF that matches another entry more strongly is left to it. The Project tab's "Cited sources" section shows index progress, unreadable PDFs and cited works without a PDF.
+- `checker.ts`: `shared/citation-check.ts` pairs each citation with its sentence (a citation right after a full stop belongs to the sentence it closes). One model call writes English search queries; per citation the judge sees the PDF's lead plus the best BM25 passages (one extra search on request), or the OpenAlex abstract (`openalex-abstract.ts`, cached) when there is no indexed PDF. Verdicts: supported / partial / overclaim / contradicted / unsupported / unverifiable, with an issue type, reason, verbatim quotes and a suggested sentence. A verdict whose quotes are not found in the source text becomes unverifiable; abstract-only "unsupported" is shown as "not found in the abstract". Revisable suggestions become one protected rewrite that the result card stages as a tracked change on request.
+
 ## Phase Status (from PLAN.md)
 
 - ✅ Phase 0 — Scaffolding (Electrobun, Ollama PoC)

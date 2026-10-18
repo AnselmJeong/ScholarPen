@@ -55,6 +55,7 @@ import {
   createFindCitationRequest,
   type FindCitationRequest,
 } from "../../ai/find-citation";
+import { buildCitationCheckMessage, type CitationCheckRequest } from "../../ai/check-citations";
 import { onProjectUpdated, rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -63,6 +64,8 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { ProjectMemoryPanel } from "./ProjectMemoryPanel";
 import { CitationEvidenceResults } from "./CitationEvidenceResults";
+import { CitationCheckResults } from "./CitationCheckResults";
+import { CITATION_CHECK_MARKER, citationCheckResultText, parseCitationCheckResult } from "@shared/citation-check";
 import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult } from "@shared/citation-evidence";
 import { asksForAIScore, detectionTextFromBlocks } from "@shared/ai-detection";
 
@@ -83,6 +86,10 @@ interface AISidebarProps {
   onDeepenResult?: (requestId: string, protectedRevision: string | null) => string | null;
   findCitationRequest?: FindCitationRequest | null;
   onFindCitationRequestConsumed?: (requestId: string) => void;
+  citationCheckRequest?: CitationCheckRequest | null;
+  onCitationCheckRequestConsumed?: (requestId: string) => void;
+  /** Stages a citation check's revision as a tracked change; returns an error message. */
+  onApplyCitationRevision?: (requestId: string, protectedRevision: string) => string | null;
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
 }
 
@@ -140,10 +147,12 @@ function AssistantMessage({
   onOpenProjectSource,
   projectPath,
   onRetryCitation,
+  onApplyCitationRevision,
 }: {
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
   projectPath: string | null;
   onRetryCitation: (claims: string[], selectedText: string) => void;
+  onApplyCitationRevision?: (requestId: string, protectedRevision: string) => string | null;
 }) {
   const message = useAuiState((state) => state.message);
   const text = messageText(message);
@@ -151,6 +160,7 @@ function AssistantMessage({
   const isStreaming = message.status?.type === "running";
   const isError = text.trimStart().startsWith("❌") || text.includes("\n\n❌");
   const citationResult = !isUser ? parseCitationSearchResult(text) : null;
+  const citationCheck = !isUser ? parseCitationCheckResult(text) : null;
   const isRunning = useAuiState((state) => state.thread.isRunning);
 
   if (isUser) {
@@ -185,6 +195,8 @@ function AssistantMessage({
       >
         {citationResult ? (
           <CitationEvidenceResults result={citationResult} projectPath={projectPath} onRetry={onRetryCitation} busy={isRunning} />
+        ) : citationCheck ? (
+          <CitationCheckResults result={citationCheck} onOpenProjectSource={onOpenProjectSource} onApplyRevision={onApplyCitationRevision} />
         ) : text ? (
           <>
             <ReactMarkdown
@@ -214,7 +226,7 @@ function AssistantMessage({
                 },
               }}
             >
-              {text.includes(CITATION_RESULT_MARKER) ? "인용 근거를 불러오는 중…" : text}
+              {text.includes(CITATION_RESULT_MARKER) ? "인용 근거를 불러오는 중…" : text.includes(CITATION_CHECK_MARKER) ? "인용 확인 결과를 불러오는 중…" : text}
             </ReactMarkdown>
             {isStreaming && <TypingDots />}
           </>
@@ -224,7 +236,7 @@ function AssistantMessage({
       </div>
       {text && !isStreaming && (
         <button
-          onClick={() => navigator.clipboard.writeText(citationResult ? citationResultText(citationResult) : text)}
+          onClick={() => navigator.clipboard.writeText(citationResult ? citationResultText(citationResult) : citationCheck ? citationCheckResultText(citationCheck) : text)}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
         >
           <Copy className="h-2.5 w-2.5" />
@@ -325,11 +337,13 @@ function AssistantThread({
   onOpenProjectSource,
   projectPath,
   onRetryCitation,
+  onApplyCitationRevision,
 }: {
   slashCommands: AgentSkill[];
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
   projectPath: string | null;
   onRetryCitation: (claims: string[], selectedText: string) => void;
+  onApplyCitationRevision?: (requestId: string, protectedRevision: string) => string | null;
 }) {
   return (
     <ThreadPrimitive.Root className="flex-1 min-h-0 overflow-hidden">
@@ -360,7 +374,7 @@ function AssistantThread({
         </ThreadPrimitive.Empty>
         <div className="space-y-4 w-full overflow-hidden">
           <ThreadPrimitive.Messages>
-            {() => <AssistantMessage onOpenProjectSource={onOpenProjectSource} projectPath={projectPath} onRetryCitation={onRetryCitation} />}
+            {() => <AssistantMessage onOpenProjectSource={onOpenProjectSource} projectPath={projectPath} onRetryCitation={onRetryCitation} onApplyCitationRevision={onApplyCitationRevision} />}
           </ThreadPrimitive.Messages>
         </div>
       </ThreadPrimitive.Viewport>
@@ -917,6 +931,9 @@ export function AISidebar({
   onDeepenResult,
   findCitationRequest = null,
   onFindCitationRequestConsumed,
+  citationCheckRequest = null,
+  onCitationCheckRequestConsumed,
+  onApplyCitationRevision,
   onOpenProjectSource,
 }: AISidebarProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -933,11 +950,13 @@ export function AISidebar({
   const [sourceStatus, setSourceStatus] = useState<ProjectSourcesStatus | null>(null);
   const [preparedDeepenRequestId, setPreparedDeepenRequestId] = useState<string | null>(null);
   const [preparedFindCitationRequestId, setPreparedFindCitationRequestId] = useState<string | null>(null);
+  const [preparedCitationCheckRequestId, setPreparedCitationCheckRequestId] = useState<string | null>(null);
   const [retryCitationRequest, setRetryCitationRequest] = useState<FindCitationRequest | null>(null);
   const [deepenApplyNotice, setDeepenApplyNotice] = useState<SelectionReviewNotice | null>(null);
   const modelKeyRef = useRef<string | null>(null);
   const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
   const findCitationRequestRef = useRef<FindCitationRequest | null>(null);
+  const citationCheckRequestRef = useRef<CitationCheckRequest | null>(null);
 
   const activeProvider = appSettings?.sidebarAgentProvider ?? settings?.sidebarAgentProvider ?? "ollama";
   const activeModel = appSettings?.sidebarAgentProvider
@@ -1019,6 +1038,7 @@ export function AISidebar({
   const prepareDeepenRequest = useCallback(
     (request: DeepenAnalysisRequest) => {
       findCitationRequestRef.current = null;
+      citationCheckRequestRef.current = null;
       deepenRequestRef.current = request;
       setDeepenApplyNotice(null);
       startNewThread();
@@ -1038,6 +1058,7 @@ export function AISidebar({
   const prepareFindCitationRequest = useCallback(
     (request: FindCitationRequest) => {
       deepenRequestRef.current = null;
+      citationCheckRequestRef.current = null;
       findCitationRequestRef.current = request;
       startNewThread();
       setPreparedFindCitationRequestId(request.id);
@@ -1052,6 +1073,26 @@ export function AISidebar({
       onFindCitationRequestConsumed?.(requestId);
     },
     [onFindCitationRequestConsumed],
+  );
+
+  const prepareCitationCheckRequest = useCallback(
+    (request: CitationCheckRequest) => {
+      deepenRequestRef.current = null;
+      findCitationRequestRef.current = null;
+      citationCheckRequestRef.current = request;
+      setDeepenApplyNotice(null);
+      startNewThread();
+      setPreparedCitationCheckRequestId(request.id);
+    },
+    [startNewThread],
+  );
+
+  const consumeCitationCheckRequest = useCallback(
+    (requestId: string) => {
+      setPreparedCitationCheckRequestId((current) => current === requestId ? null : current);
+      onCitationCheckRequestConsumed?.(requestId);
+    },
+    [onCitationCheckRequestConsumed],
   );
 
   const assistantAdapter = useMemo(
@@ -1072,7 +1113,12 @@ export function AISidebar({
           findCitation !== null &&
           message === buildFindCitationMessage(findCitation);
         if (isFindCitation) findCitationRequestRef.current = null;
-        const isPreparedRequest = isDeepen || isFindCitation;
+        const citationCheck = citationCheckRequestRef.current;
+        const isCitationCheck =
+          citationCheck !== null &&
+          message === buildCitationCheckMessage(citationCheck);
+        if (isCitationCheck) citationCheckRequestRef.current = null;
+        const isPreparedRequest = isDeepen || isFindCitation || isCitationCheck;
         const wantsDetection = !isPreparedRequest && asksForAIScore(message);
         const selection = wantsDetection ? editor?.getSelectedText().trim() : "";
         const detectionInput = wantsDetection && editor ? {
@@ -1083,14 +1129,16 @@ export function AISidebar({
         // Snapshot the user's persistent choices before any awaits. Mandatory
         // search for a review affects this request, never the saved preference.
         const requestOptions = {
-          searchEnabled: isValidate || isFindCitation || (searchEnabled && searchAvailable),
+          searchEnabled: isValidate || isFindCitation || (!isCitationCheck && searchEnabled && searchAvailable),
           thinkingLevel,
         };
         const analysisMode = isDeepen
           ? deepen?.mode ?? "deepen"
           : isFindCitation
             ? "find-citation" as const
-            : undefined;
+            : isCitationCheck
+              ? "check-citations" as const
+              : undefined;
         const fallbackSkillIds = slashCommands
           .filter((skill) => message.trimStart().startsWith(`/${skill.name}`))
           .map((skill) => skill.id);
@@ -1122,7 +1170,9 @@ export function AISidebar({
               ? `${reviewLabel}: ${deepen.selectedText.replace(/\s+/g, " ").trim().slice(0, 72)}`
               : isFindCitation && findCitation
                 ? `Find Citation: ${findCitation.selectedText.replace(/\s+/g, " ").trim().slice(0, 64)}`
-                : message;
+                : isCitationCheck && citationCheck
+                  ? `Check Citations: ${citationCheck.selectedText.replace(/\s+/g, " ").trim().slice(0, 60)}`
+                  : message;
             runThread = await rpc.createAgentThread(projectPath, activeProvider, activeModel, threadTitle, {
               projectSourcesEnabled,
             });
@@ -1160,6 +1210,15 @@ export function AISidebar({
                 protectedText: deepen.protection.protectedText,
                 beforeSelection: deepen.documentContext.beforeSelection,
                 afterSelection: deepen.documentContext.afterSelection,
+              }
+            : undefined,
+          citationCheckContext: isCitationCheck && citationCheck
+            ? {
+                requestId: citationCheck.id,
+                selectedText: citationCheck.selectedText,
+                protection: citationCheck.protection,
+                beforeSelection: citationCheck.documentContext.beforeSelection.slice(-4_000),
+                afterSelection: citationCheck.documentContext.afterSelection.slice(0, 4_000),
               }
             : undefined,
           citationContext: isFindCitation && findCitation
@@ -1271,6 +1330,14 @@ export function AISidebar({
         onConsumed={consumeDeepenRequest}
       />
       <PreparedRequestDispatcher
+        request={citationCheckRequest}
+        preparedRequestId={preparedCitationCheckRequestId}
+        ready
+        buildMessage={buildCitationCheckMessage}
+        onPrepare={prepareCitationCheckRequest}
+        onConsumed={consumeCitationCheckRequest}
+      />
+      <PreparedRequestDispatcher
         request={findCitationRequest ?? retryCitationRequest}
         preparedRequestId={preparedFindCitationRequestId}
         ready
@@ -1343,6 +1410,7 @@ export function AISidebar({
           onOpenProjectSource={onOpenProjectSource}
           projectPath={project?.path ?? null}
           onRetryCitation={(claims, selectedText) => setRetryCitationRequest(createFindCitationRequest(selectedText, undefined, claims))}
+          onApplyCitationRevision={onApplyCitationRevision}
         />
 
         {/^(Validate|Deepen):/.test(activeThread?.title ?? "") && (

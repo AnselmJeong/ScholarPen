@@ -13,6 +13,11 @@ import { asksForAIScore, detectionInputForRequest, formatAIDetectionReport } fro
 import { analyzeAIText } from "../ai-detector/service";
 import { findCitationEvidence } from "./find-citation";
 import { serializeCitationSearchResult } from "../../shared/citation-evidence";
+import { serializeCitationCheckResult } from "../../shared/citation-check";
+import { checkCitations, defaultCitationCheckDeps } from "../citation-check/checker";
+
+/** A whole check: index wait, abstracts, one model call per citation and a revision. */
+const CITATION_CHECK_TIMEOUT_MS = 8 * 60_000;
 
 export async function streamScholarAgent(
   params: AgentStreamParams,
@@ -42,6 +47,28 @@ export async function streamScholarAgent(
         }, settings, requestController.signal), "first-response", AGENT_FIRST_RESPONSE_TIMEOUT_MS, () => requestController.abort());
         requestController.signal.throwIfAborted();
         callbacks.onChunk(serializeCitationSearchResult(result));
+        callbacks.onDone();
+      } finally { clearInterval(heartbeat); }
+      return;
+    }
+    if (params.analysisMode === "check-citations") {
+      requestController.signal.throwIfAborted();
+      callbacks.onChunk("인용된 원문과 문장을 대조하고 있습니다…\n\n");
+      // Several model calls in sequence: keep the renderer stream alive between progress lines.
+      const heartbeat = setInterval(() => callbacks.onChunk(""), 15_000);
+      try {
+        const settings = await fileSystem.getSettings();
+        const resolved = {
+          ...params,
+          provider: params.provider || settings.sidebarAgentProvider,
+          model: params.model || settings.sidebarAgentModel,
+        };
+        const result = await withAgentStreamTimeout(
+          checkCitations(resolved, callbacks.onChunk, requestController.signal, defaultCitationCheckDeps(settings)),
+          "first-response", CITATION_CHECK_TIMEOUT_MS, () => requestController.abort(),
+        );
+        requestController.signal.throwIfAborted();
+        callbacks.onChunk(serializeCitationCheckResult(result));
         callbacks.onDone();
       } finally { clearInterval(heartbeat); }
       return;

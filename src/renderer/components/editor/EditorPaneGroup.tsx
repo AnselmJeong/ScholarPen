@@ -20,6 +20,7 @@ import type { FileNode, ProjectInfo, OllamaStatus } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
 import type { FindCitationRequest } from "../../ai/find-citation";
+import type { CitationCheckRequest } from "../../ai/check-citations";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,10 @@ interface EditorPaneGroupProps {
     applyRevision: (protectedRevision: string | null) => string | null,
   ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
+  onCheckCitations: (
+    request: CitationCheckRequest,
+    applyRevision: (protectedRevision: string | null) => string | null,
+  ) => void;
   onReviewChanges: () => void;
 }
 
@@ -94,6 +99,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       onBibtexSaved,
       onDeepenAnalysis,
       onFindCitation,
+      onCheckCitations,
       onReviewChanges,
     },
     ref
@@ -595,6 +601,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         }}
                         onDeepenAnalysis={onDeepenAnalysis}
                         onFindCitation={onFindCitation}
+                        onCheckCitations={onCheckCitations}
                         onReviewChanges={() => {
                           if (isCurrentActiveTab(tab.id)) onReviewChanges();
                         }}

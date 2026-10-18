@@ -29,6 +29,7 @@ import type {
   BibliographyValidationProgress,
   BibliographyRepairProposal,
   ProjectSourcesStatus,
+  CitationSourcesStatus,
   QuartoRenderFormat,
   QuartoRenderResult,
   QuartoExtensionDiscovery,
@@ -86,6 +87,7 @@ const strictRpcMethods = new Set([
   "abortOllamaOpenAIProxy",
   "listProviderModels",
   "rebuildProjectSourcesIndex",
+  "rescanCitationSources",
   "collabReviewSection",
   "collabSetReviewCategory",
   "collabDraftSection",
@@ -252,6 +254,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     getOllamaStatus: { connected: false, models: [], activeModel: null },
     getProjectSourcesStatus: { digestCount: 0, chunkCount: 0, linkedPdfCount: 0, indexedAt: null, indexing: false },
     rebuildProjectSourcesIndex: { digestCount: 0, chunkCount: 0, linkedPdfCount: 0, indexedAt: null, indexing: false },
+    getCitationSourcesStatus: { pdfCount: 0, indexedCount: 0, noTextCount: 0, failedCount: 0, unreadable: [], indexing: false, progress: null },
     listProjects: [],
     createProject: { name: "demo", path: "/demo", files: [], lastModified: Date.now() },
     loadManuscript: [],
@@ -501,6 +504,10 @@ export const rpc = {
     call<ProjectSourcesStatus>("getProjectSourcesStatus", { projectPath }),
   rebuildProjectSourcesIndex: (projectPath: string) =>
     call<ProjectSourcesStatus>("rebuildProjectSourcesIndex", { projectPath }),
+  getCitationSourcesStatus: (projectPath: string, includeCoverage = false) =>
+    call<CitationSourcesStatus>("getCitationSourcesStatus", { projectPath, includeCoverage }),
+  rescanCitationSources: (projectPath: string) =>
+    call<CitationSourcesStatus>("rescanCitationSources", { projectPath }),
   listAgentThreads: (projectPath: string) =>
     call<AgentThread[]>("listAgentThreads", { projectPath }),
   createAgentThread: (

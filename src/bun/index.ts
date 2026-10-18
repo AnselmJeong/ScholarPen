@@ -17,6 +17,8 @@ import { listProviderModels } from "./agent/providers";
 import { codexClient } from "./codex/client";
 import { getAgentThreadStore } from "./agent/thread-store";
 import { getProjectSourceIndex, isProjectSourceDigestPath } from "./project-sources";
+import { getCitationSourceIndex, isCitationSourcePdfPath } from "./citation-check/source-index";
+import { citationPdfCoverage } from "./citation-check/coverage";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
 import { cleanValidateAndApplyBibliography } from "./citation/bibliography-maintenance";
 import { renderQuartoBookProject } from "./quarto/render";
@@ -167,6 +169,8 @@ const internallyUpdatingProjects = new Set<string>();
 
 function watchProjectDir(projectPath: string) {
   projectMemorySync.start(projectPath);
+  // Extract and index cited PDFs in the background, after the project has opened.
+  getCitationSourceIndex(projectPath).scheduleScan(3_000);
   activeProjectWatcher?.close();
   activeProjectWatcher = null;
   try {
@@ -184,6 +188,7 @@ function watchProjectDir(projectPath: string) {
         sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
       }
       const lower = norm.toLowerCase();
+      if (isCitationSourcePdfPath(norm)) getCitationSourceIndex(projectPath).scheduleScan();
       if (isProjectSourceDigestPath(projectPath, norm) ||
           (lower.startsWith("resources/articles/") && lower.endsWith(".pdf"))) {
         getProjectSourceIndex(projectPath).markDirty();
@@ -536,6 +541,20 @@ async function main() {
         listAgentMentionableFiles: ({ projectPath }) => listAgentMentionableFiles(projectPath),
 
         getProjectSourcesStatus: ({ projectPath }) => getProjectSourceIndex(projectPath).status(),
+
+        getCitationSourcesStatus: async ({ projectPath, includeCoverage }) => {
+          const path = await fileSystem.resolveProjectPath(projectPath);
+          const index = getCitationSourceIndex(path);
+          const status = await index.status();
+          if (!includeCoverage) return status;
+          return { ...status, coverage: await citationPdfCoverage(path) };
+        },
+
+        rescanCitationSources: async ({ projectPath }) => {
+          const index = getCitationSourceIndex(await fileSystem.resolveProjectPath(projectPath));
+          void index.scan().catch((error) => console.warn("[CitationSources] PDF indexing failed:", error));
+          return index.status();
+        },
 
         rebuildProjectSourcesIndex: ({ projectPath }) => {
           const index = getProjectSourceIndex(projectPath);

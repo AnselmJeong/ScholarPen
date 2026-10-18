@@ -40,6 +40,7 @@ let snapshot: SelectionSnapshot;
 let complete: () => void;
 let notice: ReturnType<typeof applySelectionReviewResult> | undefined;
 let changeCount = 0;
+let checkCitations: ((saved: SelectionSnapshot) => void) | undefined;
 
 async function mount() {
   editor = BlockNoteEditor.create({ schema: scholarSchema, trailingBlock: false, extensions: [AISelectionTargetExtension()], initialContent: [
@@ -86,7 +87,7 @@ async function render(panel: boolean) {
           });
         };
       }}
-      onFindCitation={() => {}} onClose={() => {}} onValidate={saved => {
+      onFindCitation={() => {}} onCheckCitations={saved => checkCitations?.(saved)} onClose={() => {}} onValidate={saved => {
         const request = createDeepenAnalysisRequest(saved.selectedText, saved.documentContext, saved.protection, "validate");
         const revised = saved.protection.protectedText.replace("proves causation", "reports an association").replace("typo", "correction");
         complete = () => {
@@ -154,6 +155,28 @@ for (const action of ["Improve", "Deepen"]) {
     });
   }
 }
+
+test("Check Citations sends the selection with its citations and stages the returned revision for review", async () => {
+  await mount();
+  const { createCitationCheckRequest } = await import("../../ai/check-citations");
+  let request: ReturnType<typeof createCitationCheckRequest> | undefined;
+  let apply: ((revision: string) => string | null) | undefined;
+  checkCitations = saved => {
+    request = createCitationCheckRequest(saved.protection, saved.documentContext);
+    apply = revision => suggestAISelection(editor, saved.protection, revision, "Citation check");
+  };
+  await clickButton("Check Citations");
+  checkCitations = undefined;
+  expect(request!.selectedText).toContain("The claim proves causation.[@smith2026, p. 4]");
+  const original = JSON.stringify(acceptedDocument(editor));
+  let error: string | null = "not applied";
+  await act(async () => { error = apply!(revisionText()); });
+  expect(error).toBeNull();
+  const view = editor.prosemirrorView;
+  expect(listChangeSets(view.state.doc)).toHaveLength(1);
+  expect([...view.dom.querySelectorAll("ins")].map(node => node.textContent).join(" ")).toContain("reports an association");
+  expect(JSON.stringify(acceptedDocument(editor))).toBe(original);
+});
 
 test("Improve does not stage incomplete, failed or stopped responses", async () => {
   await mount();

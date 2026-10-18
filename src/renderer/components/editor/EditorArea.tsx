@@ -61,6 +61,8 @@ import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
 import { createDeepenAnalysisRequest } from "../../ai/deepen-analysis";
 import type { FindCitationRequest } from "../../ai/find-citation";
 import { createFindCitationRequest } from "../../ai/find-citation";
+import type { CitationCheckRequest } from "../../ai/check-citations";
+import { createCitationCheckRequest } from "../../ai/check-citations";
 import { referenceSuggestions } from "../../blocks/reference-suggestions";
 import { mergeProjectReferences, type ReferenceDocument } from "../../../shared/project-references";
 import { QuartoPropertiesDialog } from "./QuartoPropertiesDialog";
@@ -134,6 +136,10 @@ interface EditorAreaProps {
     applyRevision: (protectedRevision: string | null) => string | null,
   ) => void;
   onFindCitation: (request: FindCitationRequest) => void;
+  onCheckCitations: (
+    request: CitationCheckRequest,
+    applyRevision: (protectedRevision: string | null) => string | null,
+  ) => void;
   onReviewChanges: () => void;
   getOpenDocumentSnapshots?: () => Map<string, unknown[]>;
   saveAllOpenDocuments?: () => Promise<void>;
@@ -212,6 +218,7 @@ function CollabEditorArea({
   onSaveStatusChange,
   onDeepenAnalysis,
   onFindCitation,
+  onCheckCitations,
   onReviewChanges,
   getOpenDocumentSnapshots,
   saveAllOpenDocuments,
@@ -962,6 +969,23 @@ function CollabEditorArea({
           onFindCitation={(snapshot) => {
             releaseAISelection(editor.prosemirrorView, snapshot.protection);
             onFindCitation(createFindCitationRequest(snapshot.selectedText, snapshot.documentContext));
+            setAiEditSnapshot(null);
+          }}
+          onCheckCitations={(snapshot) => {
+            // Keep the selection tracked: the check may end with a revision to stage.
+            onCheckCitations(
+              createCitationCheckRequest(snapshot.protection, snapshot.documentContext),
+              (protectedRevision) => {
+                if (protectedRevision === null) {
+                  releaseAISelection(editor.prosemirrorView, snapshot.protection);
+                  return null;
+                }
+                // On failure the target stays tracked, so the author can retry after deciding pending changes.
+                const error = suggestAISelection(editor, snapshot.protection, protectedRevision, "Citation check");
+                if (!error) onReviewChanges();
+                return error;
+              },
+            );
             setAiEditSnapshot(null);
           }}
           onClose={() => {
