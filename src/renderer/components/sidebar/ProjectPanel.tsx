@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, FileSearch, Map as MapIcon, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { BookCheck, BookOpen, ChevronDown, ChevronRight, FileSearch, Map as MapIcon, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { rpc } from "../../rpc";
 import { cn } from "../../lib/utils";
 import { normalizeGlossary, type Glossary, type GlossaryEntry } from "../../../shared/glossary";
 import type { ManuscriptMapView, ProjectJobStatus } from "../../../shared/manuscript-map";
 import { CONSISTENCY_KIND_LABEL, type ConsistencyView } from "../../../shared/consistency-report";
 import { AuthorLearningPanel } from "./AuthorLearningPanel";
+import { CitationSourcesSection, citationSourcesSummary, useCitationSources } from "./CitationSourcesSection";
 
 const POLL_MS = 2_000;
 
@@ -253,7 +254,7 @@ function ConsistencySection({ check, onRun, onOpenDocument }: {
   );
 }
 
-/** Project-wide writing tools: the glossary, the manuscript map and the consistency check. */
+/** Project-wide writing tools: the glossary, the manuscript map, the consistency check and cited-source PDFs. */
 export function ProjectPanel({ projectPath, onOpenDocument }: { projectPath?: string; onOpenDocument?: (filename: string) => void }) {
   if (!projectPath) {
     return <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">Open a project to manage its glossary and chapters.</div>;
@@ -270,6 +271,7 @@ function ProjectTools({ projectPath, onOpenDocument }: { projectPath: string; on
     run(projectPath).then(job.setView).catch(reason => job.setError(errorText(reason)));
   };
   const mapped = map.view?.documents.filter(document => document.entry).length ?? 0;
+  const sources = useCitationSources(projectPath);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <AuthorLearningPanel key={projectPath} projectPath={projectPath} />
@@ -283,6 +285,9 @@ function ProjectTools({ projectPath, onOpenDocument }: { projectPath: string; on
       <Section title="Consistency across documents" icon={<FileSearch className="h-3 w-3" />}
         summary={check.view?.report ? `${check.view.report.issues.length} issues` : undefined}>
         <ConsistencySection check={check} onRun={start(check, rpc.runConsistencyCheck)} onOpenDocument={onOpenDocument} />
+      </Section>
+      <Section title="Cited sources" icon={<BookCheck className="h-3 w-3" />} summary={citationSourcesSummary(sources.status)}>
+        <CitationSourcesSection projectPath={projectPath} sources={sources} />
       </Section>
     </div>
   );

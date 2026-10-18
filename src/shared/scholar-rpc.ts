@@ -30,6 +30,7 @@ import type {
   BibliographyValidationProgress,
   BibliographyRepairProposal,
   ProjectSourcesStatus,
+  CitationSourcesStatus,
   QuartoRenderFormat,
   QuartoRenderResult,
   QuartoExtensionDiscovery,
@@ -142,6 +143,8 @@ type BunRequests = RPCSchema<{
     listAgentMentionableFiles: { params: { projectPath: string }; response: AgentMentionableFile[] };
     getProjectSourcesStatus: { params: { projectPath: string }; response: ProjectSourcesStatus };
     rebuildProjectSourcesIndex: { params: { projectPath: string }; response: ProjectSourcesStatus };
+    getCitationSourcesStatus: { params: { projectPath: string; includeCoverage?: boolean }; response: CitationSourcesStatus };
+    rescanCitationSources: { params: { projectPath: string }; response: CitationSourcesStatus };
     listAgentThreads: { params: { projectPath: string }; response: AgentThread[] };
     createAgentThread: {
       params: { projectPath: string; provider: AppSettings["sidebarAgentProvider"]; model: string; title?: string; metadata?: Record<string, unknown> };

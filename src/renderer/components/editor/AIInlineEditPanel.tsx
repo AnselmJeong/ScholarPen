@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import ReactDOM from "react-dom";
-import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown, Search } from "lucide-react";
+import { Sparkles, X, Check, RefreshCw, StopCircle, ChevronDown, Search, BookCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { rpc, onAiChunk } from "../../rpc";
 import {
@@ -12,6 +12,7 @@ import {
   type ProtectedSelection,
 } from "./ai-inline-edit-protection";
 import { resolveInlineEditResponse } from "../../../shared/ai-text-segments";
+import { selectionHasCitations } from "../../ai/check-citations";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ interface AIInlineEditPanelProps {
   onDeepen: (snapshot: SelectionSnapshot) => void;
   onValidate: (snapshot: SelectionSnapshot) => void;
   onFindCitation: (snapshot: SelectionSnapshot) => void;
+  onCheckCitations: (snapshot: SelectionSnapshot) => void;
   onClose: () => void;
 }
 
@@ -80,8 +82,10 @@ export function AIInlineEditPanel({
   onDeepen,
   onValidate,
   onFindCitation,
+  onCheckCitations,
   onClose,
 }: AIInlineEditPanelProps) {
+  const hasCitations = selectionHasCitations(snapshot.protection);
   const [prompt, setPrompt] = useState("");
   const [result, setResult] = useState("");
   /** Characters received so far; the JSON answer is only shown once complete. */
@@ -382,6 +386,16 @@ export function AIInlineEditPanel({
               <Search className="h-3 w-3" />
               Find Citation
             </button>
+            {hasCitations && (
+              <button
+                onClick={() => onCheckCitations(snapshot)}
+                className="text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium flex items-center gap-1"
+                title="Check whether each cited work supports its sentence, using the PDF in resources/ or the OpenAlex abstract"
+              >
+                <BookCheck className="h-3 w-3" />
+                Check Citations
+              </button>
+            )}
 
             {/* Translate dropdown */}
             <div ref={translateRef} className="relative">

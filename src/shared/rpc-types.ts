@@ -1,6 +1,7 @@
 // Shared RPC type definitions between Main process and Webview
 
 import type { BibtexParseIssue } from "./bibtex-utils";
+import type { ProtectedSelection } from "./ai-text-protection";
 
 export interface AgentImage {
   name: string;
@@ -263,10 +264,18 @@ export interface AgentStreamParams {
   projectSourcesEnabled?: boolean;
   searchEnabled?: boolean;
   thinkingLevel?: AgentThinkingLevel;
-  analysisMode?: "deepen" | "validate" | "find-citation";
+  analysisMode?: "deepen" | "validate" | "find-citation" | "check-citations";
   deepenContext?: {
     selectedText: string;
     protectedText: string;
+    beforeSelection: string;
+    afterSelection: string;
+  };
+  /** Check Citations: the selection with its citations as [@key] and its protected form for the revision. */
+  citationCheckContext?: {
+    requestId: string;
+    selectedText: string;
+    protection: ProtectedSelection;
     beforeSelection: string;
     afterSelection: string;
   };
@@ -299,6 +308,25 @@ export interface FileNode {
   size?: number;
   /** Optional one-based page to reveal when opening a PDF reference. */
   initialPage?: number;
+}
+
+/** Background text index of the PDFs under resources/, used to check citations. */
+export interface CitationSourcesStatus {
+  pdfCount: number;
+  indexedCount: number;
+  noTextCount: number;
+  failedCount: number;
+  /** PDFs whose text could not be indexed (scans, damaged files). */
+  unreadable: Array<{ relpath: string; reason: string }>;
+  indexing: boolean;
+  progress: { done: number; total: number } | null;
+  lastError?: string;
+  /** Present when the bibliography was compared with the PDFs. */
+  coverage?: {
+    citedCount: number;
+    linkedCount: number;
+    missing: Array<{ citekey: string; title: string; doi: string | null }>;
+  };
 }
 
 export interface ProjectSourcesStatus {

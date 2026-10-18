@@ -298,6 +298,15 @@ export function protectSelectionSlice(
   };
 }
 
+/** How a selection rewrite is exchanged: plain-text segments around host-kept markers. */
+export const INLINE_EDIT_TRANSPORT =
+  "TRANSPORT: The selected passage is split into editable_segments, the plain text between its citations, footnotes, math, links and formatting boundaries. " +
+  "The app keeps all of those itself and rejoins your segments around them, so never write citation keys, footnote numbers, math or any ⟦SP: marker into a segment. " +
+  "Revise the text of the segments so that, read together in order, they form the improved passage. Keep the leading and trailing spaces that join a segment to its neighbours, " +
+  "do not move words between segments, and do not empty a segment. Return ONE JSON object and nothing else: " +
+  '{"edits":[{"id":"b0s0","text":"revised text"}]}. Include every segment you changed; unchanged segments may be omitted. ' +
+  "Escape quotes and newlines in strings. No Markdown, code fence or commentary.";
+
 export function buildInlineEditMessages(
   instruction: string,
   selection: ProtectedSelection,
@@ -320,13 +329,7 @@ export function buildInlineEditMessages(
     "Compare the selected passage with the complete document and notice internal contradictions, inconsistent terminology, scope, or claims. If the intended resolution is clear from the document, align the selected passage with it. If it is not clear, make the tension or uncertainty explicit in the wording rather than inventing a resolution. " +
     "Do not introduce new facts, evidence, quotations, citations, references, causal claims, or conclusions. Do not add a citation that is not already present. " +
     workflowInstructions +
-    " " + AI_WRITING_STYLE + " " +
-    "TRANSPORT: The selected passage is split into editable_segments, the plain text between its citations, footnotes, math, links and formatting boundaries. " +
-    "The app keeps all of those itself and rejoins your segments around them, so never write citation keys, footnote numbers, math or any ⟦SP: marker into a segment. " +
-    "Revise the text of the segments so that, read together in order, they form the improved passage. Keep the leading and trailing spaces that join a segment to its neighbours, " +
-    "do not move words between segments, and do not empty a segment. Return ONE JSON object and nothing else: " +
-    '{"edits":[{"id":"b0s0","text":"revised text"}]}. Include every segment you changed; unchanged segments may be omitted. ' +
-    "Escape quotes and newlines in strings. No Markdown, code fence or commentary.";
+    " " + AI_WRITING_STYLE + " " + INLINE_EDIT_TRANSPORT;
 
   const beforeSelection = documentContext?.beforeSelection ?? "";
   const afterSelection = documentContext?.afterSelection ?? "";

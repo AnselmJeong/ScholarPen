@@ -39,6 +39,7 @@ import {
 import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
+import type { CitationCheckRequest } from "./ai/check-citations";
 import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
@@ -69,6 +70,7 @@ export function App() {
   const [leftSidebarOpen, setLeftSidebarOpen]         = useState(true);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
   const [pendingFindCitationRequest, setPendingFindCitationRequest] = useState<FindCitationRequest | null>(null);
+  const [pendingCitationCheckRequest, setPendingCitationCheckRequest] = useState<CitationCheckRequest | null>(null);
   const [wordCount, setWordCount]                     = useState(0);
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
@@ -103,6 +105,10 @@ export function App() {
   const deepenRevisionAppliersRef = useRef(
     new Map<string, (protectedRevision: string | null) => string | null>(),
   );
+  // Citation check revisions are staged only when the author asks, so appliers stay until used.
+  const citationCheckAppliersRef = useRef(
+    new Map<string, (protectedRevision: string | null) => string | null>(),
+  );
   const quartoChapterFilenames = useMemo(
     () => collectQuartoChapterFilenames(fileTree),
     [fileTree],
@@ -117,6 +123,17 @@ export function App() {
         return "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다.";
       }
       return applyRevision(protectedRevision);
+    },
+    [],
+  );
+
+  const handleApplyCitationRevision = useCallback(
+    (requestId: string, protectedRevision: string) => {
+      const applyRevision = citationCheckAppliersRef.current.get(requestId);
+      if (!applyRevision) return "원래 편집 세션을 찾을 수 없어 문서를 변경하지 않았습니다. 해당 부분을 다시 선택해 확인해 주세요.";
+      const error = applyRevision(protectedRevision);
+      if (!error) citationCheckAppliersRef.current.delete(requestId);
+      return error;
     },
     [],
   );
@@ -807,6 +824,7 @@ export function App() {
               });
               deepenRevisionAppliersRef.current.set(request.id, applyRevision);
               setPendingFindCitationRequest(null);
+              setPendingCitationCheckRequest(null);
               setRightPanelTab("assistant");
               setAiSidebarOpen(true);
             }}
@@ -819,7 +837,19 @@ export function App() {
                 if (current) deepenRevisionAppliersRef.current.delete(current.id);
                 return null;
               });
+              setPendingCitationCheckRequest(null);
               setPendingFindCitationRequest(request);
+              setRightPanelTab("assistant");
+              setAiSidebarOpen(true);
+            }}
+            onCheckCitations={(request, applyRevision) => {
+              setPendingDeepenRequest((current) => {
+                if (current) deepenRevisionAppliersRef.current.delete(current.id);
+                return null;
+              });
+              setPendingFindCitationRequest(null);
+              citationCheckAppliersRef.current.set(request.id, applyRevision);
+              setPendingCitationCheckRequest(request);
               setRightPanelTab("assistant");
               setAiSidebarOpen(true);
             }}
@@ -892,6 +922,13 @@ export function App() {
                     );
                   }}
                   onDeepenResult={handleDeepenResult}
+                  citationCheckRequest={pendingCitationCheckRequest}
+                  onCitationCheckRequestConsumed={(requestId) => {
+                    setPendingCitationCheckRequest((current) =>
+                      current?.id === requestId ? null : current,
+                    );
+                  }}
+                  onApplyCitationRevision={handleApplyCitationRevision}
                   findCitationRequest={pendingFindCitationRequest}
                   onFindCitationRequestConsumed={(requestId) => {
                     setPendingFindCitationRequest((current) =>

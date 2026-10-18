@@ -108,9 +108,11 @@ export async function extractPdfPages(
   filePath: string,
   requestedPages?: readonly number[],
   signal?: AbortSignal,
+  options: { maxBytes?: number } = {},
 ): Promise<ExtractedPdf> {
   const info = await stat(filePath);
-  if (info.size > MAX_PDF_BYTES) throw new Error("PDF exceeds the 80 MB extraction limit.");
+  const maxBytes = options.maxBytes ?? MAX_PDF_BYTES;
+  if (info.size > maxBytes) throw new Error(`PDF exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB extraction limit.`);
   signal?.throwIfAborted();
   const bytes = await readFile(filePath);
   signal?.throwIfAborted();
