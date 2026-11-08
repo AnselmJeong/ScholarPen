@@ -1,6 +1,7 @@
 import { mkdir } from "fs/promises";
 import { join } from "path";
 import { Database } from "bun:sqlite";
+import { supersededDetectionMessages } from "../../shared/ai-detection";
 import type { AgentThread, AgentThreadMessage, AgentThreadWithMessages, LLMProvider } from "../../shared/rpc-types";
 
 type ThreadRow = {
@@ -196,7 +197,8 @@ export class AgentThreadStore {
     status?: AgentThreadMessage["status"];
     metadata?: Record<string, unknown>;
   }): AgentThreadMessage {
-    const thread = this.getThread(params.threadId).thread;
+    const saved = this.getThread(params.threadId);
+    const thread = saved.thread;
     const now = Date.now();
     const message: MessageRow = {
       id: crypto.randomUUID(),
@@ -207,17 +209,22 @@ export class AgentThreadStore {
       status: params.status ?? "complete",
       metadata_json: stringifyMetadata(params.metadata),
     };
-    this.database
-      .query(
-        `INSERT INTO ai_messages (id, thread_id, role, content, created_at, status, metadata_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(message.id, message.thread_id, message.role, message.content, message.created_at, message.status, message.metadata_json);
+    this.database.transaction(() => {
+      const superseded = supersededDetectionMessages([...saved.messages.map(item => ({ id: item.id, role: item.role, text: item.content })),
+        { id: message.id, role: message.role, text: message.content }]);
+      for (const id of superseded) this.database.query("DELETE FROM ai_messages WHERE id = ? AND thread_id = ?").run(id, params.threadId);
+      this.database
+        .query(
+          `INSERT INTO ai_messages (id, thread_id, role, content, created_at, status, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(message.id, message.thread_id, message.role, message.content, message.created_at, message.status, message.metadata_json);
 
-    const updateTitle = thread.title === "New thread" && params.role === "user";
-    this.database
-      .query("UPDATE ai_threads SET title = ?, updated_at = ? WHERE id = ? AND project_path = ?")
-      .run(updateTitle ? defaultTitle(params.content) : thread.title, now, params.threadId, this.projectPath);
+      const updateTitle = thread.title === "New thread" && params.role === "user";
+      this.database
+        .query("UPDATE ai_threads SET title = ?, updated_at = ? WHERE id = ? AND project_path = ?")
+        .run(updateTitle ? defaultTitle(params.content) : thread.title, now, params.threadId, this.projectPath);
+    })();
 
     return rowToMessage(message);
   }

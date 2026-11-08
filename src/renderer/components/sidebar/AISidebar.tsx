@@ -1,3 +1,4 @@
+import { AIDetectorSetup } from "../settings/AIDetectorSetup";
 import { imageAttachmentAdapter, imagesFromMessage, restoredImageAttachments } from "../../ai/image-attachments";
 import { MAX_MESSAGE_IMAGES } from "@shared/agent-images";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
@@ -58,6 +59,7 @@ import {
 import { buildCitationCheckMessage, type CitationCheckRequest } from "../../ai/check-citations";
 import { onProjectUpdated, rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
+import { AIDetectionResult } from "./AIDetectionResult";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -67,7 +69,7 @@ import { CitationEvidenceResults } from "./CitationEvidenceResults";
 import { CitationCheckResults } from "./CitationCheckResults";
 import { CITATION_CHECK_MARKER, citationCheckResultText, parseCitationCheckResult } from "@shared/citation-check";
 import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult } from "@shared/citation-evidence";
-import { asksForAIScore, detectionTextFromBlocks } from "@shared/ai-detection";
+import { asksForAIScore, detectionTextFromBlocks, supersededDetectionMessages } from "@shared/ai-detection";
 
 interface AISidebarProps {
   responsePreferences: AIResponsePreferences;
@@ -162,6 +164,12 @@ function AssistantMessage({
   const citationResult = !isUser ? parseCitationSearchResult(text) : null;
   const citationCheck = !isUser ? parseCitationCheckResult(text) : null;
   const isRunning = useAuiState((state) => state.thread.isRunning);
+  const superseded = useAuiState(state => supersededDetectionMessages(state.thread.messages.map(item => ({
+    id: item.id, role: item.role,
+    text: item.content.filter(part => part.type === "text").map(part => "text" in part ? part.text : "").join("\n"),
+  }))).has(message.id));
+
+  if (superseded) return null;
 
   if (isUser) {
     const images = imagesFromMessage(message);
@@ -197,6 +205,8 @@ function AssistantMessage({
           <CitationEvidenceResults result={citationResult} projectPath={projectPath} onRetry={onRetryCitation} busy={isRunning} />
         ) : citationCheck ? (
           <CitationCheckResults result={citationCheck} onOpenProjectSource={onOpenProjectSource} onApplyRevision={onApplyCitationRevision} />
+        ) : text.includes("**DetectorScope ·") ? (
+          <AIDetectionResult text={text.slice(text.indexOf("**DetectorScope ·"))} />
         ) : text ? (
           <>
             <ReactMarkdown
@@ -1320,6 +1330,7 @@ export function AISidebar({
 
   return (
     <AssistantRuntimeProvider runtime={assistantRuntime}>
+      <AIDetectorSetup compact />
       <ThreadRuntimeSync messages={loadedMessages} resetKey={threadResetKey} />
       <PreparedRequestDispatcher
         request={deepenRequest}

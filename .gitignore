@@ -6,3 +6,6 @@ Knowledge_Base/
 artifacts/
 .claude/worktrees/
 .DS_Store
+
+# Synthetic review-session smoke fixtures and provider outputs
+.review-smoke/

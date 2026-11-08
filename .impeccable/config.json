@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "bounce-easing",
+        "value": "assistant-bounce",
+        "createdAt": "2026-10-28T13:05:33.291Z",
+        "reason": "Agent reviewed: existing TypingDots status indicator is unchanged from HEAD; keyframes move dots 5px with standard ease-in-out, without elastic overshoot. Preserve this domain-appropriate typing indicator."
+      }
+    ]
+  }
+}

@@ -23,7 +23,7 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 describe("new project skeleton", () => {
-  test("creates resource and draft folders without the legacy Knowledge_Base", async () => {
+  test("creates resource, draft and review folders without the legacy Knowledge_Base", async () => {
     const parentPath = await mkdtemp(join(tmpdir(), "scholarpen-project-skeleton-"));
     temporaryProjects.push(parentPath);
     const projectName = "new-research-project";
@@ -37,7 +37,10 @@ describe("new project skeleton", () => {
       "exports",
       "figures",
       "resources",
+      "reviews",
+      "revisions",
     ]);
+    expect(await readdir(join(projectPath, "reviews"))).toEqual([]);
     expect(await isDirectory(join(projectPath, "resources", "articles"))).toBe(true);
     expect(await isDirectory(join(projectPath, "resources", "books"))).toBe(true);
     expect(await isDirectory(join(projectPath, "Knowledge_Base"))).toBe(false);

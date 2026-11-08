@@ -41,7 +41,7 @@ const BLOCKS = [
   { id: "p3", type: "paragraph", content: "We recieve the data from three sites." },
 ];
 
-const detectionReport = { version: 1 as const, score: 0.93, perplexity: 10, tokens: 1000, windows: 4, minScore: 0.8, maxScore: 1.1, hiddenCharacters: 0, characterCounts: {}, observer: "base", performer: "instruct" };
+const { detectionReportFixture: detectionReport } = await import("../../../shared/ai-detection.fixture");
 
 test("document AI score covers the last block and never rewrites or calls the LLM", async () => {
   let analyzed = "";
@@ -56,8 +56,8 @@ test("document AI score covers the last block and never rewrites or calls the LL
   expect(readDoc(session).toJSON()).toEqual(before);
   expect(prompts).toHaveLength(0);
   expect(agent!.canUndo(session.docKey)).toBe(false);
-  expect(threadOf(session, id).comments.at(-1)?.text).toContain("0.9300");
-  expect(threadOf(session, id).comments.at(-1)?.text).toContain("확률(%)이 아니며");
+  expect(threadOf(session, id).comments.at(-1)?.text).toContain("DetectorScope");
+  expect(threadOf(session, id).comments.at(-1)?.text).toContain("**repeated phrase**");
 });
 
 test("a natural-language detection comment analyzes only its anchored passage", async () => {
@@ -543,4 +543,57 @@ test("each AI revision is logged with the comment, the answer and the changed te
     items: [{ threadId, comment: "@AI this overclaims", commentBy: "author", outcome: "addressed", blockIds: ["p1"] }] });
   expect(entry.paragraphs[0].before).toContain("These results prove");
   expect(entry.paragraphs[0].after).toContain("These results suggest");
+});
+
+test("repeating a detection request replaces its old result using current edited prose", async () => {
+  const inputs: string[] = [];
+  const { session, prompts } = await setup(async () => { throw new Error("Must not call the LLM"); }, {
+    analyzeAIText: async text => { inputs.push(text); return detectionReport; },
+  });
+  const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const id = createThread(threads, "me", "/ai-score", { assignee: "ai", scope: "document", documentAction: "ai-score" });
+  await waitFor(() => threadOf(session, id).comments.length === 2);
+  authorEdit(session, "p3", "recieve", "collected revised");
+  const edited = readDoc(session).toJSON();
+  const { updateThreadMeta } = await import("../../../shared/collab/threads");
+  updateThreadMeta(threads, id, { assignee: "ai", status: "open", requestedAt: Date.now(), manual: undefined });
+  await waitFor(() => inputs.length === 2 && threadOf(session, id).meta.assignee === "me");
+  expect(threadOf(session, id).comments).toHaveLength(2);
+  expect(inputs).toHaveLength(2);
+  expect(inputs[0]).toContain("We recieve the data");
+  expect(inputs[1]).toContain("We collected revised the data");
+  expect(inputs[1]).not.toContain("We recieve the data");
+  expect(readDoc(session).toJSON()).toEqual(edited);
+  expect(prompts).toHaveLength(0);
+  expect(threadOf(session, id).comments.at(-1)?.text).toContain("분석 완료:");
+});
+
+test("a new score command supersedes in-flight analysis and only its result survives", async () => {
+  let calls = 0;
+  let cancelled = false;
+  const { session } = await setup(async () => { throw new Error("Must not call the LLM"); }, {
+    analyzeAIText: async (_text, signal) => {
+      calls++;
+      if (calls === 1) await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => {
+        cancelled = true; reject(new Error("Superseded"));
+      }, { once: true }));
+      return detectionReport;
+    },
+  });
+  const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const original = readDoc(session).toJSON();
+  const old = createThread(threads, "me", "/ai-score", { assignee: "ai", scope: "document", documentAction: "ai-score" });
+  await waitFor(() => calls === 1);
+  const { clearAIDetectionResults } = await import("../../../shared/collab/threads");
+  let current = "";
+  session.ydoc.transact(() => {
+    clearAIDetectionResults(threads);
+    current = createThread(threads, "me", "/ai-score", { assignee: "ai", scope: "document", documentAction: "ai-score" });
+  }, "document-action");
+  await waitFor(() => calls === 2 && threadOf(session, current).meta.assignee === "me");
+  expect(cancelled).toBe(true);
+  expect(threads.has(old)).toBe(false);
+  expect(readThreads(threads).filter(thread => thread.meta.documentAction === "ai-score")).toHaveLength(1);
+  expect(threadOf(session, current).comments.filter(comment => comment.text.startsWith("**DetectorScope"))).toHaveLength(1);
+  expect(readDoc(session).toJSON()).toEqual(original);
 });

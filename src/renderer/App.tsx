@@ -1,4 +1,9 @@
-import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { RevisionResponseEditor } from "./components/review/RevisionResponseEditor";
+import { ResponseDrafts } from "./components/review/response-drafts";
+import { OriginalManuscriptPane } from "./components/review/OriginalManuscriptPane";
+import { RevisionContextPanel, useRevisionContext } from "./components/review/RevisionContextPanel";
+import { ReviewWorkspace } from "./components/review/ReviewWorkspace";
+import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { BookMarked, BookOpen, PenLine, Play, Plus, Settings } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
@@ -6,7 +11,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./comp
 import { LeftSidebar } from "./components/sidebar/LeftSidebar";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { StatusBar } from "./components/editor/StatusBar";
-import { ExportDialog } from "./components/editor/ExportDialog";
+import { ExportDialog, type ExportProgress } from "./components/editor/ExportDialog";
+import { documentRelativeFilename, editingProject } from "./utils/document-tree";
 import { QuartoBookDialog, type QuartoBookSetup } from "./components/editor/QuartoBookDialog";
 import { QuartoRenderDialog } from "./components/editor/QuartoRenderDialog";
 import { AboutDialog } from "./components/AboutDialog";
@@ -64,11 +70,29 @@ export function App() {
   const [activeProject, setActiveProject]             = useState<ProjectInfo | null>(null);
   const [fileTree, setFileTree]                       = useState<FileNode[]>([]);
   const [activeFile, setActiveFile]                   = useState<FileNode | null>(null);
+  const activeEditingProject = useMemo(() => editingProject(activeProject, activeFile?.path), [activeProject, activeFile?.path]);
   const [activeDocumentFilename, setActiveDocumentFilename] = useState<string | null>(null);
   const [currentView, setCurrentView]                 = useState<AppView>("editor");
   const [aiSidebarOpen, setAiSidebarOpen]             = useState(false);
   const [rightPanelTab, setRightPanelTab]             = useState<RightPanelTab>("activity");
+  const isRevisionDocument = activeFile?.kind === "document" && activeEditingProject?.path !== activeProject?.path;
+  const revisionFilename = isRevisionDocument && activeEditingProject && activeFile ? documentRelativeFilename(activeEditingProject.path, activeFile.path) : undefined;
+  const [revisionView, setRevisionView] = useState<"manuscript" | "response">("manuscript");
+  const responseDrafts = useMemo(() => new ResponseDrafts(request => rpc.reviewSaveRevisionResponse(request)), []);
+  useSyncExternalStore(responseDrafts.subscribe, responseDrafts.snapshot);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (responseDrafts.hasPending()) { void responseDrafts.flushAll(); event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => { window.removeEventListener("beforeunload", warn); void responseDrafts.flushAll(); };
+  }, [responseDrafts]);
+  const saveReviewResponses = useCallback(async () => { if (activeProject) await responseDrafts.prepareReview(activeProject.path); }, [activeProject?.path, responseDrafts]);
+  const revisionContext = useRevisionContext(isRevisionDocument ? activeEditingProject?.path : undefined, revisionFilename);
+  useEffect(() => {
+    if (isRevisionDocument) { setRightPanelTab("revision"); setAiSidebarOpen(true); setLeftSidebarOpen(false); }
+    else setRightPanelTab(tab => tab === "revision" ? "activity" : tab);
+  }, [activeFile?.path, activeProject?.path, isRevisionDocument]);
   const [activeEditor, setActiveEditor]               = useState<BlockNoteEditor<any, any, any> | null>(null);
+
   const [leftSidebarOpen, setLeftSidebarOpen]         = useState(true);
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
   const [pendingFindCitationRequest, setPendingFindCitationRequest] = useState<FindCitationRequest | null>(null);
@@ -87,10 +111,12 @@ export function App() {
   const [quartoRenderLoading, setQuartoRenderLoading] = useState(false);
   const [quartoRenderLoadError, setQuartoRenderLoadError] = useState<string | null>(null);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
+  const [revisionSidebarWidth, setRevisionSidebarWidth] = useState(320);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const [bibReloadTrigger, setBibReloadTrigger]       = useState(0);
   const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+  const [reviewWorkspaceOpen, setReviewWorkspaceOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">>({
@@ -245,41 +271,42 @@ export function App() {
 
   const handleFileSelect = useCallback((file: FileNode) => {
     if (file.isDirectory) return;
+    setReviewWorkspaceOpen(false);
     editorGroupRef.current?.openFile(file);
     setCurrentView("editor");
   }, []);
 
   const handleOpenProjectSource = useCallback((reference: ProjectFileReference) => {
-    if (!activeProject) return;
+    if (!activeEditingProject) return;
     const relativePath = normalizeProjectRelativePath(reference.relativePath);
     if (!relativePath) return;
     const name = relativePath.split("/").at(-1) ?? relativePath;
     const extension = name.split(".").at(-1)?.toLowerCase();
     handleFileSelect({
       name,
-      path: `${activeProject.path.replace(/\/$/, "")}/${relativePath}`,
+      path: `${activeEditingProject.path.replace(/\/$/, "")}/${relativePath}`,
       kind: extension === "pdf" ? "pdf" : extension === "md" ? "note" : "unknown",
       isDirectory: false,
       lastModified: Date.now(),
       initialPage: reference.page,
     });
-  }, [activeProject, handleFileSelect]);
+  }, [activeEditingProject, handleFileSelect, refreshFileTree]);
 
   const handleShowReferences = useCallback(async () => {
-    if (!activeProject) return;
+    if (!activeEditingProject) return;
     try {
       // The canonical file may have been replaced by an external editor or a
       // cloud-sync client without producing a reliable fs.watch event. Refresh
       // both the tree metadata and the already-open viewer from disk.
-      const latestTree = await rpc.listProjectFiles(activeProject.path);
-      setFileTree(latestTree);
+      const latestTree = await rpc.listProjectFiles(activeEditingProject.path);
+      await refreshFileTree();
       setBibReloadTrigger((value) => value + 1);
       const bibliography = findBibliographyNode(latestTree);
       if (bibliography) handleFileSelect(bibliography);
     } catch (error) {
       console.error("Could not refresh references.bib:", error);
     }
-  }, [activeProject, handleFileSelect]);
+  }, [activeEditingProject, handleFileSelect, refreshFileTree]);
 
   const handleOpenQuartoBookDialog = useCallback(async () => {
     if (!activeProject) return;
@@ -390,6 +417,7 @@ export function App() {
           }
           break;
         case "save": {
+          void responseDrafts.flushAll();
           editorGroupRef.current?.saveActiveEditor();
           // Saving also ends the current history checkpoint, so it is there to come back to.
           const collab = editorRef.current ? getEditorCollab(editorRef.current) : null;
@@ -466,22 +494,25 @@ export function App() {
     setExportDialogOpen(true);
   }, []);
 
-  const handleExport = useCallback(async (format: ExportFormat) => {
+  const handleExport = useCallback(async (format: ExportFormat, onProgress: (progress: ExportProgress) => void) => {
     if (!activeProject || exportTargets.length === 0) return;
 
-    const serializerEditor = editorRef.current ?? (
-      exportEditorRef.current ??= BlockNoteEditor.create({ schema: scholarSchema })
-    );
+    const serializerEditor = exportEditorRef.current ??= BlockNoteEditor.create({ schema: scholarSchema });
     const ext = format === "qmd" ? ".qmd" : ".md";
 
-    for (const target of exportTargets) {
+    for (const [index, target] of exportTargets.entries()) {
+      const targetProject = editingProject(activeProject, target.path)!;
+      const filename = documentRelativeFilename(targetProject.path, target.path);
+      const progress = { current: index + 1, total: exportTargets.length, filename };
+      onProgress({ ...progress, stage: "reading" });
       const openSnapshot = editorGroupRef.current?.getDocumentSnapshot(target.path);
-      const blocks = openSnapshot ?? await rpc.loadDocument(activeProject.path, target.name);
+      const blocks = openSnapshot ?? await rpc.loadDocument(targetProject.path, filename);
       if (!Array.isArray(blocks)) {
         throw new Error(`Document "${target.name}" does not contain a valid block array.`);
       }
       const docName = target.name.replace(/\.scholarpen\.json$/, "");
       const title = documentTitleFromFilename(target.name);
+      onProgress({ ...progress, stage: "converting" });
       const markdown = await blocksToScholarMarkdown(
         serializerEditor,
         blocks as any,
@@ -489,10 +520,12 @@ export function App() {
         title,
         { filename: docName + ext },
       );
-      await rpc.exportFile(activeProject.path, docName + ext, markdown);
+      onProgress({ ...progress, stage: "saving" });
+      await rpc.exportFile(targetProject.path, docName + ext, markdown);
     }
 
-    await refreshFileTree();
+    // Every file is already saved. A slow cloud directory listing must not hold the dialog open.
+    void refreshFileTree();
   }, [activeProject, exportTargets, refreshFileTree]);
 
   const handleGenerateQuartoBook = useCallback(async ({
@@ -626,11 +659,12 @@ export function App() {
   const handleAIResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     isResizingAIRef.current = true;
-    resizeAIStartRef.current = { x: e.clientX, width: aiSidebarWidth };
+    resizeAIStartRef.current = { x: e.clientX, width: rightPanelTab === "revision" ? revisionSidebarWidth : aiSidebarWidth };
     const onMove = (ev: MouseEvent) => {
       if (!isResizingAIRef.current) return;
       const delta = resizeAIStartRef.current.x - ev.clientX;
-      setAiSidebarWidth(Math.max(220, Math.min(640, resizeAIStartRef.current.width + delta)));
+      const updateWidth = rightPanelTab === "revision" ? setRevisionSidebarWidth : setAiSidebarWidth;
+      updateWidth(Math.max(220, Math.min(640, resizeAIStartRef.current.width + delta)));
     };
     const onUp = () => {
       isResizingAIRef.current = false;
@@ -639,7 +673,7 @@ export function App() {
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [aiSidebarWidth]);
+  }, [aiSidebarWidth, revisionSidebarWidth, rightPanelTab]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -723,6 +757,7 @@ export function App() {
             </Tooltip>
           </TooltipProvider>
 
+          <button disabled={!activeProject} onClick={() => { setReviewWorkspaceOpen(true); setAiSidebarOpen(false); }} className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-accent disabled:opacity-40">Review &amp; Revision</button>
           <button
             onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
             className="flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
@@ -805,9 +840,18 @@ export function App() {
         />
 
         {/* Center: Editor, with Settings overlay kept in the same workspace */}
-        <div className="relative flex flex-1 overflow-hidden">
+        <div data-revision-comparison={isRevisionDocument || undefined} className="relative flex flex-1 overflow-hidden">
+          {isRevisionDocument && activeFile && revisionContext.data && <style>{revisionContext.data.changes.map(change => {
+            const id = change.target.split("#")[1]?.split(":")[0];
+            return id ? `[data-revision-document="${CSS.escape(activeFile.path)}"] .bn-block-outer[data-id="${CSS.escape(id)}"] > .bn-block { border-left: 2px solid hsl(var(--primary)); background: hsl(var(--primary) / 0.04); }` : "";
+          }).join("\n")}</style>}
+          {reviewWorkspaceOpen && activeProject && <ReviewWorkspace key={activeProject.path} project={activeProject} files={fileTree} activeDocument={activeDocumentFilename} saveResponses={saveReviewResponses} onExported={refreshFileTree} prepare={async () => { await editorGroupRef.current?.prepareReview(); }} onClose={() => setReviewWorkspaceOpen(false)} onOpenRevision={async (path, filename) => { setReviewWorkspaceOpen(false); handleFileSelect({ name: filename.split("/").at(-1)!, path: `${path}/documents/${filename}`, kind: "document", isDirectory: false, lastModified: Date.now() }); }} />}
           {/* Editor */}
           <EditorPaneGroup
+            originalPane={isRevisionDocument ? <OriginalManuscriptPane state={revisionContext} /> : undefined}
+            responsePane={<RevisionResponseEditor state={revisionContext} projectPath={activeEditingProject?.path} drafts={responseDrafts} />}
+            revisionView={revisionView}
+            onRevisionViewChange={setRevisionView}
             filesOpen={leftSidebarOpen}
             onToggleFiles={() => setLeftSidebarOpen(open => !open)}
             ref={editorGroupRef}
@@ -887,12 +931,13 @@ export function App() {
               className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
               onMouseDown={handleAIResizeMouseDown}
             />
-            <div className="flex h-full flex-shrink-0 flex-col border-l border-border bg-background" style={{ width: aiSidebarWidth }}>
-              <ActivityPanelHeader tab={rightPanelTab} onTab={setRightPanelTab} onClose={() => setAiSidebarOpen(false)} />
+            <div className="flex h-full flex-shrink-0 flex-col border-l border-border bg-background" style={{ width: rightPanelTab === "revision" ? revisionSidebarWidth : aiSidebarWidth }}>
+              <ActivityPanelHeader revisionAvailable={Boolean(isRevisionDocument)} tab={rightPanelTab} onTab={setRightPanelTab} onClose={() => setAiSidebarOpen(false)} />
+              {rightPanelTab === "revision" && <RevisionContextPanel state={revisionContext} filename={revisionFilename} editor={activeEditor} onShowManuscript={() => setRevisionView("manuscript")} />}
               <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "activity" ? "flex" : "none" }}>
                 <ActivityPanel
                   editor={activeEditor}
-                  projectPath={activeProject?.path}
+                  projectPath={activeEditingProject?.path}
                   onExported={refreshFileTree}
                   documentName={activeFile?.kind === "document" ? activeFile.name : null}
                 />
@@ -906,10 +951,10 @@ export function App() {
               </div>
               <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "project" ? "flex" : "none" }}>
                 {rightPanelTab === "project" && (
-                  <ProjectPanel projectPath={activeProject?.path} onOpenDocument={(filename) => {
-                    if (!activeProject) return;
+                  <ProjectPanel projectPath={activeEditingProject?.path} onOpenDocument={(filename) => {
+                    if (!activeEditingProject) return;
                     handleFileSelect({ name: filename.split("/").at(-1) ?? filename,
-                      path: `${activeProject.path.replace(/\/$/, "")}/documents/${filename}`,
+                      path: `${activeEditingProject.path.replace(/\/$/, "")}/documents/${filename}`,
                       kind: "document", isDirectory: false, lastModified: Date.now() });
                   }} />
                 )}
@@ -920,7 +965,7 @@ export function App() {
                   responsePreferences={aiResponsePreferences}
                   onSearchEnabledChange={setSearchEnabled}
                   onThinkingLevelChange={setThinkingLevel}
-                  project={activeProject}
+                  project={activeEditingProject}
                   ollamaStatus={ollamaStatus}
                   appSettings={appSettings}
                   editor={editorRef.current}
@@ -964,7 +1009,7 @@ export function App() {
         sidebarAgentModel={appSettings.sidebarAgentModel}
         wordCount={wordCount}
         onToggleAI={() => setAiSidebarOpen(v => !v)}
-        saveStatus={saveStatus}
+        saveStatus={saveStatus === "unsaved" || responseDrafts.status() === "unsaved" ? "unsaved" : saveStatus === "saving" || responseDrafts.status() === "saving" ? "saving" : "saved"}
       />
 
       {/* Export Dialog */}
@@ -975,6 +1020,7 @@ export function App() {
           if (!open) setExportTargets([]);
         }}
         onExport={handleExport}
+        destination={activeProject ? `${activeProject.path}/exports` : undefined}
         documentNames={exportTargets.map((target) => target.name.replace(/\.scholarpen\.json$/, ""))}
       />
 

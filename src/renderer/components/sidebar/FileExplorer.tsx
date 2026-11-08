@@ -176,6 +176,7 @@ function TreeNode({
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
   const name = displayName(node);
+  useEffect(() => { if (node.isDirectory && activeFile?.path.startsWith(node.path + "/")) setIsOpen(true); }, [activeFile?.path, node.path, node.isDirectory]);
 
   useEffect(() => {
     if (renamingNode?.path === node.path) {

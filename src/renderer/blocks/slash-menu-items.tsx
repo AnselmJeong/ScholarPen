@@ -75,7 +75,7 @@ export function getScholarSlashMenuItems(
       aliases: ["ai-score", "detect-ai", "AI검사", "AI확률", "작성가능성"],
       group: "Scholar",
       icon: <span className="text-xs font-mono">AI?</span>,
-      subtext: "현재 문서 · 로컬 AI 작성 가능성 점수 · 확률(%) 아님",
+      subtext: "DetectorScope · 이전 결과를 지우고 현재 본문 분석",
       onItemClick: onAIScore,
     }] : []),
     // Figure block

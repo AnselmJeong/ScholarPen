@@ -3,6 +3,7 @@ import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import {
   addThreadComment,
+  clearAIDetectionResults,
   aiRequestKey,
   readThreads,
   threadWantsAI,
@@ -63,6 +64,11 @@ export const AI_ORIGIN = "ai-agent";
 /** Origin of AI bookkeeping (comment anchors, review state) that "undo AI edit" must not revert. */
 export const AI_META_ORIGIN = "ai-meta";
 export const AI_EDITS_MAP = "aiEdits";
+
+function detectionThread(thread: ThreadSnapshot) {
+  const request = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId));
+  return thread.meta.documentAction === "ai-score" || asksForAIScore(request?.text ?? "");
+}
 
 export interface CollabAgentDeps {
   resolveMentionedFiles?: typeof resolveMentionedFiles;
@@ -207,8 +213,9 @@ export class CollabAgent {
     session.ydoc.transact(() => {
       for (const thread of readThreads(threads)) {
         if (thread.meta.status === "in-progress") {
-          updateThreadMeta(threads, thread.id, { assignee: "me", status: "open", statusNote: "Interrupted. Ask AI to retry when ready." });
-          addThreadComment(threads, thread.id, SCHOLARPEN_AI.userId, "The previous AI task was interrupted. Any existing suggestions remain available for review. Ask AI to retry when ready.");
+          const score = detectionThread(thread);
+          updateThreadMeta(threads, thread.id, { assignee: "me", status: "open", statusNote: score ? "AI 분석이 중단되었습니다." : "Interrupted. Ask AI to retry when ready." });
+          addThreadComment(threads, thread.id, SCHOLARPEN_AI.userId, score ? "AI 분석이 중단되어 결과가 없습니다." : "The previous AI task was interrupted. Any existing suggestions remain available for review. Ask AI to retry when ready.");
         }
       }
       for (const thread of readThreads(threads)) {
@@ -313,7 +320,7 @@ export class CollabAgent {
         if (thread?.meta.status === "in-progress") this.setThread(attachment, thread.id, {
           assignee: "me", status: thread.meta.changeSet === undefined ? "open" : "proposed",
           statusNote: controller.signal.aborted ? "Cancelled" : `Failed: ${message}`,
-        }, `${controller.signal.aborted ? "The task was cancelled." : `The task stopped: ${message}`} ` +
+        }, detectionThread(thread) ? (controller.signal.aborted ? "AI 분석이 취소되었습니다." : `AI 분석에 실패했습니다: ${message}`) : `${controller.signal.aborted ? "The task was cancelled." : `The task stopped: ${message}`} ` +
           (thread.meta.documentAction === "resolve-comments"
             ? "No manuscript edits were applied by this coordinated request. Ask AI to retry when ready."
             : "Any earlier suggestions remain available for review. Ask AI to retry when ready."));
@@ -411,6 +418,9 @@ export class CollabAgent {
     }
     const latestRequest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
     if (thread.meta.documentAction === "ai-score" || asksForAIScore(latestRequest)) {
+      const threads = session.ydoc.getMap(COLLAB_THREADS_MAP);
+      if (!threads.has(threadId)) return; // A newer command superseded this job.
+      session.ydoc.transact(() => clearAIDetectionResults(threads, threadId), AI_META_ORIGIN);
       const doc = readDoc(session);
       const whole = thread.meta.scope === "document" || thread.meta.documentAction === "ai-score";
       const range = whole ? null : threadRange(doc, threadId);
@@ -421,9 +431,10 @@ export class CollabAgent {
         const content = blockContent(block);
         return readableText(doc, Math.max(content.from, range?.from ?? content.from), Math.min(content.to, range?.to ?? content.to));
       }).join("\n\n");
-      this.update(job, { detail: "로컬 모델로 AI 작성 가능성 분석 중" });
+      this.update(job, { detail: "DetectorScope 점수·특징·원문 위치 분석 중" });
       const result = await (this.deps.analyzeAIText ?? analyzeAIText)(text, signal);
       signal.throwIfAborted();
+      if (!threads.has(threadId)) return;
       reply({ assignee: "me", status: "open", statusNote: "AI 작성 가능성 분석 완료" },
         formatAIDetectionReport(result, whole ? "현재 문서의 본문" : "댓글의 선택 영역"));
       return;

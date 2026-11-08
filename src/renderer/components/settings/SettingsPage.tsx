@@ -1,3 +1,4 @@
+import { AIDetectorSetup } from "./AIDetectorSetup";
 import { ClaudeConnection } from "./ClaudeConnection";
 import React, { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, Folder, Bot, BookOpen, RefreshCw, Sun } from "lucide-react";
@@ -266,6 +267,8 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-8 py-8 space-y-8">
+
+          <AIDetectorSetup />
 
           {/* AI section */}
           <SettingSection icon={Bot} title="AI">

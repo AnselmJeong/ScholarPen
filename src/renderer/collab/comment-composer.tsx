@@ -18,7 +18,7 @@ import {
 } from "@blocknote/react";
 import { flip, offset, shift } from "@floating-ui/react";
 import { TextSelection } from "prosemirror-state";
-import { createThread, LOCAL_USER_ID, type ThreadMeta } from "../../shared/collab/threads";
+import { createThread, clearAIDetectionResults, LOCAL_USER_ID, type ThreadMeta } from "../../shared/collab/threads";
 import { COLLAB_THREADS_MAP } from "../../shared/collab/protocol";
 import { getEditorCollab } from "./editor-collab";
 import { hasOpenFileMentionMenu } from "./comment-file-mentions";
@@ -253,6 +253,7 @@ function requestDocumentAction(editor: BlockNoteEditor<any, any, any>, action: N
   // Document actions need no inline anchor. Selecting a paragraph here both
   // surprised the author and made the agent wait for that cursor to leave.
   peer.ydoc.transact(() => {
+    if (action === "ai-score") clearAIDetectionResults(peer.ydoc.getMap(COLLAB_THREADS_MAP));
     createThread(peer.ydoc.getMap(COLLAB_THREADS_MAP), LOCAL_USER_ID, text, {
       assignee: "ai", status: "open", requestedAt: Date.now(), scope: "document", documentAction: action,
     });

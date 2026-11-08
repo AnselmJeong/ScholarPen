@@ -1,3 +1,6 @@
+import type { AIDetectorStatus } from "../shared/ai-detector-setup";
+import type { RevisionChapterContext, RevisionResponseSave } from "../shared/review-session/chapter-context";
+import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport } from "../shared/review-session/types";
 import type { ClaudeStatus } from "../shared/claude";
 import type { ReviewCategory, ProjectReviewSettings } from "../shared/collab/review";
 import type { CodexStatus } from "../shared/codex";
@@ -52,6 +55,9 @@ type BibliographyValidationProgressHandler = (progress: BibliographyValidationPr
 type CollabMessageHandler = (message: CollabUpdateMessage) => void;
 
 const strictRpcMethods = new Set([
+  "getAIDetectorStatus", "installAIDetector", "cancelAIDetectorInstall",
+  "reviewConfirmSnapshot",
+  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
   "getAuthorLearning", "dismissAuthorPreference",
   "getClaudeStatus", "loginClaude", "cancelClaudeLogin", "logoutClaude",
@@ -101,7 +107,9 @@ const strictRpcMethods = new Set([
 
 // Create Electrobun RPC client for webview using defineRPC
 // This properly initializes the transport system
-const electrobun = new Electroview({
+const electrobun = (() => {
+  if (typeof window.__electrobunRpcSocketPort !== "number") return null;
+  try { return new Electroview({
   rpc: Electroview.defineRPC<ScholarRPC>({
     maxRequestTime: 600_000,
     handlers: {
@@ -146,6 +154,11 @@ const electrobun = new Electroview({
     },
   }),
 });
+  } catch (error) {
+    console.info("[RPC] Native bridge unavailable; browser preview only.");
+    return null;
+  }
+})();
 
 // ── Menu action, import, stream chunk, and project update listeners ──
 const menuActionListeners: MenuActionHandler[] = [];
@@ -358,10 +371,11 @@ function mockRpc(method: string, _args: unknown[]): unknown {
 
 async function call<T>(method: string, params?: unknown): Promise<T> {
   try {
-    // Use Electrobun's request proxy: electrobun.rpc.request.methodName(params)
+    if (!electrobun) throw new Error("이 기능은 ScholarPen 데스크톱 앱에서 사용할 수 있습니다.");
+    // Use Electrobun's request proxy: electrobun?.rpc.request.methodName(params)
     // Note: void-returning methods legitimately resolve to undefined — do NOT
     // treat undefined as an error here.
-    const result = await (electrobun.rpc as any)?.request?.[method](params);
+    const result = await (electrobun?.rpc as any)?.request?.[method](params);
     return result as T;
   } catch (err) {
     if (strictRpcMethods.has(method)) {
@@ -380,6 +394,9 @@ export const rpc = {
   retainProjectMemory: (projectPath: string, content: string, source: string) => call<ProjectMemoryReceipt>("retainProjectMemory", { projectPath, content, source }),
   recallProjectMemory: (projectPath: string, query: string) => call<ProjectMemoryHit[]>("recallProjectMemory", { projectPath, query }),
   getProjectMemoryOperation: (projectPath: string, operationId: string) => call<ProjectMemoryOperation>("getProjectMemoryOperation", { projectPath, operationId }),
+  getAIDetectorStatus: () => call<AIDetectorStatus>("getAIDetectorStatus"),
+  installAIDetector: () => call<AIDetectorStatus>("installAIDetector"),
+  cancelAIDetectorInstall: () => call<AIDetectorStatus>("cancelAIDetectorInstall"),
   getOllamaStatus: () => call<OllamaStatus>("getOllamaStatus"),
   confirmAction: (options: {
     title: string;
@@ -387,6 +404,22 @@ export const rpc = {
     detail?: string;
     confirmLabel?: string;
   }) => call<boolean>("confirmAction", options),
+  reviewSaveRevisionResponse: (params: RevisionResponseSave) => call<string>("reviewSaveRevisionResponse", params),
+  reviewRevisionContext: (projectPath: string, filename: string) => call<RevisionChapterContext | null>("reviewRevisionContext", { projectPath, filename }),
+  reviewConfirmSnapshot: (request: { projectPath: string; filename: string; savedDocument: unknown; fingerprint: string }) => call<void>("reviewConfirmSnapshot", request),
+  reviewExportManuscripts: (request: ReviewManuscriptExport) => call<string>("reviewExportManuscripts", request),
+  reviewManuscript: (address: ReviewAddress, round: number) => call<string>("reviewManuscript", { ...address, round }),
+  reviewList: (projectPath: string) => call<ReviewSession[]>("reviewList", { projectPath }),
+  reviewCreate: (input: ReviewInput) => call<ReviewSession>("reviewCreate", input),
+  reviewFollowup: (address: ReviewAddress) => call<ReviewSession>("reviewFollowup", address),
+  reviewStart: (address: ReviewAddress) => call<ReviewSession>("reviewStart", address),
+  reviewGet: (address: ReviewAddress) => call<ReviewView>("reviewGet", address),
+  reviewStop: (address: ReviewAddress, cancel = false) => call<ReviewSession>("reviewStop", { ...address, cancel }),
+  reviewDecideFigure: (address: ReviewAddress, approvalId: string, decision: "approved" | "kept" | "deferred") => call<ReviewSession>("reviewDecideFigure", { ...address, approvalId, decision }),
+  reviewImportFigure: (address: ReviewAddress, approvalId: string) => call<ReviewSession | null>("reviewImportFigure", { ...address, approvalId }),
+  reviewFigurePreview: (address: ReviewAddress, figureId: string, round = 0) => call<string>("reviewFigurePreview", { ...address, figureId, round }),
+  reviewExport: (address: ReviewAddress, editable = false) => call<string>("reviewExport", { ...address, editable }),
+  reviewExportResponses: (address: ReviewAddress) => call<string>('reviewExportResponses', address),
   listProjects: () => call<ProjectInfo[]>("listProjects"),
   openProject: (name: string) => call<ProjectInfo>("openProject", { name }),
   createProject: (name: string) => call<ProjectInfo>("createProject", { name }),

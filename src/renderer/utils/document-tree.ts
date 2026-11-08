@@ -1,3 +1,4 @@
+import { revisionWorkspacePath } from "../../shared/revision-workspace";
 import type { FileNode } from "@shared/rpc-types";
 
 export function collectDocumentNodes(nodes: FileNode[]): FileNode[] {
@@ -40,4 +41,11 @@ export function collectSearchDocumentNodes(nodes: FileNode[], projectPath: strin
 
 export function documentRelativeFilename(projectPath: string, filePath: string): string {
   return filePath.slice(`${projectPath.replace(/\/$/, "")}/documents/`.length);
+}
+
+/** Keep the Explorer rooted at the user's project while scoping a revision editor to its own assets. */
+export function editingProject(project: import('@shared/rpc-types').ProjectInfo | null, filePath?: string | null): import('@shared/rpc-types').ProjectInfo | null {
+  if (!project || !filePath) return project;
+  const path = revisionWorkspacePath(project.path, filePath);
+  return path ? { ...project, path, name: `${project.name} · 수정 사본`, files: [] } : project;
 }

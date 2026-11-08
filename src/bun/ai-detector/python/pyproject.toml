@@ -1,0 +1,12 @@
+[project]
+name = "scholarpen-detector"
+version = "2.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "detectorscope==0.0.1",
+  "torch==2.14.1",
+  "transformers==5.19.0",
+]
+
+[tool.uv]
+package = false

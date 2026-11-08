@@ -1,5 +1,6 @@
 import * as Y from "yjs";
 import { SCHOLARPEN_AI, isAIUser, mentionedPersona } from "./personas";
+import { isAIDetectionResult } from "../ai-detection";
 import type { EditLevel } from "./writing";
 
 // Comment threads live in the shared Y.Doc in BlockNote's YjsThreadStore format
@@ -174,6 +175,21 @@ export function addThreadComment(threads: Y.Map<any>, threadId: string, userId: 
   const now = Date.now();
   (thread.get("comments") as Y.Array<Y.Map<any>>).push([commentMap(userId, textCommentBody(text), now)]);
   thread.set("updatedAt", now);
+}
+
+/** A score is a replaceable document result, not an accumulating discussion. */
+export function clearAIDetectionResults(threads: Y.Map<any>, keepThreadId?: string) {
+  for (const thread of readThreads(threads)) {
+    if (thread.id !== keepThreadId && thread.meta.documentAction === "ai-score") {
+      threads.delete(thread.id); // Document actions have no inline comment anchor.
+      continue;
+    }
+    const comments = (threads.get(thread.id) as Y.Map<any>).get("comments") as Y.Array<Y.Map<any>>;
+    for (let index = comments.length - 1; index >= 0; index--) {
+      const comment = comments.get(index);
+      if (isAIUser(comment.get("userId")) && isAIDetectionResult(commentBodyText(comment.get("body")))) comments.delete(index, 1);
+    }
+  }
 }
 
 export function updateThreadMeta(threads: Y.Map<any>, threadId: string, patch: Partial<ThreadMeta>) {

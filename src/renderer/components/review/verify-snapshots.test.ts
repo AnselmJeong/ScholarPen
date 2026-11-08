@@ -1,0 +1,28 @@
+import { afterAll, expect, mock, test } from 'bun:test';
+import { Window } from 'happy-dom';
+import * as Y from 'yjs';
+import { toBase64 } from 'lib0/buffer';
+const dom=new Window();
+const globals = ['window','document','navigator','Node','Element','HTMLElement','DocumentFragment','MutationObserver','DOMParser','getComputedStyle'];
+const previous = new Map(globals.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+for(const key of globals) Object.defineProperty(globalThis,key,{configurable:true,value:key==='window'?dom:Reflect.get(dom,key)});
+mock.module('electrobun/view',()=>({Electroview:class{}}));
+const {getHeadlessEditor}=await import('../../collab/collab-peer');
+const {blocksToYDoc}=await import('@blocknote/core/yjs');
+const {verifyReviewSnapshots}=await import('./verify-snapshots');
+const {rpc}=await import('../../rpc');
+const blocks=[{id:'p',type:'paragraph',content:[{type:'text',text:'Saved',styles:{}}]}];
+const editor=getHeadlessEditor();
+let confirmed=0;let current=blocksToYDoc(editor,blocks as any,'document-store');
+rpc.collabOpen=async()=>({docKey:'/p::paper',state:toBase64(Y.encodeStateAsUpdate(current)),awareness:null,bootstrap:'none',snapshotStale:true});
+rpc.collabPush=async()=>{};rpc.collabAwareness=async()=>{};rpc.collabClose=async()=>{};
+let savedBlocks: unknown = blocks;
+rpc.loadDocument=async()=>structuredClone(savedBlocks);
+rpc.reviewConfirmSnapshot=async()=>{confirmed++};
+afterAll(()=>{current.destroy();dom.happyDOM.abort(); for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis,key,descriptor); else Reflect.deleteProperty(globalThis,key); }});
+test('closed legacy document is confirmed without writing the original',async()=>{await verifyReviewSnapshots('/p',['paper']);expect(confirmed).toBe(1)});
+test('actual text difference is never acknowledged as saved',async()=>{current.destroy();current=blocksToYDoc(editor,[{...blocks[0],content:'Changed'}] as any,'document-store');await expect(verifyReviewSnapshots('/p',['paper'])).rejects.toThrow('paper:');expect(confirmed).toBe(1)});
+test('a new empty JSON document matches its editor-generated empty paragraph',async()=>{
+  current.destroy(); current=blocksToYDoc(editor,[{id:'generated',type:'paragraph',content:''}] as any,'document-store');
+  savedBlocks=[]; await verifyReviewSnapshots('/p',['paper']); expect(confirmed).toBe(2);
+});

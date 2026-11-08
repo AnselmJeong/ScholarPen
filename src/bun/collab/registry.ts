@@ -1,4 +1,8 @@
 import * as Y from "yjs";
+import { createHash } from "node:crypto";
+import { manuscriptFingerprint } from "../../shared/collab/content-fingerprint";
+
+export const manuscriptHash = (doc: Y.Doc) => createHash("sha256").update(manuscriptFingerprint(doc)).digest("hex");
 import {
   Awareness,
   applyAwarenessUpdate,
@@ -23,6 +27,8 @@ export interface CollabMeta {
   updatedAt: number;
   /** When an editor last wrote the JSON snapshot. */
   jsonSavedAt?: number;
+  /** Content represented by the saved JSON, excluding comments and agent metadata. */
+  jsonContentHash?: string;
 }
 
 export interface CollabStorage {
@@ -130,7 +136,9 @@ export class CollabRegistry {
         ? toBase64(encodeAwarenessUpdate(session.awareness, otherClients))
         : null,
       bootstrap,
-      snapshotStale: bootstrap === "none" && session.meta.updatedAt > (session.meta.jsonSavedAt ?? 0) + 2000,
+      snapshotStale: bootstrap === "none" && (session.meta.jsonContentHash
+        ? manuscriptHash(session.ydoc) !== session.meta.jsonContentHash
+        : session.meta.updatedAt > (session.meta.jsonSavedAt ?? 0) + 2000),
     };
   }
 
@@ -142,6 +150,7 @@ export class CollabRegistry {
       // The seeded Y.Doc now mirrors that JSON file.
       session.meta.jsonHash = session.seeding.jsonHash;
       session.meta.jsonSavedAt = Date.now();
+      session.meta.jsonContentHash = manuscriptHash(session.ydoc);
       session.seeding.resolve();
       session.seeding = null;
     }
@@ -173,6 +182,7 @@ export class CollabRegistry {
     if (session) {
       session.meta.jsonHash = jsonHash;
       session.meta.jsonSavedAt = Date.now();
+      session.meta.jsonContentHash = manuscriptHash(session.ydoc);
       this.schedulePersist(session);
       return;
     }

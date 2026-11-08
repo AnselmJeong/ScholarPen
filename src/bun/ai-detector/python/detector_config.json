@@ -1,0 +1,7 @@
+{
+  "model": "liamdugan/detector-scope",
+  "revision": "9baaff9e2d1cdb79cafa90cdb27811b847e69dae",
+  "packageVersion": "0.0.1",
+  "head": "logreg",
+  "tau": 0.85
+}

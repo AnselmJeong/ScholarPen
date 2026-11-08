@@ -1,3 +1,6 @@
+import type { AIDetectorStatus } from "./ai-detector-setup";
+import type { RevisionChapterContext, RevisionResponseSave } from "./review-session/chapter-context";
+import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport } from "./review-session/types";
 import type { ClaudeStatus } from "./claude";
 import type { ReviewCategory, ProjectReviewSettings } from "./collab/review";
 import type { CodexStatus } from "./codex";
@@ -40,6 +43,25 @@ import type {
 // Requests Bun handles (Webview → Bun)
 type BunRequests = RPCSchema<{
   requests: {
+    reviewSaveRevisionResponse: { params: RevisionResponseSave; response: string };
+    reviewRevisionContext: { params: { projectPath: string; filename: string }; response: RevisionChapterContext | null };
+    reviewConfirmSnapshot: { params: { projectPath: string; filename: string; savedDocument: unknown; fingerprint: string }; response: void };
+    reviewExportManuscripts: { params: ReviewManuscriptExport; response: string };
+    reviewManuscript: { params: ReviewAddress & { round: number }; response: string };
+    reviewList: { params: { projectPath: string }; response: ReviewSession[] };
+    reviewCreate: { params: ReviewInput; response: ReviewSession };
+    reviewFollowup: { params: ReviewAddress; response: ReviewSession };
+    reviewStart: { params: ReviewAddress; response: ReviewSession };
+    reviewGet: { params: ReviewAddress; response: ReviewView };
+    reviewStop: { params: ReviewAddress & { cancel: boolean }; response: ReviewSession };
+    reviewDecideFigure: { params: ReviewAddress & { approvalId: string; decision: "approved" | "kept" | "deferred" }; response: ReviewSession };
+    reviewImportFigure: { params: ReviewAddress & { approvalId: string }; response: ReviewSession | null };
+    reviewFigurePreview: { params: ReviewAddress & { figureId: string; round: number }; response: string };
+    reviewExport: { params: ReviewAddress & { editable: boolean }; response: string };
+    reviewExportResponses: { params: ReviewAddress; response: string };
+    getAIDetectorStatus: { params: void; response: AIDetectorStatus };
+    installAIDetector: { params: void; response: AIDetectorStatus };
+    cancelAIDetectorInstall: { params: void; response: AIDetectorStatus };
     getOllamaStatus: { params: void; response: OllamaStatus };
     confirmAction: {
       params: {

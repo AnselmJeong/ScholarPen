@@ -93,3 +93,14 @@ test("searches native documents only inside documents, retaining nested paths", 
   expect(collectSearchDocumentNodes(tree, "/project")).toEqual([root, nested]);
   expect(documentRelativeFilename("/project", nested.path)).toBe("chapter/a.scholarpen.json");
 });
+
+test('revision documents and assets use the independent revision workspace', async () => {
+  const { editingProject } = await import('./document-tree');
+  const project={name:'Paper',path:'/project',files:[],lastModified:0};
+  const copy=editingProject(project,'/project/revisions/session/documents/chapter.scholarpen.json')!;
+  expect(copy.path).toBe('/project/revisions/session');
+  expect(documentRelativeFilename(copy.path,'/project/revisions/session/documents/chapter.scholarpen.json')).toBe('chapter.scholarpen.json');
+  expect(editingProject(project,'/project/revisions/session/exports/references.bib')!.path).toBe(copy.path);
+  expect(editingProject(project,'/project/documents/chapter.scholarpen.json')).toBe(project);
+  expect(editingProject(project,'/project/revisions/../documents/chapter.scholarpen.json')).toBe(project);
+});

@@ -58,6 +58,24 @@ function writeParagraph(doc: Y.Doc, text: string) {
   doc.getXmlFragment(COLLAB_FRAGMENT).push([paragraph]);
 }
 
+test("comment and reviewer metadata do not make a saved manuscript stale, but text edits do", async () => {
+  const { registry, jsonHashes } = setup();
+  const a = await registry.open({ projectPath: "/p", filename: "a.scholarpen.json", peerId: "A", schema });
+  const seed = new Y.Doc(); writeParagraph(seed, "Saved text");
+  registry.push(a.docKey, "A", toBase64(Y.encodeStateAsUpdate(seed)));
+  await registry.noteJsonSaved("/p", "a.scholarpen.json", "saved"); jsonHashes.set("/p/a.scholarpen.json", "saved");
+  const live = registry.get(a.docKey)!;
+  live.ydoc.getMap("review").set("lastChecked", Date.now());
+  live.meta.updatedAt = (live.meta.jsonSavedAt ?? 0) + 100_000;
+  const paragraph = live.ydoc.getXmlFragment(COLLAB_FRAGMENT).get(0) as Y.XmlElement;
+  const text = paragraph.get(0) as Y.XmlText;
+  text.format(0, 5, { comment: { threadId: "comment-1" } });
+  expect((await registry.open({ projectPath: "/p", filename: "a.scholarpen.json", peerId: "B", schema })).snapshotStale).toBe(false);
+  text.insert(0, "New ");
+  expect((await registry.open({ projectPath: "/p", filename: "a.scholarpen.json", peerId: "C", schema })).snapshotStale).toBe(true);
+  seed.destroy();
+});
+
 test("first peer seeds an empty document and later peers receive the seeded state", async () => {
   const { registry, updates } = setup();
   const first = await registry.open({ projectPath: "/p", filename: "a.scholarpen.json", peerId: "A", schema });

@@ -1,3 +1,4 @@
+import { AIDetectorSetup } from "../settings/AIDetectorSetup";
 import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
@@ -24,6 +25,8 @@ import { SCHOLARPEN_AI, isAIUser, personaByUser } from "../../../shared/collab/p
 import { AIActivitySection } from "./AIActivitySection";
 import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import { ZonesSection } from "./ZonesSection";
+import { AIDetectionResult } from "./AIDetectionResult";
+import { asksForAIScore, isAIDetectionResult } from "../../../shared/ai-detection";
 import { WatermarkResultCard } from "./WatermarkResultCard";
 import { exportUnresolvedComments, unresolvedCommentsFilename } from "../../../shared/collab/comment-export";
 import { aiTaskRunning, openClaimThreads, requestBulkComments, resolveAllComments } from "../../../shared/collab/bulk-comments";
@@ -206,6 +209,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <AIDetectorSetup compact />
       <AIActivitySection editor={editor} />
       <WatermarkResultCard threads={threads} onDismiss={threadId => setMeta(threadId, { resultDismissedAt: Date.now() })} />
       {categoryError && <p role="alert" className="px-3 py-1 text-xs text-red-600">{categoryError}</p>}
@@ -331,6 +335,7 @@ function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve,
   const fromAI = author !== null;
   const replies = thread.comments.filter((comment) => !comment.deleted).length - 1;
   const last = [...thread.comments].reverse().find((comment) => !comment.deleted);
+  const detection = thread.meta.documentAction === "ai-score" || asksForAIScore(first?.text ?? "") || isAIDetectionResult(last?.text ?? "");
 
   return (
     <div
@@ -369,9 +374,11 @@ function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve,
       )}
       <p className="line-clamp-3 text-xs leading-5 text-foreground">{first?.text || "(empty comment)"}</p>
       {replies > 0 && last && last !== first && (
-        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
-          <span className="font-medium">{personaByUser(last.userId)?.shortName ?? "You"}:</span> {last.text}
-        </p>
+        isAIUser(last.userId) && last.text.startsWith("**DetectorScope ·")
+          ? <AIDetectionResult text={last.text} />
+          : <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+              <span className="font-medium">{personaByUser(last.userId)?.shortName ?? "You"}:</span> {last.text}
+            </p>
       )}
       {thread.meta.statusNote && status !== "resolved" && (
         <p className="mt-1 text-[11px] italic leading-4 text-muted-foreground">{thread.meta.statusNote}</p>
@@ -389,7 +396,7 @@ function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve,
             </button>
           </>
         )}
-        {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && (
+        {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && !detection && (
           <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
             onClick={() => onAssign("ai")} />
         )}
@@ -418,18 +425,19 @@ function SmallButton({ icon, label, onClick }: { icon: React.ReactNode; label: s
   );
 }
 
-export type RightPanelTab = "activity" | "history" | "assistant" | "project";
+export type RightPanelTab = "activity" | "history" | "assistant" | "project" | "revision";
 
-const TAB_LABEL: Record<RightPanelTab, string> = { activity: "Activity", history: "History", project: "Project", assistant: "Assistant" };
+const TAB_LABEL: Record<RightPanelTab, string> = { revision: "심사 답변", activity: "Activity", history: "History", project: "Project", assistant: "Assistant" };
 
-export function ActivityPanelHeader({ tab, onTab, onClose }: {
+export function ActivityPanelHeader({ tab, onTab, onClose, revisionAvailable = false }: {
+  revisionAvailable?: boolean;
   tab: RightPanelTab;
   onTab: (tab: RightPanelTab) => void;
   onClose: () => void;
 }) {
   return (
-    <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-      {(["activity", "history", "project", "assistant"] as const).map((value) => (
+    <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
+      {([...(revisionAvailable ? ["revision" as const] : []), "activity", "history", "project", "assistant"] as const).map((value) => (
         <button
           key={value}
           type="button"

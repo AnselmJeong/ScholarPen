@@ -1,7 +1,7 @@
 import { snapshotActiveDocument } from "@shared/active-document-context";
 import type { ActiveDocumentContext } from "@shared/rpc-types";
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
-import { documentRelativeFilename } from "../../utils/document-tree";
+import { documentRelativeFilename, editingProject } from "../../utils/document-tree";
 import React, {
   useState,
   useRef,
@@ -11,7 +11,7 @@ import React, {
   useImperativeHandle,
 } from "react";
 import { EditorArea } from "./EditorArea";
-import { acceptedDocument } from "../../collab/suggestions";
+import { acceptedDocument, listChangeSets } from "../../collab/suggestions";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import { PaneToggle } from "./PaneToggle";
@@ -40,6 +40,7 @@ interface PaneState {
 export interface EditorPaneGroupHandle {
   openFile: (file: FileNode) => void;
   saveActiveEditor: () => void;
+  prepareReview: () => Promise<void>;
   prepareFileDeletion: (filePath: string) => Promise<() => void>;
   closeFileByPath: (filePath: string) => void;
   getDocumentSnapshot: (filePath: string) => unknown[] | null;
@@ -48,6 +49,10 @@ export interface EditorPaneGroupHandle {
 }
 
 interface EditorPaneGroupProps {
+  originalPane?: React.ReactNode;
+  responsePane?: React.ReactNode;
+  revisionView?: "manuscript" | "response";
+  onRevisionViewChange?: (view: "manuscript" | "response") => void;
   filesOpen: boolean;
   onToggleFiles: () => void;
   project: ProjectInfo | null;
@@ -86,6 +91,10 @@ interface DragTrack {
 export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroupProps>(
   function EditorPaneGroup(
     {
+      originalPane,
+      responsePane,
+      revisionView = "manuscript",
+      onRevisionViewChange,
       filesOpen,
       onToggleFiles,
       project,
@@ -110,6 +119,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const [findRequests, setFindRequests] = useState<Record<string, DocumentFindRequest>>({});
     const [splitRatio, setSplitRatio] = useState(50);
     const outlineVisible = useOutlineVisibility();
+    const comparing = Boolean(originalPane);
+    useEffect(() => { if (comparing) setOutlineVisible(false); }, [comparing]);
     const outlineToggleRefs = useRef<Record<PaneId, HTMLButtonElement | null>>({ left: null, right: null });
 
     // Drag-to-split state
@@ -214,6 +225,12 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     // ── Imperative handle ───────────────────────────────────────────────────
 
     useImperativeHandle(ref, () => ({
+      async prepareReview() {
+        for (const editor of editorMapRef.current.values()) {
+          if (listChangeSets(editor.prosemirrorState.doc).length) throw new Error("열린 원고의 미결정 변경 제안을 먼저 수락 또는 거절해 주세요.");
+        }
+        await saveAllOpenDocuments();
+      },
       openFile(file: FileNode) {
         if (file.isDirectory) return;
         const paneId = focusedPaneRef.current;
@@ -548,7 +565,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
             onTabClose={(tabId) => closeTab(paneId, tabId)}
             onTabMouseDown={(tabId, e) => handleTabMouseDown(tabId, paneId, e)}
             onPaneFocus={() => setFocusedPane(paneId)}
-            leadingControls={paneId === "left" && (
+            leadingControls={(paneId === "left" || comparing) && (
               <PaneToggle side="left" open={filesOpen} label={filesOpen ? "Hide files" : "Show files"}
                 controls="files-panel" onToggle={onToggleFiles} />
             )}
@@ -559,25 +576,36 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
             )}
           />
 
-          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {comparing && isFocused && <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+            <button className="mr-auto rounded border border-border px-2 py-1 text-xs hover:bg-accent" aria-controls="files-panel" aria-expanded={filesOpen} onClick={onToggleFiles}>{filesOpen ? 'Explorer 접기' : 'Explorer 열기'}</button>
+            <div role="tablist" aria-label="수정 원고와 답변서" className="flex gap-1">
+              <button role="tab" aria-selected={revisionView === 'manuscript'} className={`rounded px-3 py-1 text-sm ${revisionView === 'manuscript' ? 'bg-primary/10 text-primary' : 'hover:bg-accent'}`} onClick={() => onRevisionViewChange?.('manuscript')}>수정 원고</button>
+              <button role="tab" aria-selected={revisionView === 'response'} className={`rounded px-3 py-1 text-sm ${revisionView === 'response' ? 'bg-primary/10 text-primary' : 'hover:bg-accent'}`} onClick={() => onRevisionViewChange?.('response')}>답변서</button>
+            </div>
+          </div>}
+          {comparing && isFocused && revisionView === 'response' && responsePane}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden" style={{ display: comparing && isFocused && revisionView === 'response' ? 'none' : undefined }}>
             {pane.tabs.length === 0 ? (
               <EmptyPane />
             ) : (
               pane.tabs.map((tab) => {
                 const isActiveTab = pane.activeTabId === tab.id;
+                const tabProject = editingProject(project, tab.file.path);
                 return (
                   <div
                     key={tab.id}
+                    data-revision-document={tab.file.path}
                     className="flex-1 min-h-0 flex flex-col overflow-hidden"
                     style={{ display: isActiveTab ? "flex" : "none" }}
                     aria-hidden={!isActiveTab}
                   >
+                    {tabProject && project && tabProject.path !== project.path && <div className="border-b border-border bg-primary/5 px-4 py-2 text-xs text-primary break-all">수정본 · 편집 가능 · {tab.file.path.slice(project.path.length + 1)} · 이 사본에 자동 저장됩니다.</div>}
                     {tab.file.kind === "document" ? (
                       <EditorArea
                         outlineId={outlineIdFor(tab.id)}
                         onOutlineClosed={() => outlineToggleRefs.current[paneId]?.focus()}
-                        project={project}
-                        documentFilename={project ? documentRelativeFilename(project.path, tab.file.path) : tab.file.name}
+                        project={tabProject}
+                        documentFilename={tabProject ? documentRelativeFilename(tabProject.path, tab.file.path) : tab.file.name}
                         ollamaStatus={ollamaStatus}
                         initialScrollTop={scrollPositionMapRef.current.get(tab.id) ?? 0}
                         reloadTrigger={reloadTrigger}
@@ -614,7 +642,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                       <FileViewer
                         isActive={isActiveTab && isFocused}
                         file={tab.file}
-                        projectPath={project?.path ?? ""}
+                        projectPath={tabProject?.path ?? ""}
                         reloadTrigger={tab.file.kind === "reference" ? bibReloadTrigger : reloadTrigger}
                         onSaveReady={(saveNow) => {
                           if (saveNow) {
@@ -695,6 +723,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
           </div>
         )}
 
+        {originalPane && <div className="h-full w-1/2 min-w-0 shrink-0 border-r border-border">{originalPane}</div>}
+        <div className="flex min-w-0 flex-1 overflow-hidden">
         {/* Single pane */}
         {!rightPane ? (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -704,7 +734,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
           /* Split panes */
           <>
             <div
-              style={{ width: `${splitRatio}%` }}
+              hidden={Boolean(originalPane && focusedPane !== "left")}
+              style={{ display: originalPane && focusedPane !== "left" ? "none" : undefined, width: originalPane ? "100%" : `${splitRatio}%` }}
               className="min-h-0 flex flex-col overflow-hidden border-r border-border"
             >
               {renderPane(leftPane, "left")}
@@ -713,17 +744,20 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
             {/* Resize handle */}
             <div
               className="w-1 flex-shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary/60 active:bg-primary/80"
+              hidden={Boolean(originalPane)}
               onMouseDown={handleSplitResizeMouseDown}
             />
 
             <div
-              style={{ width: `calc(${100 - splitRatio}% - 4px)` }}
+              hidden={Boolean(originalPane && focusedPane !== "right")}
+              style={{ display: originalPane && focusedPane !== "right" ? "none" : undefined, width: originalPane ? "100%" : `calc(${100 - splitRatio}% - 4px)` }}
               className="min-h-0 flex flex-col overflow-hidden"
             >
               {renderPane(rightPane, "right")}
             </div>
           </>
         )}
+        </div>
       </div>
     );
   }

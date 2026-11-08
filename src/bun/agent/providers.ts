@@ -15,6 +15,7 @@ export interface AgentStreamRequest {
 }
 
 export interface AgentCompletionRequest {
+  onOutput?: (characters: number) => void;
   provider: LLMProvider;
   model: string;
   messages: OllamaMessage[];
@@ -58,7 +59,7 @@ export async function completeAgentModel(
   if (request.provider === "codex" || request.provider === "anthropic") {
     const client = request.provider === "codex" ? codexClient : claudeClient;
     let text = "";
-    for await (const chunk of client.stream(request)) text += chunk;
+    for await (const chunk of client.stream(request)) { text += chunk; request.onOutput?.(text.length); }
     return text;
   }
   const maxTokens = request.maxTokens ?? 256;

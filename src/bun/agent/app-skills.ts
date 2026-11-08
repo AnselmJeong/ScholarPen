@@ -13,7 +13,7 @@ const DEFAULT_APP_SKILLS: Array<{ name: string; content: string }> = [
     name: "ai-score",
     content: `# AI Writing Score
 
-description: 로컬 모델로 현재 문서 또는 선택한 텍스트의 AI 작성 가능성 점수를 계산합니다. 확률(%)이 아닙니다.
+description: DetectorScope로 현재 문서 또는 선택한 텍스트의 구간별 점수, 판정 기준, 특징과 원문 위치를 분석합니다. 모델 출력은 실제 작성 확률이 아닙니다.
 
 The /ai-score command is handled by ScholarPen's local detector. Never invent a score or percentage.
 `,

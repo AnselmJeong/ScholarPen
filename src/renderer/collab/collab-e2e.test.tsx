@@ -234,6 +234,33 @@ test("independent slash actions target the current document despite a partial se
   expect(readThreads(a.peer.ydoc.getMap("threads")).find(thread => thread.meta.documentAction === "ai-score")?.meta.scope).toBe("document");
   expect(view.state.doc.toJSON()).toEqual(beforeDetection);
   expect(view.state.doc.textContent).toBe(a.editor.prosemirrorState.doc.textContent);
+  const { formatAIDetectionReport } = await import("../../shared/ai-detection");
+  const { detectionReportFixture } = await import("../../shared/ai-detection.fixture");
+  const { addThreadComment, AI_USER_ID, updateThreadMeta } = await import("../../shared/collab/threads");
+  const detectionThread = readThreads(a.peer.ydoc.getMap("threads")).find(thread => thread.meta.documentAction === "ai-score")!;
+  await act(async () => {
+    addThreadComment(a.peer.ydoc.getMap("threads"), detectionThread.id, AI_USER_ID, formatAIDetectionReport(detectionReportFixture, "현재 문서"));
+    updateThreadMeta(a.peer.ydoc.getMap("threads"), detectionThread.id, { assignee: "me", status: "open" });
+  });
+  await settle();
+  const analysis = resultHost.querySelector('[aria-label="DetectorScope analysis"]');
+  expect(analysis?.textContent).toContain("판정 기준");
+  expect([...analysis!.querySelectorAll("strong")].some(node => node.textContent === "repeated phrase")).toBe(true);
+  // The same saved report survives closing and reopening the Activity panel.
+  await act(async () => { resultRoot.render(<></>); });
+  await act(async () => { resultRoot.render(<ActivityPanel editor={a.editor} documentName="watermark.scholarpen.json" projectPath="/p" />); });
+  await settle();
+  expect(resultHost.querySelector('[aria-label="DetectorScope analysis"]')?.textContent).toContain("repeated phrase");
+  expect([...resultHost.querySelectorAll("button")].some(button => button.textContent?.includes("다시 분석"))).toBe(false);
+  await act(async () => { items.find(item => item.title === "AI writing score")!.onItemClick(); });
+  await settle();
+  const scores = readThreads(a.peer.ydoc.getMap("threads")).filter(thread => thread.meta.documentAction === "ai-score");
+  expect(scores).toHaveLength(1);
+  expect(scores[0]!.id).not.toBe(detectionThread.id);
+  expect(scores[0]!.comments).toHaveLength(1);
+  expect(a.peer.ydoc.getMap("threads").has(detectionThread.id)).toBe(false);
+  expect(resultHost.querySelector('[aria-label="DetectorScope analysis"]')).toBeNull();
+  expect(view.state.doc.toJSON()).toEqual(beforeDetection);
   } finally {
   agent.dispose();
   await act(async () => resultRoot.unmount());

@@ -1,3 +1,6 @@
+import { detectorInstaller } from "./ai-detector/installer";
+import { exportReviewManuscripts } from "./review/manuscript-export";
+import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, exportReview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
 import { claudeClient } from "./claude/client";
 import * as Y from "yjs";
 import { toBase64 } from "lib0/buffer";
@@ -32,6 +35,8 @@ import type { ScholarRPC } from "../shared/scholar-rpc";
 import { figureMimeType } from "../shared/figure-files";
 import type { CollabUpdateMessage } from "../shared/collab/protocol";
 import { CollabRegistry } from "./collab/registry";
+import { manuscriptFingerprint } from "../shared/collab/content-fingerprint";
+import { collabDocKey } from "../shared/collab/protocol";
 import { createFileCollabStorage } from "./collab/storage";
 import { CollabAgent } from "./collab/agent/agent";
 import { CollabHistory } from "./collab/history/history";
@@ -177,6 +182,7 @@ function watchProjectDir(projectPath: string) {
     activeProjectWatcher = watch(projectPath, { recursive: true }, (_event, filename) => {
       if (!filename) return;
       const norm = filename.replace(/\\/g, "/");
+      if (norm === "reviews" || norm.startsWith("reviews/")) return;
       if (figureMimeType(norm)) {
         sendProjectUpdated?.({ projectPath, filePath: join(projectPath, norm) });
         return;
@@ -244,6 +250,48 @@ async function main() {
     maxRequestTime: 600_000,
     handlers: {
       requests: {
+        reviewExportManuscripts: async (request) => exportReviewManuscripts((await reviewEngine(request.projectPath)).store, request),
+        reviewManuscript,
+        reviewRevisionContext,
+        reviewSaveRevisionResponse,
+        reviewList: async ({ projectPath }) => { const engine = await reviewEngine(projectPath); return Promise.all((await engine.store.list()).map(s => engine.recover(s.id))); },
+        reviewConfirmSnapshot: async ({ projectPath, filename, savedDocument, fingerprint }) => {
+          const session = collabRegistry.get(collabDocKey(projectPath, filename));
+          if (!session) throw new Error(`${filename}: 원고 연결이 닫혔습니다. 다시 시도해 주세요.`);
+          const before = await fileSystem.documentJsonHash(projectPath, filename);
+          const saved = await fileSystem.loadDocument(projectPath, filename);
+          const after = await fileSystem.documentJsonHash(projectPath, filename);
+          if (!before || before !== after || JSON.stringify(saved) !== JSON.stringify(savedDocument) || manuscriptFingerprint(session.ydoc) !== fingerprint) {
+            throw new Error(`${filename}: 확인 중 원고가 변경됐습니다. 저장 후 다시 시도해 주세요.`);
+          }
+          await collabRegistry.noteJsonSaved(projectPath, filename, before);
+        },
+        reviewCreate: async (input) => {
+          await collabRegistry.flush();
+          for (const session of collabRegistry.list()) {
+            if (session.projectPath === input.projectPath && input.documents.includes(session.filename) && /<(?:insertion|deletion|modification)(?:\s|>)/.test(session.ydoc.getXmlFragment("document-store").toString())) {
+              throw new Error("미결정 변경 제안을 수락 또는 거절한 뒤 리뷰를 시작해 주세요.");
+            }
+          }
+          const engine = await reviewEngine(input.projectPath);
+          return engine.create({ ...input, projectPath: engine.store.project });
+        },
+        reviewFollowup: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).followup(sessionId),
+        reviewStart: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).start(sessionId),
+        reviewGet: reviewView,
+        reviewStop: async ({ projectPath, sessionId, cancel }) => (await reviewEngine(projectPath)).stop(sessionId, cancel),
+        reviewDecideFigure: decideFigure,
+        reviewImportFigure: async (address) => {
+          const files = await Utils.openFileDialog({ allowedFileTypes: "png,jpg,jpeg,webp,gif", canChooseFiles: true, canChooseDirectory: false, allowsMultipleSelection: false });
+          const path = files.join(",");
+          return path ? importFigure(address, path) : null;
+        },
+        reviewFigurePreview,
+        reviewExport: exportReview,
+        reviewExportResponses: exportReviewResponses,
+        getAIDetectorStatus: () => detectorInstaller.getStatus(),
+        installAIDetector: () => detectorInstaller.start(),
+        cancelAIDetectorInstall: () => detectorInstaller.cancel(),
         getOllamaStatus: () => ollamaClient.getStatus(),
 
         confirmAction: async ({
@@ -825,6 +873,7 @@ async function main() {
 }
 
 Electrobun.events.on("before-quit", () => {
+  detectorInstaller.cancel();
   codexClient.close();
   claudeClient.close();
   void collabHistory.flush().catch(() => undefined).then(() => collabRegistry.flush());

@@ -8,6 +8,7 @@ import {
 } from "@shared/agent-stream-timeout";
 import { onAgentChunk, rpc } from "../rpc";
 import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult } from "@shared/citation-evidence";
+import { supersededDetectionMessages } from "@shared/ai-detection";
 
 const HISTORY_MESSAGE_LIMIT = 4_000;
 const HISTORY_TOTAL_LIMIT = 16_000;
@@ -36,10 +37,12 @@ function trimHistoryText(text: string): string {
 }
 
 function compactHistory(messages: readonly ThreadMessage[]): AgentStreamParams["history"] {
+  const superseded = supersededDetectionMessages(messages.map(message => ({ id: message.id, role: message.role, text: textFromMessage(message) })));
   let total = 0;
   const history: AgentStreamParams["history"] = [];
 
   for (const message of messages.slice(0, -1).reverse()) {
+    if (superseded.has(message.id)) continue;
     if (message.role !== "user" && message.role !== "assistant") continue;
     const text = textFromMessage(message);
     const citationResult = parseCitationSearchResult(text);

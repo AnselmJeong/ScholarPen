@@ -76,7 +76,7 @@ export async function streamScholarAgent(
     if (!params.analysisMode && asksForAIScore(params.message)) {
       requestController.signal.throwIfAborted();
       const { text, scope } = detectionInputForRequest(params);
-      callbacks.onChunk("로컬 모델로 AI 작성 가능성을 계산하고 있습니다…\n\n");
+      callbacks.onChunk("DetectorScope로 구간별 점수와 원문 근거를 분석하고 있습니다…\n\n");
       // Keep the renderer stream alive while local inference is running.
       const heartbeat = setInterval(() => callbacks.onChunk(""), 15_000);
       try {

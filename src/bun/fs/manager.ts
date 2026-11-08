@@ -1,3 +1,4 @@
+import { isReviewStoragePath } from "../review/workspace";
 import { realpath, chmod, mkdir, readdir, readFile, writeFile, stat, unlink, rename, rm } from "fs/promises";
 import { join, extname, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { homedir } from "os";
@@ -26,6 +27,7 @@ import { seedAppInstructions } from "../agent/app-skills";
 import { ProjectReferenceIndex } from "./project-references";
 import { linkSelectedFigure, readLinkedFigure } from "./figure-files";
 import { bundleExportImages } from "./export-image-bundle";
+import { exportRevisionFile } from './revision-export';
 import { projectMemory } from "../memory/hindsight";
 
 // SCHOLARPEN_HOME points a development build at a scratch settings/projects root.
@@ -197,6 +199,8 @@ function isProjectDirectoryCandidate(name: string): boolean {
 const PROJECT_SKELETON_DIRECTORIES = [
   "documents",
   "drafts",
+  "reviews",
+  "revisions",
   "resources/articles",
   "resources/books",
   "figures",
@@ -226,14 +230,25 @@ class FileSystemManager {
 
   private markProjectPath(projectPath: string): string {
     const resolved = resolve(projectPath);
+    if (isReviewStoragePath(resolved)) throw new Error("리뷰 보관본은 Review & Revision 화면에서 읽기 전용으로 여세요.");
     this.allowedProjectPaths.add(resolved);
     return resolved;
   }
 
   private async assertKnownProjectPath(projectPath: string): Promise<string> {
     const resolvedProject = resolve(projectPath);
+    if (isReviewStoragePath(resolvedProject) || isReviewStoragePath(await realpath(resolvedProject))) throw new Error("Review storage cannot be opened as a live project.");
     if (this.allowedProjectPaths.has(resolvedProject)) return resolvedProject;
 
+    // Revision workspaces inherit access from their already-open parent, including external projects.
+    const revisionsDir = dirname(resolvedProject);
+    const parentProject = dirname(revisionsDir);
+    if (basename(revisionsDir) === "revisions" && this.allowedProjectPaths.has(parentProject)) {
+      if (await realpath(resolvedProject) !== join(await realpath(parentProject), "revisions", basename(resolvedProject))) throw new Error("Revision workspace alias is not allowed.");
+      const origin = JSON.parse(await readFile(join(resolvedProject, ".scholarpen/review-origin.json"), "utf-8"));
+      if (!origin.sessionId || !origin.baselineHash) throw new Error("Invalid revision workspace.");
+      this.allowedProjectPaths.add(resolvedProject); return resolvedProject;
+    }
     const rootDir = resolve(await this.getProjectsRootDir());
     const rel = relative(rootDir, resolvedProject);
     if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
@@ -246,6 +261,8 @@ class FileSystemManager {
 
   private async assertProjectFilePath(filePath: string): Promise<string> {
     const resolvedFile = resolve(filePath);
+    if (isReviewStoragePath(resolvedFile)) throw new Error("Review storage is managed by the review session engine.");
+    try { if (isReviewStoragePath(await realpath(resolvedFile))) throw new Error("Review storage alias is not allowed."); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
     for (const projectPath of this.allowedProjectPaths) {
       const rel = relative(projectPath, resolvedFile);
       if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
@@ -416,6 +433,7 @@ class FileSystemManager {
   }
 
   async openProjectByPath(projectPath: string): Promise<ProjectInfo> {
+    if (isReviewStoragePath(await realpath(projectPath))) throw new Error("Review storage cannot be opened as a live project.");
     projectPath = this.markProjectPath(projectPath);
     await this.migrateProject(projectPath);
     const info = await stat(projectPath);
@@ -904,15 +922,26 @@ class FileSystemManager {
 
   // ── Export ──────────────────────────────────────────────────
 
+  private async exportProjectPath(projectPath: string): Promise<string> {
+    if (basename(dirname(projectPath)) !== 'revisions') return projectPath;
+    const origin = JSON.parse(await readFile(join(projectPath, '.scholarpen/review-origin.json'), 'utf8'));
+    if (origin.sessionId !== basename(projectPath) || !origin.baselineHash) throw new Error('Invalid revision workspace.');
+    return this.assertKnownProjectPath(dirname(dirname(projectPath)));
+  }
+
   async getQuartoProjectDirectory(projectPath: string): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
-    return join(projectPath, "exports");
+    return join(await this.exportProjectPath(projectPath), "exports");
   }
 
   async exportFile(projectPath: string, filename: string, content: string): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
     filename = this.safeFilename(filename);
-    const exportDir = join(projectPath, "exports");
+    const destinationProject = await this.exportProjectPath(projectPath);
+    if (destinationProject !== projectPath && /\.(?:md|qmd|markdown)$/i.test(filename)) {
+      return exportRevisionFile(destinationProject, projectPath, filename, content);
+    }
+    const exportDir = join(destinationProject, "exports");
     await mkdir(exportDir, { recursive: true });
     const filePath = join(exportDir, filename);
     if (/\.(?:md|qmd|markdown)$/i.test(filename)) {
@@ -926,6 +955,7 @@ class FileSystemManager {
   /** Copies a binary resource, such as a Word template, beside the exports. */
   async exportBinaryFile(projectPath: string, filename: string, base64: string): Promise<string> {
     projectPath = await this.assertKnownProjectPath(projectPath);
+    projectPath = await this.exportProjectPath(projectPath);
     filename = this.safeFilename(filename);
     const filePath = join(projectPath, "exports", filename);
     await this.writeFileAtomically(filePath, Buffer.from(base64, "base64"));
@@ -999,14 +1029,14 @@ class FileSystemManager {
   async listProjectFiles(
     projectPath: string,
     depth = 0,
-    maxDepth = 5,
+    maxDepth = 7,
   ): Promise<FileNode[]> {
     if (depth === 0) projectPath = await this.assertKnownProjectPath(projectPath);
     if (depth > maxDepth) return [];
     const entries = await readdir(projectPath, { withFileTypes: true });
 
     // Files/folders generated by Electrobun or other internal tools
-    const IGNORE = new Set(["node_modules", "snapshots", "project.json"]);
+    const IGNORE = new Set(["node_modules", "snapshots", "project.json", "reviews"]);
 
     const nodes = await Promise.all(entries.map(async (entry): Promise<FileNode | null> => {
       if (entry.name.startsWith(".") || IGNORE.has(entry.name)) return null;

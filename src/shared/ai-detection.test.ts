@@ -1,3 +1,4 @@
+import { detectionReportFixture } from "./ai-detection.fixture";
 import { expect, test } from "bun:test";
 import { asksForAIScore, detectionInputForRequest, detectionTextFromBlocks, formatAIDetectionReport } from "./ai-detection";
 
@@ -26,11 +27,26 @@ test("full snapshot beats truncated LLM context; supplied text beats selection",
   expect(detectionInputForRequest({ message: "AI 작성 확률 계산해줘\n\nPASTED", detectionInput }).text).toBe("PASTED");
 });
 
-test("never formats raw score as authorship probability or binary verdict", () => {
-  const text = formatAIDetectionReport({ version: 1, score: 0.85, perplexity: 12, tokens: 1000, windows: 4, minScore: 0.8, maxScore: 1.1, hiddenCharacters: 2, characterCounts: {}, observer: "base", performer: "instruct" }, "선택 영역");
-  expect(text).toContain("0.8500");
-  expect(text).toContain("확률(%)이 아니며");
-  expect(text).toContain("4개 구간 전체");
-  expect(text).not.toContain("85%");
-  expect(text).not.toContain("AI 같음");
+test("shows actual threshold, signed evidence, localized source and model limitations", () => {
+  const text = formatAIDetectionReport(detectionReportFixture, "선택 영역");
+  expect(text).toContain("DetectorScope");
+  expect(text).toContain("0.4000");
+  expect(text).toContain("탐지 점수 73.1/100");
+  expect(text).toContain("기준 59.9점 · 기준보다 13.2점 높음");
+  expect(text).toContain("1개 구간 중 1개가 탐지 기준을 넘었습니다");
+  expect(text).toContain("AI 방향 +1.500");
+  expect(text).toContain("사람 방향 -0.250");
+  expect(text).toContain("**repeated phrase**");
+  expect(text).toContain("나머지 1개 특징 +0.250");
+  expect(text).toContain("실제 AI 작성 확률이나 AI가 쓴 문장의 비율이 아닙니다");
+  expect(text).toContain("한국어·학술 원고");
+  expect(text).not.toContain("Binoculars");
+});
+
+test("source excerpts cannot inject Markdown images or links", () => {
+  const report = structuredClone(detectionReportFixture);
+  report.windows[0]!.features[0]!.description = "![tracker](https://example.com) <img src=x>";
+  const text = formatAIDetectionReport(report, "본문");
+  expect(text).not.toContain("![tracker]");
+  expect(text).not.toContain("<img");
 });
