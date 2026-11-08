@@ -1,6 +1,6 @@
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
 import { NoteToolbarButton } from "../../blocks/note-toolbar-button";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   buildDoiResolverUrl,
   buildDoiCitationInsertionPlan,
@@ -76,6 +76,8 @@ import { setEditorCollab } from "../../collab/editor-collab";
 import { acceptedDocument } from "../../collab/suggestions";
 import { observeAuthorEdits } from "../../collab/author-learning";
 import { AIEditHighlightExtension, AIZoneBadgeExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
+import { createReviewStore, SuggestionReviewExtension } from "../../collab/suggestion-review";
+import { SuggestionReviewBar } from "./SuggestionReviewBar";
 import { ZONES_MAP } from "../../../shared/collab/zones";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
@@ -229,6 +231,9 @@ function CollabEditorArea({
 }: EditorAreaProps & { project: ProjectInfo; peer: CollabPeer }) {
   const isDark = useIsDark();
   const outlineVisible = useOutlineVisibility();
+  // Shared by the suggestion-review plugin and the review bar.
+  const [reviewStore] = useState(createReviewStore);
+  const reviewMode = useSyncExternalStore(reviewStore.subscribe, () => reviewStore.mode);
   const editor = useCreateBlockNote({
     schema: scholarSchema,
     collaboration: {
@@ -245,6 +250,7 @@ function CollabEditorArea({
       CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers }),
       AIEditHighlightExtension({ edits: peer.ydoc.getMap(AI_EDITS_MAP) }),
       AIZoneBadgeExtension({ zones: peer.ydoc.getMap(ZONES_MAP) }),
+      SuggestionReviewExtension({ store: reviewStore }),
       AISelectionTargetExtension(),
       AIExtension({
         transport: ollamaStatus.connected
@@ -784,6 +790,7 @@ function CollabEditorArea({
       <div className="scholar-editor-body">
       <div
         ref={scrollContainerRef}
+        data-review-mode={reviewMode}
         className="scholar-editor-scroll flex-1 min-w-0 min-h-0 overflow-y-auto"
         style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}
         onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}
@@ -900,6 +907,9 @@ function CollabEditorArea({
         scrollContainerRef={scrollContainerRef} ready={documentReady} visible={outlineVisible}
         onClose={() => { setOutlineVisible(false); onOutlineClosed(); }} />
       </div>
+
+      {/* Pending AI changes: summary, step through, keep or revert */}
+      {documentReady && <SuggestionReviewBar editor={editor} store={reviewStore} scrollContainer={scrollContainerRef.current} />}
 
       {/* Find / Replace panel — absolutely positioned in top-right of editor */}
       <FindReplacePanel

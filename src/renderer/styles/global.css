@@ -397,3 +397,141 @@ body {
 [data-revision-comparison="true"] .scholar-editor-scroll { padding-left: 12px !important; padding-right: 12px !important; }
 [data-revision-comparison="true"] .bn-editor { padding-inline: 24px !important; }
 [data-revision-comparison="true"] .editor-breadcrumb { padding-inline: 24px; }
+
+/* ── Pending AI suggestions: review view ───────────────────────────────── */
+/*
+ * Clean view (default): the paragraph reads as the AI left it. Added text has a
+ * thin underline, removed text is hidden (a short mark shows where it was) and a
+ * bar in the gutter marks each changed paragraph. The original of one change opens
+ * on click or from the review bar. Markup view keeps the classic redline.
+ */
+.bn-editor ins[data-id] {
+  background: none;
+  border-bottom: none;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.55);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+.bn-editor del[data-id] {
+  color: hsl(var(--muted-foreground) / 0.8);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: hsl(var(--muted-foreground) / 0.9);
+  cursor: pointer;
+}
+[data-review-mode="clean"] .bn-editor del[data-id] { display: none; }
+[data-review-mode="markup"] .sp-del-marker { display: none; }
+
+/* Where text was only removed. */
+.sp-del-marker {
+  display: inline-block;
+  width: 0.55em;
+  height: 1em;
+  margin: 0 1px;
+  vertical-align: -0.2em;
+  border-bottom: 1.5px solid hsl(var(--primary) / 0.6);
+  cursor: pointer;
+}
+
+/* The change being looked at. */
+.bn-editor .sp-hunk-active { background: hsl(var(--primary) / 0.14); border-radius: 2px; }
+.sp-del-marker.sp-hunk-active { background: hsl(var(--primary) / 0.2); }
+
+/* Gutter bar beside each paragraph with pending changes. */
+.bn-editor .sp-sugg-block > .bn-block > .bn-block-content,
+.bn-editor .sp-sugg-block > .bn-block-content { position: relative; }
+.bn-editor .sp-sugg-block > .bn-block > .bn-block-content::after,
+.bn-editor .sp-sugg-block > .bn-block-content::after {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 0.35em;
+  bottom: 0.35em;
+  width: 2px;
+  border-radius: 2px;
+  background: hsl(var(--primary) / 0.45);
+  pointer-events: none;
+}
+.bn-editor .sp-sugg-block-live > .bn-block > .bn-block-content::after,
+.bn-editor .sp-sugg-block-live > .bn-block-content::after {
+  width: 3px;
+  background: hsl(var(--primary) / 0.85);
+  animation: sp-gutter-pulse 0.9s ease-in-out infinite alternate;
+}
+
+/* Arrival, step 1: everything the AI removes is struck out in place … */
+[data-review-mode] .bn-editor del[data-id]:has(.sp-arrive-strike) { display: inline; }
+.bn-editor .sp-arrive-del.sp-arrive-strike {
+  background-image: linear-gradient(hsl(var(--muted-foreground) / 0.9), hsl(var(--muted-foreground) / 0.9));
+  background-repeat: no-repeat;
+  background-position: 0 58%;
+  background-size: 0% 1px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  animation: sp-strike 0.5s ease-out forwards;
+}
+.bn-editor del[data-id]:has(.sp-arrive-strike) { text-decoration: none; }
+.bn-editor ins[data-id]:has(.sp-arrive-strike) { display: none; }
+/* … step 2: the struck text goes and the new text is written in, word by word. */
+.bn-editor .sp-arrive-ins.sp-arrive-write {
+  opacity: 0;
+  animation: sp-write 0.22s ease-out forwards;
+}
+@keyframes sp-strike {
+  from { background-size: 0% 1px; color: inherit; }
+  to { background-size: 100% 1px; color: hsl(var(--muted-foreground) / 0.6); }
+}
+@keyframes sp-write {
+  from { opacity: 0; filter: blur(2px); }
+  to { opacity: 1; filter: none; }
+}
+@keyframes sp-gutter-pulse {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bn-editor .sp-arrive-ins.sp-arrive-write, .bn-editor .sp-arrive-del.sp-arrive-strike,
+  .bn-editor .sp-sugg-block-live > .bn-block > .bn-block-content::after { animation: none; opacity: 1; }
+}
+
+/* Review bar and the popover with one change's original text. */
+.sp-review-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(560px, calc(100% - 32px));
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px;
+  background: hsl(var(--popover) / 0.97);
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 10px 30px hsl(var(--foreground) / 0.12);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  animation: sp-bar-in 0.18s ease-out;
+}
+@keyframes sp-bar-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.sp-review-popover {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-left: 2px solid hsl(var(--primary) / 0.6);
+  border-radius: 8px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 8px 24px hsl(var(--foreground) / 0.12);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.sp-review-popover del {
+  color: hsl(var(--muted-foreground));
+  text-decoration: line-through;
+  text-decoration-color: hsl(var(--muted-foreground) / 0.8);
+  white-space: pre-wrap;
+}

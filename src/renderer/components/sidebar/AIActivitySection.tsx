@@ -4,7 +4,8 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
 import { AlertTriangle, Bot, Check, ChevronDown, ChevronRight, CircleDot, Clock, Pause, Play, ScanSearch, Undo2, X } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { onCollabActivity, rpc } from "../../rpc";
+import { rpc } from "../../rpc";
+import { useAgentActivity } from "../../collab/use-agent-activity";
 import { getEditorCollab } from "../../collab/editor-collab";
 import type { PendingChangeSet } from "../../collab/suggestions";
 import { decideAllChangeSets, decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
@@ -32,23 +33,6 @@ function useReviewSettings(editor: BlockNoteEditor<any, any, any>) {
     collab.ydoc.transact(() => updateReviewSettings(collab.ydoc.getMap(REVIEW_MAP), patch));
   };
   return [settings, update, progress] as const;
-}
-
-function useAgentActivity(docKey: string | null) {
-  const [activity, setActivity] = useState<AgentActivityMessage | null>(null);
-  useEffect(() => {
-    if (!docKey) return;
-    let cancelled = false;
-    setActivity(null);
-    rpc.collabAgentStatus(docKey)
-      .then((status) => { if (!cancelled && status) setActivity(status); })
-      .catch(() => undefined);
-    const off = onCollabActivity((message) => {
-      if (message.docKey === docKey) setActivity(message);
-    });
-    return () => { cancelled = true; off(); };
-  }, [docKey]);
-  return activity;
 }
 
 
