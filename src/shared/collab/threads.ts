@@ -46,8 +46,8 @@ export interface ThreadMeta {
   muted?: boolean;
   /** Text the review finding was anchored to, to notice when the author rewrote it. */
   anchorText?: string;
-  /** Retired by ScholarPen rather than the author: "stale" when edits deleted or rewrote the passage. */
-  autoResolved?: "stale";
+  /** Retired automatically, without excluding the paragraph from future substantive reviews. */
+  autoResolved?: "stale" | "obsolete-abbreviation-rule";
   /** Identity of a review finding, so a dismissed finding is not raised again. */
   fingerprint?: string;
   /** Set when the author hands the thread to the AI, so a repeated request is a new job. */

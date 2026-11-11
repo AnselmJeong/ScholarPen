@@ -24,10 +24,11 @@ test("guidance states preferred forms and avoided variants, and is empty without
 
 const check = (...texts: string[]) => checkTerminology(texts.map((text, index) => ({ blockId: `p${index + 1}`, text })), glossary);
 
-test("an abbreviation not spelled out at its first use is reported once, with the glossary form", () => {
+test("local first use is not a finding even when a glossary supplies the long form", () => {
   const findings = check("We scanned with fMRI and fMRI again.", "Later fMRI data.");
-  expect(findings).toEqual([{ blockId: "p1", quote: "fMRI", kind: "abbreviation",
-    comment: expect.stringContaining('Write "functional magnetic resonance imaging (fMRI)" here') }]);
+  expect(findings).toEqual([]);
+  expect(checkTerminology([{ blockId: "chapter2", text: "RCT와 tDCS를 이용해 결과를 분석했다." }], { entries: [] })).toEqual([]);
+  expect(glossaryGuidance(glossary)).toContain("already be introduced in another chapter");
 });
 
 test("abbreviations introduced in parentheses, common or marked well known are fine", () => {
@@ -37,8 +38,14 @@ test("abbreviations introduced in parentheses, common or marked well known are f
 });
 
 test("Korean particles attach to abbreviations; citations and math are not prose", () => {
-  expect(check("MRI를 사용했다.")[0]).toMatchObject({ quote: "MRI", kind: "abbreviation" });
+  expect(check("MRI를 사용했다.")).toEqual([]);
   expect(check("As shown [@ABC2020, p. 3] with $X_{AB}$ and @fig-PET.")).toEqual([]);
+});
+
+test("explicit terminology findings follow the manuscript language", () => {
+  const findings = check("연구에서는 functional MRI 검사를 사용하여 참가자의 반응을 측정하고 결과를 분석했다.");
+  expect(findings).toHaveLength(1);
+  expect(findings[0]).toMatchObject({ kind: "avoid", quote: "functional MRI", comment: expect.stringContaining("프로젝트 용어집") });
 });
 
 test("avoided variants are reported with the preferred term", () => {

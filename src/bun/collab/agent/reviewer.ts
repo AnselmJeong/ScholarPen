@@ -33,6 +33,8 @@ import { RESOLVED_REVIEW_BLOCKS_MAP } from "./resolved-review";
 import { StaleClaimSweeper } from "./stale-claims";
 import { DISMISSED_FINDINGS_MAP, purgeResolvedThreads } from "./resolved-purge";
 import { checkTerminology, glossaryGuidance, type Glossary } from "../../../shared/glossary";
+import { manuscriptLanguage, type ManuscriptLanguage } from "./humanize/language";
+import { retireAbbreviationNotices } from "./retired-abbreviation-notices";
 
 export interface ReviewerDeps {
   complete(messages: OllamaMessage[], signal: AbortSignal): Promise<string>;
@@ -185,7 +187,7 @@ export function locateQuote(block: BlockRef, quote: string) {
   return { from: chars[at], to: chars[at + length - 1] + 1 };
 }
 
-function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[], settings: ReviewSettings, glossary = ""): OllamaMessage[] {
+function buildReviewMessages(title: string, paragraphs: string[], context: string, allowed: ReviewCategory[], settings: ReviewSettings, glossary = "", language: ManuscriptLanguage = "undetermined"): OllamaMessage[] {
   const system =
     `You are ${SCHOLARPEN_AI.name}, reviewing a section of an academic manuscript together with its author. ` +
     "Protect the author's attention: report concrete problems, not opportunities to improve an already defensible passage. " +
@@ -198,6 +200,8 @@ function buildReviewMessages(title: string, paragraphs: string[], context: strin
     "If you cannot establish both, omit the finding. When uncertain whether a problem is serious, omit it. " +
     "Do not request more definitions, background, literature, caveats, alternative explanations, or citations merely because they would be useful. " +
     "A term not defined in this paragraph, a citation not repeated locally, or an unfamiliar theoretical interpretation is not by itself a serious error. " +
+    "The project may split one manuscript into several documents or chapters; definitions and abbreviation expansions may appear in an earlier document. " +
+    "Do not report missing abbreviation expansions or request spelling out an acronym at its first appearance in the current document or excerpt. " +
     "Respect the manuscript's genre and argumentative purpose; do not impose empirical-study reporting requirements on a conceptual or historical essay. " +
     "Check the supplied surrounding context before alleging an omission or contradiction. Context is partial: do not infer that something is absent from the whole manuscript. " +
     "Without the cited source text, do not assert that a source fails to support a claim based only on its title, date, or your memory. " +
@@ -208,7 +212,9 @@ function buildReviewMessages(title: string, paragraphs: string[], context: strin
     `Only report these enabled categories: ${allowed.join(", ")}. Do not invent categories or rename disabled issues to an enabled type. ` +
     REVIEW_CATEGORIES.filter(category => allowed.includes(category.id)).map(category => `${category.id}: ${category.description}`).join("\n") + "\n" +
     "Write each comment in the language of the manuscript, in one or two sentences, and say what to check or change. " +
-    (glossary ? `${glossary}\nA term used against this glossary is a consistency finding; undefined abbreviations are checked separately, do not report them.\n` : "") +
+    (language === "korean" ? "이 원고의 주 언어는 한국어입니다. 모든 검토 코멘트는 한국어로 작성하세요. 인용문과 전문 용어는 원문을 유지하세요. "
+      : language === "english" ? "The manuscript's main language is English; write all review comments in English. " : "") +
+    (glossary ? `${glossary}\nA term used against this glossary is a consistency finding.\n` : "") +
     AI_WRITING_STYLE + "\n\n" +
     "Return JSON only, in this shape:\n" +
     `{"findings":[{"paragraph":1,"quote":"exact words copied from that paragraph","category":"${allowed.join("|")}","severity":"low|medium|high","comment":"..."}]}\n` +
@@ -298,6 +304,7 @@ export class Reviewer {
     // Independent of automatic review: claims on passages the author rewrote no longer apply.
     // Then delete what is settled, keeping only the small ledgers review needs.
     for (const { session } of attachments) {
+      retireAbbreviationNotices(session, AI_META_ORIGIN);
       this.sweeper.sweep(session, AI_META_ORIGIN);
       purgeResolvedThreads(session, AI_META_ORIGIN, this.now());
     }
@@ -359,6 +366,7 @@ export class Reviewer {
     const allowed = enabledReviewCategories(settings);
     if (!allowed.length) return;
     let doc = readDoc(session);
+    const language = manuscriptLanguage(doc);
     const section = sectionOf(doc, key);
     if (!section) return;
     const resolved = session.ydoc.getMap<boolean>(RESOLVED_REVIEW_BLOCKS_MAP);
@@ -377,13 +385,13 @@ export class Reviewer {
     // Rule findings come from deterministic checks the author configured, so no severity threshold hides them.
     const findings: Array<ReviewFinding & { blockId: string; rule?: boolean }> = [];
     const glossary = await this.deps.glossary?.(session.projectPath).catch(() => null) ?? null;
-    if (glossary && (allowed.includes("definition") || allowed.includes("consistency"))) {
-      // First use is a whole-document property; only this section's paragraphs get comments.
+    if (glossary && allowed.includes("consistency")) {
+      // Only explicit glossary variants are checked; local first use is not an error.
       const inSection = new Set(prose.map(block => block.id));
       const all = [...iterateTop(doc)].flatMap(flatten).filter(block => hasInlineContent(block) && block.node.firstChild?.type.name !== "heading");
       for (const finding of checkTerminology(all.map(block => ({ blockId: block.id,
         text: readableText(doc, blockContent(block).from, blockContent(block).to) })), glossary)) {
-        const category = finding.kind === "abbreviation" ? "definition" : "consistency";
+        const category = "consistency";
         if (!inSection.has(finding.blockId) || !allowed.includes(category)) continue;
         findings.push({ blockId: finding.blockId, paragraph: -1, quote: finding.quote, category, severity: "medium", comment: finding.comment, rule: true });
       }
@@ -400,7 +408,9 @@ export class Reviewer {
           if (citekey && !keys.has(citekey)) {
             findings.push({
               blockId: block.id, paragraph: -1, quote: "", category: "citation", severity: "high",
-              comment: `@${citekey} is not in references.bib. Add the entry or correct the citation key.`,
+              comment: language === "korean"
+                ? `@${citekey} 항목이 references.bib에 없습니다. 참고문헌 항목을 추가하거나 인용 키를 확인해 주세요.`
+                : `@${citekey} is not in references.bib. Add the entry or correct the citation key.`,
             });
           }
           return true;
@@ -431,7 +441,7 @@ export class Reviewer {
       // The cursor marks the batch's first paragraph; the label says how much is being read.
       attachment.presence.claim(first.id, batch.length > 1 ? `reviewing ${batch.length} paragraphs` : "reviewing");
       const response = await this.deps.complete(
-        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed, settings, glossary ? glossaryGuidance(glossary) : ""), signal);
+        buildReviewMessages(sectionTitle(section), paragraphs, context, allowed, settings, glossary ? glossaryGuidance(glossary) : "", language), signal);
       if (signal.aborted) throw new Error("Cancelled");
       for (const finding of parseFindings(response, batch.length)) {
         findings.push({ ...finding, blockId: batch[finding.paragraph].id });

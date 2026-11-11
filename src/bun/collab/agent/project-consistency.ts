@@ -10,6 +10,7 @@ import type { CollabSession } from "../registry";
 import type { ProjectDocument } from "../project-documents";
 import { anchorThread, blockContent, findBlock, readDoc, readableText } from "./doc-model";
 import { locateQuote } from "./reviewer";
+import { dominantLanguage } from "../../../shared/manuscript-language";
 
 const AI_META_ORIGIN = "ai-meta";
 const DUPLICATE_MIN_WORDS = 25;
@@ -25,7 +26,9 @@ export function brokenReferences(documents: ProjectDocument[]): ConsistencyIssue
   return documents.flatMap(document => document.references.filter(reference => !labels.has(reference.label)).map(reference => ({
     id: `ref:${document.filename}:${reference.blockId}:${reference.label}`, kind: "broken-reference" as const,
     filename: document.filename, blockId: reference.blockId, quote: `@${reference.label}`,
-    comment: `@${reference.label} does not point to any figure, table, equation or section in the project. Add the label to its target or correct the reference.`,
+    comment: dominantLanguage(document.text) === "korean"
+      ? `@${reference.label}에 해당하는 그림, 표, 수식 또는 절이 프로젝트에 없습니다. 대상에 라벨을 추가하거나 참조를 확인해 주세요.`
+      : `@${reference.label} does not point to any figure, table, equation or section in the project. Add the label to its target or correct the reference.`,
   })));
 }
 
@@ -59,10 +62,14 @@ export function duplicatePassages(documents: ProjectDocument[]): ConsistencyIssu
       reported.add(`${other}`);
       // Report the later passage: the earlier one is usually where the material belongs.
       const where = peer.document.filename === item.document.filename ? "earlier in this document" : `in ${item.document.filename}`;
+      const korean = dominantLanguage(peer.document.text) === "korean";
+      const koreanWhere = peer.document.filename === item.document.filename ? "이 문서의 앞부분" : item.document.filename;
       issues.push({
         id: `dup:${peer.document.filename}:${peer.paragraph.blockId}`, kind: "duplicate",
         filename: peer.document.filename, blockId: peer.paragraph.blockId, quote: peer.paragraph.text.split(/\s+/).slice(0, 12).join(" "),
-        comment: `This paragraph repeats ${Math.round(similarity * 100)}% of a passage ${where}. Keep one version and refer to it, or say why the repetition is needed.`,
+        comment: korean
+          ? `이 문단은 ${koreanWhere}의 문단과 ${Math.round(similarity * 100)}% 유사합니다. 한쪽을 참조로 대체하거나 반복이 필요한 이유를 설명해 주세요.`
+          : `This paragraph repeats ${Math.round(similarity * 100)}% of a passage ${where}. Keep one version and refer to it, or say why the repetition is needed.`,
         related: { filename: item.document.filename, quote: item.paragraph.text.split(/\s+/).slice(0, 12).join(" ") },
       });
     }
@@ -70,7 +77,7 @@ export function duplicatePassages(documents: ProjectDocument[]): ConsistencyIssu
   return issues;
 }
 
-/** Glossary violations in every document; abbreviations are checked per document. */
+/** Explicit glossary violations across the project, without per-chapter abbreviation warnings. */
 export function terminologyIssues(documents: ProjectDocument[], glossary: Glossary): ConsistencyIssue[] {
   return documents.flatMap(document => checkTerminology(document.paragraphs.filter(paragraph => paragraph.kind !== "heading"), glossary)
     .map(finding => ({
@@ -159,12 +166,13 @@ export function postIssues(sessions: CollabSession[], issues: ConsistencyIssue[]
       if (!block) continue;
       const range = locateQuote(block, issue.quote) ?? blockContent(block);
       if (!readableText(doc, blockContent(block).from, blockContent(block).to).trim()) continue;
+      const korean = dominantLanguage(doc.textContent) === "korean";
       const text = issue.related
-        ? `${issue.comment}\n\nSee ${issue.related.filename === session.filename ? "this document" : issue.related.filename}: "${issue.related.quote}"`
+        ? `${issue.comment}\n\n${korean ? "참조" : "See"} ${issue.related.filename === session.filename ? (korean ? "이 문서" : "this document") : issue.related.filename}: "${issue.related.quote}"`
         : issue.comment;
       session.ydoc.transact(() => {
         const threadId = createThread(threads, SCHOLARPEN_AI.userId, text, {
-          agent: SCHOLARPEN_AI.id, category: issue.kind === "terminology" && issue.comment.includes("spelled out") ? "definition" : "consistency",
+          agent: SCHOLARPEN_AI.id, category: "consistency",
           severity: "medium", blockId: issue.blockId, assignee: "me", status: "open", fingerprint,
         });
         anchorThread(session, issue.blockId!, threadId, AI_META_ORIGIN, range.from, range.to);

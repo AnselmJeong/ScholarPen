@@ -89,7 +89,7 @@ function GlossaryEditor({ projectPath, suggestions }: { projectPath: string; sug
   return (
     <div>
       <p className="mb-2 text-[11px] leading-4 text-muted-foreground">
-        Binding terms for every document. AI edits use them, reviews flag avoided variants and abbreviations not spelled out at first use.
+        Shared terminology for every chapter. AI edits use these terms; reviews flag variants you explicitly avoid. Abbreviations introduced in another chapter need not be expanded again.
       </p>
       <ul className="space-y-2">
         {entries.map((entry, index) => (

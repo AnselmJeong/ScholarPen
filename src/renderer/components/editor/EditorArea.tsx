@@ -67,7 +67,7 @@ import { mergeProjectReferences, type ReferenceDocument } from "../../../shared/
 import { QuartoPropertiesDialog } from "./QuartoPropertiesDialog";
 import { EditorSideMenu } from "./EditorSideMenu";
 import { EditorOutline } from "./EditorOutline";
-import { setOutlineVisible, useOutlineVisibility } from "./outline-visibility";
+import { useOutlineVisibility } from "./outline-visibility";
 import { QuartoBlockControls } from "./QuartoBlockControls";
 import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../../collab/collab-peer";
 import { reconcileBlocks } from "../../collab/reconcile";
@@ -124,7 +124,6 @@ function buildCitationHoverMetadata(bibtex: string): Map<string, CitationHoverMe
 
 interface EditorAreaProps {
   outlineId: string;
-  onOutlineClosed: () => void;
   project: ProjectInfo | null;
   documentFilename: string | null;
   ollamaStatus: OllamaStatus;
@@ -209,7 +208,6 @@ export function EditorArea(props: EditorAreaProps) {
 function CollabEditorArea({
   peer,
   outlineId,
-  onOutlineClosed,
   project,
   documentFilename,
   ollamaStatus,
@@ -917,8 +915,7 @@ function CollabEditorArea({
       </div>
 
       <EditorOutline key={`${project.path}/${documentFilename}`} id={outlineId} editor={editor}
-        scrollContainerRef={scrollContainerRef} ready={documentReady} visible={outlineVisible}
-        onClose={() => { setOutlineVisible(false); onOutlineClosed(); }} />
+        scrollContainerRef={scrollContainerRef} ready={documentReady} visible={outlineVisible} />
       </div>
 
       {/* Pending AI changes: summary, step through, keep or revert */}

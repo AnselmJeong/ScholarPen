@@ -121,7 +121,6 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const outlineVisible = useOutlineVisibility();
     const comparing = Boolean(originalPane);
     useEffect(() => { if (comparing) setOutlineVisible(false); }, [comparing]);
-    const outlineToggleRefs = useRef<Record<PaneId, HTMLButtonElement | null>>({ left: null, right: null });
 
     // Drag-to-split state
     const [isDragging, setIsDragging] = useState(false);
@@ -571,8 +570,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
             )}
             trailingControls={activeTab?.file.kind === "document" && (
               <PaneToggle side="right" open={outlineVisible} label={outlineVisible ? "Hide outline" : "Show outline"}
-                controls={outlineIdFor(activeTab.id)} onToggle={() => setOutlineVisible(!outlineVisible)}
-                buttonRef={button => { outlineToggleRefs.current[paneId] = button; }} />
+                controls={outlineIdFor(activeTab.id)} onToggle={() => setOutlineVisible(!outlineVisible)} />
             )}
           />
 
@@ -603,7 +601,6 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                     {tab.file.kind === "document" ? (
                       <EditorArea
                         outlineId={outlineIdFor(tab.id)}
-                        onOutlineClosed={() => outlineToggleRefs.current[paneId]?.focus()}
                         project={tabProject}
                         documentFilename={tabProject ? documentRelativeFilename(tabProject.path, tab.file.path) : tab.file.name}
                         ollamaStatus={ollamaStatus}

@@ -675,6 +675,14 @@ export function FileExplorer({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <button
+            type="button"
+            onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
+            className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-primary/20 text-xs font-medium text-primary transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            New Project
+          </button>
         </div>
 
 

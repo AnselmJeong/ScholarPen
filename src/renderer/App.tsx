@@ -4,9 +4,7 @@ import { OriginalManuscriptPane } from "./components/review/OriginalManuscriptPa
 import { RevisionContextPanel, useRevisionContext } from "./components/review/RevisionContextPanel";
 import { ReviewWorkspace } from "./components/review/ReviewWorkspace";
 import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
-import { BookMarked, BookOpen, PenLine, Play, Plus, Settings } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./components/ui/dialog";
-import { Input } from "./components/ui/input";
+import { BookMarked, BookOpen, PanelRightClose, PanelRightOpen, PenLine, Play, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { LeftSidebar } from "./components/sidebar/LeftSidebar";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
@@ -115,10 +113,8 @@ export function App() {
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
   const [editorReloadTrigger, setEditorReloadTrigger] = useState(0);
   const [bibReloadTrigger, setBibReloadTrigger]       = useState(0);
-  const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
   const [reviewWorkspaceOpen, setReviewWorkspaceOpen] = useState(false);
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
   const [appSettings, setAppSettings] = useState<Pick<AppSettings, "sidebarAgentProvider" | "sidebarAgentModel" | "ollamaBaseUrl" | "webSearchEnabled">>({
     sidebarAgentProvider: "ollama",
     sidebarAgentModel: "qwen3.5:397b",
@@ -759,55 +755,20 @@ export function App() {
 
           <button disabled={!activeProject} onClick={() => { setReviewWorkspaceOpen(true); setAiSidebarOpen(false); }} className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-accent disabled:opacity-40">Review &amp; Revision</button>
           <button
-            onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
-            className="flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-semibold text-white transition-opacity hover:opacity-90"
-            style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)", boxShadow: "0 4px 12px rgba(91,33,182,0.3)" }}
+            type="button"
+            onClick={() => setAiSidebarOpen(open => !open)}
+            title={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
+            aria-label={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
+            aria-expanded={aiSidebarOpen}
+            aria-controls="ai-sidebar"
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${aiSidebarOpen ? "bg-primary/10 text-primary hover:bg-primary/15" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
           >
-            <Plus className="h-3.5 w-3.5" />
-            New Project
+            {aiSidebarOpen
+              ? <PanelRightClose className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+              : <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />}
           </button>
         </div>
       </header>
-
-      {/* New Project Dialog */}
-      <Dialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>New Project</DialogTitle>
-          </DialogHeader>
-          <div className="py-2">
-            <Input
-              placeholder="Project name..."
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newProjectName.trim()) {
-                  handleCreateProject(newProjectName.trim());
-                  setNewProjectDialogOpen(false);
-                }
-                if (e.key === "Escape") setNewProjectDialogOpen(false);
-              }}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <button
-              onClick={() => setNewProjectDialogOpen(false)}
-              className="px-3 py-1.5 text-xs rounded-md border border-border text-muted-foreground hover:bg-accent"
-            >Cancel</button>
-            <button
-              onClick={() => {
-                if (newProjectName.trim()) {
-                  handleCreateProject(newProjectName.trim());
-                  setNewProjectDialogOpen(false);
-                }
-              }}
-              className="px-3 py-1.5 text-xs rounded-md text-white font-medium"
-              style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}
-            >Create</button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* 3-pane layout */}
       <div className="flex flex-1 overflow-hidden">
@@ -931,7 +892,7 @@ export function App() {
               className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
               onMouseDown={handleAIResizeMouseDown}
             />
-            <div className="flex h-full flex-shrink-0 flex-col border-l border-border bg-background" style={{ width: rightPanelTab === "revision" ? revisionSidebarWidth : aiSidebarWidth }}>
+            <div id="ai-sidebar" className="flex h-full flex-shrink-0 flex-col border-l border-border bg-background" style={{ width: rightPanelTab === "revision" ? revisionSidebarWidth : aiSidebarWidth }}>
               <ActivityPanelHeader revisionAvailable={Boolean(isRevisionDocument)} tab={rightPanelTab} onTab={setRightPanelTab} onClose={() => setAiSidebarOpen(false)} />
               {rightPanelTab === "revision" && <RevisionContextPanel state={revisionContext} filename={revisionFilename} editor={activeEditor} onShowManuscript={() => setRevisionView("manuscript")} />}
               <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "activity" ? "flex" : "none" }}>

@@ -48,8 +48,24 @@ test("a passage repeated in another document is reported once, at the later copy
 });
 
 test("the glossary is enforced in every document", () => {
-  const issues = terminologyIssues(project(), { entries: [{ term: "magnetic resonance imaging", abbreviation: "MRI" }] });
-  expect(issues).toEqual([expect.objectContaining({ kind: "terminology", filename: "methods.scholarpen.json", blockId: "m1", quote: "MRI" })]);
+  const issues = terminologyIssues(project(), { entries: [{ term: "magnetic resonance imaging", abbreviation: "MRI", avoid: ["MRI scans"] }] });
+  expect(issues).toEqual([expect.objectContaining({ kind: "terminology", filename: "methods.scholarpen.json", blockId: "m1", quote: "MRI scans" })]);
+});
+
+test("abbreviations explained in an earlier chapter do not produce later-chapter notices", () => {
+  const documents = [
+    documentStructure("01-intro.scholarpen.json", [paragraph("i", "무작위 대조 시험(randomized controlled trial, RCT)을 설명한다.")]),
+    documentStructure("02-methods.scholarpen.json", [paragraph("m", "이 연구에서는 RCT를 수행하고 tDCS의 효과를 분석했다.")]),
+  ];
+  expect(terminologyIssues(documents, { entries: [{ term: "randomized controlled trial", abbreviation: "RCT" }] })).toEqual([]);
+});
+
+test("broken-reference notices use Korean for a Korean manuscript", () => {
+  const documents = [documentStructure("methods.scholarpen.json", [paragraph("m", "", { content: [
+    { type: "text", text: "이 연구에서 사용한 장비와 측정 방법은 다음 그림에 제시했다. " },
+    { type: "crossReference", props: { label: "fig-missing" } },
+  ] })])];
+  expect(brokenReferences(documents)[0].comment).toContain("프로젝트에 없습니다");
 });
 
 const map: ManuscriptMap = { documents: {
@@ -93,9 +109,9 @@ test("the whole check writes a report, and a failed model call is reported inste
       complete: async () => { throw new Error("model offline"); },
     });
     const report = await writing.checkConsistency(root, new AbortController().signal);
-    expect(report.issues.map(issue => issue.kind).sort()).toEqual(["broken-reference", "duplicate", "terminology"]);
+    expect(report.issues.map(issue => issue.kind).sort()).toEqual(["broken-reference", "duplicate"]);
     expect(report.skipped.join(" ")).toContain("model offline");
-    expect(JSON.parse(await readFile(join(root, ".scholarpen", "consistency-report.json"), "utf8")).issues).toHaveLength(3);
+    expect(JSON.parse(await readFile(join(root, ".scholarpen", "consistency-report.json"), "utf8")).issues).toHaveLength(2);
     expect((await writing.saveGlossary(root, { entries: [{ term: "x", abbreviation: "XY" }] })).entries).toEqual([{ term: "x", abbreviation: "XY" }]);
     expect((await writing.guide(root)).glossary.entries).toHaveLength(1);
   } finally { await rm(root, { recursive: true, force: true }); }

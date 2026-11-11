@@ -870,7 +870,55 @@ test("glossary rules are posted regardless of the severity threshold and reach t
   await idle();
   expect(String(prompts[0][0].content)).toContain("PROJECT GLOSSARY");
   const posted = threads(session);
-  expect(posted.map(thread => [thread.meta.category, thread.meta.severity]).sort()).toEqual([["consistency", "medium"], ["definition", "medium"]]);
+  expect(posted.map(thread => [thread.meta.category, thread.meta.severity]).sort()).toEqual([["consistency", "medium"]]);
   expect(posted.find(thread => thread.meta.category === "consistency")!.comments[0].text).toContain('instead of "functional MRI"');
-  expect(posted.find(thread => thread.meta.category === "definition")!.comments[0].text).toContain("BOLD is used here for the first time");
+  expect(posted.some(thread => thread.meta.category === "definition")).toBe(false);
+});
+
+test("Korean manuscripts get Korean rule notices and an explicit review language instruction", async () => {
+  const blocks = [
+    { id: "h1", type: "heading", props: { level: 1 }, content: "연구 방법" },
+    { id: "p1", type: "paragraph", content: [
+      { type: "text", text: "이 연구에서는 참가자의 반응을 측정하고 결과를 분석했다. 이전 연구의 결과도 함께 비교했다. ", styles: {} },
+      { type: "citation", props: { citekey: "ghost2019", locator: "" } },
+    ] },
+  ];
+  const { session, prompts } = await setup(findings([]), undefined, blocks);
+  reviewer.reviewSection(session.docKey, "p1");
+  await idle();
+  expect(threads(session)[0].comments[0].text).toContain("참고문헌 항목을 추가하거나");
+  const system = String(prompts[0][0].content);
+  expect(system).toContain("모든 검토 코멘트는 한국어");
+  expect(system).toContain("earlier document");
+  expect(system).toContain("Do not report missing abbreviation expansions");
+});
+
+test("obsolete automatic abbreviation notices retire without retiring the paragraph or touching discussions", async () => {
+  const clock = { now: Date.now() };
+  const { session } = await setup(findings([]), clock);
+  session.ydoc.getMap(REVIEW_MAP).set("autoReview", false);
+  const map = session.ydoc.getMap(COLLAB_THREADS_MAP);
+  const notice = "RCT is used here for the first time without being spelled out. Spell it out at its first use, or add it to the project glossary as a common abbreviation.";
+  const make = (suffix: string, text = notice, patch = {}) => {
+    const id = createThread(map, AI_USER_ID, text, { agent: AI_USER_ID, category: "definition", blockId: "p1",
+      status: "open", assignee: "me", fingerprint: `rule:${suffix}`, ...patch });
+    anchorThread(session, "p1", id, "test");
+    return id;
+  };
+  const obsolete = make("obsolete");
+  const glossary = make("glossary", 'MRI is used here for the first time without being spelled out. Write "magnetic resonance imaging (MRI)" here, as the project glossary defines it.');
+  const discussion = make("discussion");
+  addThreadComment(map, discussion, "me", "Keep this discussion.");
+  const proposed = make("proposed", notice, { changeSet: 1 });
+  const substantive = make("meaning", "RCT means different things in these two passages.");
+  reviewer.tick();
+  expect(threads(session).find(thread => thread.id === obsolete)?.meta.autoResolved).toBe("obsolete-abbreviation-rule");
+  expect(threads(session).find(thread => thread.id === glossary)?.resolved).toBe(true);
+  for (const id of [discussion, proposed, substantive]) expect(threads(session).find(thread => thread.id === id)?.resolved).toBe(false);
+  clock.now += 60_000;
+  reviewer.tick();
+  expect(map.has(obsolete)).toBe(false);
+  expect(map.has(glossary)).toBe(false);
+  expect(threadRange(readDoc(session), obsolete)).toBeNull();
+  expect(session.ydoc.getMap("resolvedReviewBlocks").has("p1")).toBe(false);
 });

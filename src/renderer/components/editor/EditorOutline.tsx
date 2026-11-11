@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ChevronDown, ChevronRight, ListTree, PanelRightClose } from "lucide-react";
+import { ChevronDown, ChevronRight, ListTree } from "lucide-react";
 import type { scholarSchema } from "../../blocks/schema";
 import {
   buildDocumentOutline, visibleActiveHeading, visibleOutlineHeadings,
@@ -12,7 +12,6 @@ interface EditorOutlineProps {
   id: string;
   ready: boolean;
   visible: boolean;
-  onClose: () => void;
 }
 
 function sameHeadings(left: OutlineHeading[], right: OutlineHeading[]) {
@@ -23,7 +22,7 @@ function sameHeadings(left: OutlineHeading[], right: OutlineHeading[]) {
   });
 }
 
-export function EditorOutline({ editor, scrollContainerRef, id, ready, visible, onClose }: EditorOutlineProps) {
+export function EditorOutline({ editor, scrollContainerRef, id, ready, visible }: EditorOutlineProps) {
   const [headings, setHeadings] = useState<OutlineHeading[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -126,8 +125,6 @@ export function EditorOutline({ editor, scrollContainerRef, id, ready, visible, 
     <div className="editor-outline-header">
       <ListTree size={13} aria-hidden="true" />
       <span>Outline</span>
-      <button type="button" className="editor-outline-icon-button" onClick={onClose}
-        title="Hide outline" aria-label="Hide outline"><PanelRightClose size={13} aria-hidden="true" /></button>
     </div>
     <div ref={listRef} className="editor-outline-scroll">
       {!ready ? <p className="editor-outline-empty">Loading outline…</p>
