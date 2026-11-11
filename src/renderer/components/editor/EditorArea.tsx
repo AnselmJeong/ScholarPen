@@ -22,16 +22,15 @@ import {
   UnnestBlockButton,
   CreateLinkButton,
   AddCommentButton,
-  FloatingThreadController,
 } from "@blocknote/react";
 import { CommentsExtension } from "@blocknote/core/comments";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
-import { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, ScholarFloatingThread, startCommentAtCursor } from "../../collab/comment-composer";
+import { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, startCommentAtCursor } from "../../collab/comment-composer";
 import { CommentFileMentionsProvider } from "../../collab/comment-file-mentions";
 import { AIToolbarButton, AIMenuController } from "@blocknote/xl-ai";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { Sparkles } from "lucide-react";
+import { MessageSquare, Sparkles } from "lucide-react";
 import { rpc } from "../../rpc";
 import type { OllamaStatus, ProjectInfo } from "../../../shared/rpc-types";
 import { FigureDocumentContext } from "../../blocks/figure-image";
@@ -78,6 +77,7 @@ import { observeAuthorEdits } from "../../collab/author-learning";
 import { AIEditHighlightExtension, AIZoneBadgeExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
 import { createReviewStore, SuggestionReviewExtension } from "../../collab/suggestion-review";
 import { SuggestionReviewBar } from "./SuggestionReviewBar";
+import { ReviewMargin, type MarginPresentation } from "./ReviewMargin";
 import { ZONES_MAP } from "../../../shared/collab/zones";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
@@ -287,6 +287,11 @@ function CollabEditorArea({
     setFindOpen(true);
   }, [navigationRequest, documentReady]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const reviewCanvasRef = useRef<HTMLDivElement>(null);
+  const [marginVisible, setMarginVisible] = useState(true);
+  const [marginPresentation, setMarginPresentation] = useState<MarginPresentation>({ count: 0, wide: false });
+  const marginLayout = marginVisible && marginPresentation.count > 0
+    ? marginPresentation.wide ? "wide" : "compact" : "none";
   const hasRestoredScrollRef = useRef(false);
   const initialScrollTopRef = useRef(initialScrollTop);
   const onWordCountChangeRef = useRef(onWordCountChange);
@@ -784,6 +789,11 @@ function CollabEditorArea({
             <span className="min-w-0 truncate">{documentFilename.replace(".scholarpen.json", "")}</span>
           </>
         )}
+        {marginPresentation.count > 0 && <button type="button" className="sp-margin-toggle"
+          aria-pressed={marginVisible} onClick={() => setMarginVisible(value => !value)}
+          title={marginVisible ? "Hide margin comments and edits" : "Show margin comments and edits"}>
+          <MessageSquare size={13} /> Notes & edits <span>{marginPresentation.count}</span>
+        </button>}
       </div>
       {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={`${project.path}/${documentFilename}/${propertiesBlockId}`}
         editor={editor} blockId={propertiesBlockId} onClose={() => setPropertiesBlockId(null)} />}
@@ -791,12 +801,13 @@ function CollabEditorArea({
       <div
         ref={scrollContainerRef}
         data-review-mode={reviewMode}
+        data-margin-layout={marginLayout}
         className="scholar-editor-scroll flex-1 min-w-0 min-h-0 overflow-y-auto"
         style={{ background: "hsl(var(--background))", paddingLeft: "2.5rem", paddingRight: "2.5rem", paddingTop: "1.5rem", paddingBottom: "4rem" }}
         onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}
       >
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
-        <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+        <div ref={reviewCanvasRef} className="sp-review-canvas" data-margin-layout={marginLayout}>
           <QuartoBlockControls editor={editor} enabled={documentReady} onOpen={setPropertiesBlockId}>
           <BlockNoteView
             editor={editor}
@@ -810,7 +821,9 @@ function CollabEditorArea({
             <EditorSideMenu onOpenProperties={setPropertiesBlockId} />
             <CommentFileMentionsProvider key={project.path} projectPath={project.path}>
               <ScholarFloatingComposerController />
-              <FloatingThreadController floatingThread={ScholarFloatingThread} />
+              {documentReady && <ReviewMargin editor={editor} peer={peer} store={reviewStore}
+                canvasRef={reviewCanvasRef} scrollRef={scrollContainerRef} visible={marginVisible}
+                onPresentationChange={setMarginPresentation} />}
             </CommentFileMentionsProvider>
             <AIMenuController />
             <SuggestionMenuController
@@ -909,7 +922,8 @@ function CollabEditorArea({
       </div>
 
       {/* Pending AI changes: summary, step through, keep or revert */}
-      {documentReady && <SuggestionReviewBar editor={editor} store={reviewStore} scrollContainer={scrollContainerRef.current} />}
+      {documentReady && <SuggestionReviewBar editor={editor} store={reviewStore} scrollContainer={scrollContainerRef.current}
+        showPopover={marginLayout !== "wide"} />}
 
       {/* Find / Replace panel — absolutely positioned in top-right of editor */}
       <FindReplacePanel

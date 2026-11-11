@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { ChevronLeft, ChevronRight, Eye, EyeOff, X } from "lucide-react";
 import { getEditorCollab } from "../../collab/editor-collab";
@@ -6,6 +7,7 @@ import { decideAllChangeSets, decideChangeSet } from "../../collab/use-change-se
 import { useAgentActivity } from "../../collab/use-agent-activity";
 import type { ReviewStore } from "../../collab/suggestion-review";
 import type { SuggestionHunk } from "../../collab/suggestion-hunks";
+import { hunkDecisionRange } from "../../collab/margin-review-layout";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../../shared/collab/change-sets";
 import { REVISIONS_MAP, type RevisionEntry } from "../../../shared/collab/revision-log";
 
@@ -52,11 +54,6 @@ function useBlockNoteAIMenuOpen(editor: BlockNoteEditor<any, any, any>) {
   return open;
 }
 
-function rangeFor(hunk: SuggestionHunk) {
-  // Suggestion commands take nodes that start inside [from, to].
-  return { from: hunk.from, to: Math.max(hunk.from, hunk.to - 1) };
-}
-
 /** The part of a change that is on screen: removed text is hidden in the clean view. */
 function visibleRange(hunk: SuggestionHunk) {
   const first = hunk.insertions[0];
@@ -79,10 +76,11 @@ function scrollToHunk(editor: BlockNoteEditor<any, any, any>, hunk: SuggestionHu
  * what the AI did, how many changes, step through them, keep or revert all.
  * While the AI is working it shows what it is doing instead.
  */
-export function SuggestionReviewBar({ editor, store, scrollContainer }: {
+export function SuggestionReviewBar({ editor, store, scrollContainer, showPopover = true }: {
   editor: BlockNoteEditor<any, any, any>;
   store: ReviewStore;
   scrollContainer: HTMLElement | null;
+  showPopover?: boolean;
 }) {
   useStore(store);
   const { hunks, active, mode, arriving } = store;
@@ -118,7 +116,9 @@ export function SuggestionReviewBar({ editor, store, scrollContainer }: {
     const from = store.active !== null && store.active < count ? store.active : null;
     const next = from === null ? (step > 0 ? 0 : count - 1) : (from + step + count) % count;
     store.set({ active: next, open: true });
-    scrollToHunk(editor, store.hunks[next]);
+    // Wide layouts reveal the packed margin card; competing source scrolling
+    // could move that card off screen again while its smooth scroll is running.
+    if (showPopover) scrollToHunk(editor, store.hunks[next]);
   };
 
   if (!count) {
@@ -181,9 +181,9 @@ export function SuggestionReviewBar({ editor, store, scrollContainer }: {
           </button>
         </div>
       </div>
-      {store.open && current && (
+      {showPopover && store.open && current && (
         <HunkPopover key={`${index}-${current.from}`} editor={editor} hunk={current} scrollContainer={scrollContainer}
-          onDecide={(accept) => decideChangeSet(editor, current.id, accept, rangeFor(current))}
+          onDecide={(accept) => decideChangeSet(editor, current.id, accept, hunkDecisionRange(current))}
           onClose={() => store.set({ open: false })} />
       )}
     </>
@@ -209,10 +209,10 @@ function HunkPopover({ editor, hunk, scrollContainer, onDecide, onClose }: {
         const end = view.coordsAtPos(visible.to, -1);
         const bounds = scrollContainer?.getBoundingClientRect();
         const bottom = Math.max(start.bottom, end.bottom);
-        const width = 300;
+        const width = Math.min(300, (bounds?.width ?? window.innerWidth) - 16);
         const left = Math.min(Math.max(start.left - 10, (bounds?.left ?? 0) + 8), (bounds?.right ?? window.innerWidth) - width - 8);
         const hidden = bounds && (bottom < bounds.top || start.top > bounds.bottom);
-        setPosition(hidden ? null : { top: bottom + 6, left });
+        setPosition(hidden ? null : { top: Math.max((bounds?.top ?? 0) + 8, Math.min(bottom + 6, (bounds?.bottom ?? window.innerHeight) - 200)), left });
       } catch {
         setPosition(null);
       }
@@ -229,7 +229,7 @@ function HunkPopover({ editor, hunk, scrollContainer, onDecide, onClose }: {
 
   if (!position) return null;
   const deleted = hunk.deleted.trim();
-  return (
+  return createPortal(
     <div className="sp-review-popover" style={position} role="dialog" aria-label="AI change">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 max-h-40 overflow-y-auto">
@@ -245,6 +245,6 @@ function HunkPopover({ editor, hunk, scrollContainer, onDecide, onClose }: {
         <button type="button" className="font-medium hover:underline" onClick={() => onDecide(true)}>Keep</button>
         <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => onDecide(false)}>Revert</button>
       </div>
-    </div>
+    </div>, document.body,
   );
 }

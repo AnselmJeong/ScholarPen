@@ -535,3 +535,123 @@ body {
   text-decoration-color: hsl(var(--muted-foreground) / 0.8);
   white-space: pre-wrap;
 }
+
+/* Manuscript review: semantic ink, shared numbers, and anchored margin notes. */
+:root {
+  --review-edit: 151 48% 30%;
+  --review-comment: 38 82% 31%;
+  --review-deletion: 350 44% 39%;
+}
+.dark {
+  --review-edit: 151 42% 68%;
+  --review-comment: 40 78% 69%;
+  --review-deletion: 350 65% 78%;
+}
+.sp-review-canvas { position: relative; max-width: 800px; margin-inline: auto; }
+.scholar-editor-scroll[data-margin-layout="wide"] { padding-inline: 20px !important; }
+.sp-review-canvas[data-margin-layout="wide"] { max-width: 1140px; padding-right: 280px; }
+.sp-review-canvas[data-margin-layout="compact"] { padding-right: 38px; }
+.sp-review-canvas[data-margin-layout="wide"] > .quarto-block-controls-host > .bn-container > .bn-editor {
+  padding-left: 36px; padding-right: 16px;
+}
+.sp-review-margin {
+  position: absolute; inset: 0 0 auto; pointer-events: none;
+  color: hsl(var(--foreground)); font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px; line-height: 1.55;
+}
+.sp-margin-leaders { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.sp-margin-leaders path { fill: none; stroke: hsl(var(--review-edit) / 0.45); stroke-width: 1; }
+.sp-margin-leaders path[data-kind="comment"] { stroke: hsl(var(--review-comment) / 0.5); }
+.sp-margin-leaders path[data-active="true"] { stroke-width: 1.8; stroke-opacity: 1; }
+.sp-margin-card {
+  position: absolute; right: 0; width: 248px; padding: 10px;
+  border: 1px solid hsl(var(--border)); border-radius: 12px;
+  background: hsl(var(--card)); pointer-events: auto;
+  --annotation-ink: var(--review-edit);
+}
+.sp-margin-card[data-kind="comment"] {
+  --annotation-ink: var(--review-comment);
+  background: color-mix(in srgb, hsl(var(--review-comment)) 5%, hsl(var(--card)));
+  border-color: hsl(var(--review-comment) / 0.22);
+}
+.sp-margin-card[data-active="true"] { border-color: hsl(var(--annotation-ink) / 0.7); }
+.sp-margin-card-header { display: flex; align-items: center; gap: 4px; margin-bottom: 7px; }
+.sp-margin-title { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; text-align: left; }
+.sp-margin-title > span:not(.sp-margin-number) { white-space: nowrap; }
+.sp-margin-title, .sp-margin-link { color: hsl(var(--foreground) / 0.78); font-size: 11px; }
+.sp-margin-title:hover, .sp-margin-link:hover { color: hsl(var(--annotation-ink)); }
+.sp-margin-number, .sp-margin-pin {
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 19px; height: 19px; border-radius: 50%; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+  background: hsl(var(--annotation-ink)); color: hsl(var(--card));
+}
+.sp-margin-action {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%;
+  border: 1px solid hsl(var(--border)); color: hsl(var(--annotation-ink));
+}
+.sp-margin-action:hover { background: hsl(var(--annotation-ink) / 0.1); }
+.sp-margin-action[aria-label^="Reject"] { color: hsl(var(--foreground) / 0.7); }
+.sp-margin-excerpt { max-height: 176px; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.sp-margin-excerpt del, .sp-margin-excerpt ins { padding: 1px 3px; border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sp-margin-excerpt del { background: hsl(var(--review-deletion) / 0.1); text-decoration-color: hsl(var(--review-deletion)); }
+.sp-margin-excerpt ins { background: hsl(var(--review-edit) / 0.1); text-decoration: none; }
+.sp-margin-detail { color: hsl(var(--foreground) / 0.7); font-size: 11px; }
+.sp-margin-card > .sp-margin-detail { margin-top: 6px; }
+.sp-margin-comment { display: block; text-align: left; width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 156px; overflow-y: auto; }
+.sp-margin-link { display: flex; align-items: center; gap: 5px; padding-block: 5px 0; margin-top: 5px; }
+.sp-margin-thread { max-height: 360px; overflow-y: auto; overflow-wrap: anywhere; }
+.sp-margin-thread .bn-thread { width: 100%; min-width: 0; border: 0; box-shadow: none; background: transparent; }
+.sp-margin-thread .bn-comment { padding: 6px 0; }
+.sp-margin-thread .bn-comment-body, .sp-margin-thread .bn-comment-editor { min-width: 0; }
+.sp-margin-thread .bn-editor { padding: 6px !important; background: transparent !important; }
+.sp-margin-thread .bn-editor :is(.bn-block-content, p) { font-family: inherit; font-size: 12px; line-height: 1.6; }
+.sp-margin-pin {
+  --annotation-ink: var(--review-edit); position: absolute; right: 0; width: 26px; height: 26px; pointer-events: auto;
+  border: 1px solid hsl(var(--annotation-ink) / 0.35); background: hsl(var(--card)); color: hsl(var(--annotation-ink));
+}
+.sp-margin-pin[data-kind="comment"] { --annotation-ink: var(--review-comment); }
+.sp-margin-pin:hover, .sp-margin-pin[data-active="true"] { background: hsl(var(--annotation-ink)); color: hsl(var(--card)); }
+.sp-margin-tail { position: absolute; right: 0; width: 1px; height: 32px; }
+.sp-margin-toggle { margin-left: auto; display: flex; align-items: center; gap: 5px; flex-shrink: 0; border-radius: 5px; padding: 4px 6px; }
+.sp-margin-toggle[aria-pressed="true"] { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.07); }
+.sp-margin-toggle:hover { background: hsl(var(--primary) / 0.12); }
+.sp-margin-toggle span { font-variant-numeric: tabular-nums; }
+:is(.sp-review-margin, .sp-review-bar, .sp-review-popover) button:focus-visible, .sp-margin-toggle:focus-visible {
+  outline: 2px solid hsl(var(--ring)); outline-offset: 3px;
+}
+/* Preserve the prose's typography while distinguishing a comment from a revision. */
+.bn-editor ins[data-id] { text-decoration-color: hsl(var(--review-edit) / 0.8); text-decoration-style: dotted; text-decoration-thickness: 2px; }
+.bn-editor .sp-hunk-active { background: hsl(var(--review-edit) / 0.13); }
+.sp-del-marker { border-color: hsl(var(--review-edit)); }
+.bn-editor .bn-thread-mark:not([data-orphan]) {
+  background: hsl(var(--review-comment) / 0.09); border-bottom: 1px solid hsl(var(--review-comment) / 0.65);
+  cursor: pointer;
+}
+.bn-editor .bn-thread-mark-selected { background: hsl(var(--review-comment) / 0.2) !important; }
+.bn-editor .sp-sugg-block > .bn-block > .bn-block-content::after,
+.bn-editor .sp-sugg-block > .bn-block-content::after { background: hsl(var(--review-edit) / 0.5); }
+.sp-review-bar > .flex:last-child { flex-wrap: wrap; }
+.sp-review-popover { width: min(300px, calc(100vw - 32px)); max-height: 190px; overflow-y: auto; }
+.sp-margin-anchor {
+  --annotation-ink: var(--review-edit); position: absolute; pointer-events: auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 19px; height: 19px; padding-inline: 3px; border-radius: 50%;
+  font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: hsl(var(--annotation-ink)); background: hsl(var(--background));
+  border: 1px solid hsl(var(--annotation-ink) / 0.35);
+}
+.sp-margin-anchor[data-kind="comment"] { --annotation-ink: var(--review-comment); }
+.sp-margin-anchor:hover, .sp-margin-anchor[data-active="true"] { background: hsl(var(--annotation-ink)); color: hsl(var(--card)); }
+.sp-margin-number { min-width: 19px; width: auto; padding-inline: 4px; }
+.sp-review-margin.bn-container { background: transparent !important; }
+.sp-margin-thread .bn-comment-header { flex-wrap: wrap; gap: 4px; }
+.sp-persistent-thread { position: fixed; z-index: 55; pointer-events: auto; }
+.sp-persistent-thread[data-floating="true"] {
+  padding: 10px; border: 1px solid hsl(var(--border)); border-radius: 12px;
+  background: hsl(var(--popover)); color: hsl(var(--popover-foreground));
+}
+.sp-thread-floating-header:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.sp-persistent-thread .sp-margin-thread { max-height: min(360px, 45vh); }
+.sp-persistent-thread.bn-container { background: transparent !important; }
+.sp-persistent-thread.bn-container[data-floating="true"] { background: hsl(var(--popover)) !important; }
