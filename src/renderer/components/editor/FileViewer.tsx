@@ -1,3 +1,4 @@
+import { useExtensionEnabled } from "../../extensions/state";
 import React, { Suspense, lazy, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,7 +13,7 @@ import { rpc } from "../../rpc";
 import type { FileNode } from "../../../shared/rpc-types";
 import { parseFrontmatter } from "../../utils/frontmatter";
 import { FrontmatterCard } from "./FrontmatterCard";
-import { BibtexEditor } from "./BibtexEditor";
+import { BibtexEditor } from "../../../plugins/bibliography/ui/BibtexEditor";
 import { TextFindPanel } from "./TextFindPanel";
 import { useTextFind } from "../../hooks/useTextFind";
 
@@ -56,6 +57,7 @@ export function FileViewer({
   onBibtexSaved,
   onBeforeBibliographyMaintenance,
 }: FileViewerProps) {
+  const bibliographyEnabled = useExtensionEnabled("scholarpen.bibliography");
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -172,7 +174,7 @@ export function FileViewer({
     );
   }
 
-  if (isBibtex) {
+  if (isBibtex && bibliographyEnabled) {
     return (
       <BibtexEditor
         file={file}
@@ -228,6 +230,7 @@ export function FileViewer({
         )}
       </div>
 
+      {isBibtex && !bibliographyEnabled && <p className="px-6 py-2 text-xs text-muted-foreground">Bibliography is disabled. Showing the original file read-only.</p>}
       {/* Content */}
       <div ref={contentRef} className="flex-1 overflow-y-auto">
         {isMarkdown && (
@@ -253,7 +256,7 @@ export function FileViewer({
           </div>
         )}
 
-        {!isMarkdown && !isBibtex && !isCode && (
+        {!isMarkdown && (!isBibtex || !bibliographyEnabled) && !isCode && (
           <div className="max-w-4xl mx-auto px-4 py-4 bg-muted/50 border border-border rounded-lg m-4">
             <div className="overflow-x-auto">
               <pre className="text-xs font-mono whitespace-pre text-foreground">{content}</pre>

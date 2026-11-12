@@ -1,7 +1,7 @@
 import React from "react";
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AIDetectionResult } from "./AIDetectionResult";
+import { AIDetectionResult } from "../../../plugins/ai-writing-score/ui/AIDetectionResult";
 import { formatAIDetectionReport } from "../../../shared/ai-detection";
 import { detectionReportFixture } from "../../../shared/ai-detection.fixture";
 

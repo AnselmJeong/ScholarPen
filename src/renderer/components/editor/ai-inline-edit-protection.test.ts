@@ -43,6 +43,21 @@ function makeProtectedSelection(selectedText = "원문 인용 강조") {
   return protectSelectionSlice(slice, selectedText, "testselection");
 }
 
+test("protected apply uses the request's captured punctuation policy without changing citations or formatting", () => {
+  const selection = makeProtectedSelection();
+  selection.punctuation = { emDash: "allow", semicolon: "allow" };
+  const rewritten = selection.protectedText.replace("원문 ", "Revised — text; ");
+  const restored = restoreProtectedSelection(schema, selection, rewritten);
+  expect(restored.content.textBetween(0, restored.content.size)).toContain("Revised — text;");
+  const serialized = JSON.stringify(restored.toJSON());
+  expect(serialized).toContain("kim2025"); expect(serialized).toContain('"bold"');
+  expect(buildInlineEditMessages("Improve", selection).system).toContain('emDash="allow" semicolon="allow"');
+  selection.punctuation = { emDash: "avoid", semicolon: "avoid" };
+  const corrected = restoreProtectedSelection(schema, selection, rewritten);
+  expect(corrected.content.textBetween(0, corrected.content.size)).not.toContain("—");
+  expect(corrected.content.textBetween(0, corrected.content.size)).not.toContain(";");
+});
+
 describe("AI inline edit protection", () => {
   test("preserves cross-reference targets through an AI text rewrite", () => {
     const paragraph = schema.nodes.paragraph.create(null, [schema.text("See "), schema.nodes.crossReference.create({ label: "eq-steady-state" })]);

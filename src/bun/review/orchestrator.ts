@@ -15,7 +15,7 @@ import { applyPatches, savePatchedDocuments, validateCommentIds, validateRespons
 import { finalize } from "./export";
 import { SYSTEM, PLAN_SCHEMA, RESPONSE_SCHEMA, ASSESS_SCHEMA, REVIEW_PROMPT_VERSION } from "./prompts";
 import { REVIEW_CALL_TIMEOUT_MS, type LiveReviewOutput } from "./progress";
-export interface ReviewModelRequest { provider: "codex" | "anthropic"; model: string; stage: string; system: string; prompt: string; images: AgentImage[]; signal: AbortSignal; onOutput?: (characters: number) => void }
+export interface ReviewModelRequest { provider: "codex" | "anthropic"; model: string; stage: string; language?: string; system: string; prompt: string; images: AgentImage[]; signal: AbortSignal; onOutput?: (characters: number) => void }
 export interface ReviewProviders {
   check(input: ReviewInput): Promise<{ codex: string; anthropic: string }>;
   complete(request: ReviewModelRequest): Promise<string>;
@@ -103,7 +103,7 @@ export class ReviewEngine {
       const activity: LiveReviewOutput = { stage, startedAt: new Date().toISOString(), receivedCharacters: 0 };
       this.output.set(s.id, activity);
       try {
-        output = await this.providers.complete({ ...config, stage, system: SYSTEM, prompt: requestPrompt, images,
+        output = await this.providers.complete({ ...config, stage, language: s.input.language, system: SYSTEM, prompt: requestPrompt, images,
           signal: AbortSignal.any([signal, AbortSignal.timeout(REVIEW_CALL_TIMEOUT_MS)]),
           onOutput: characters => { if (!signal.aborted && this.output.get(s.id) === activity) { activity.receivedCharacters = characters; activity.lastOutputAt = new Date().toISOString(); } },
         });

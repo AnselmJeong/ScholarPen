@@ -1,3 +1,5 @@
+import type { PunctuationPolicy, WritingPreferences } from "./writing-preferences";
+import type { ExtensionInfo, ExtensionRequest } from "./extensions/contracts";
 import type { AIDetectorStatus } from "./ai-detector-setup";
 import type { RevisionChapterContext, RevisionResponseSave } from "./review-session/chapter-context";
 import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport } from "./review-session/types";
@@ -43,6 +45,10 @@ import type {
 // Requests Bun handles (Webview → Bun)
 type BunRequests = RPCSchema<{
   requests: {
+    extensionsList: { params: void; response: ExtensionInfo[] };
+    extensionsInvoke: { params: ExtensionRequest; response: unknown };
+    extensionsSetEnabled: { params: { id: string; enabled: boolean }; response: ExtensionInfo[] };
+    extensionsCancel: { params: { requestId: string }; response: void };
     reviewSaveRevisionResponse: { params: RevisionResponseSave; response: string };
     reviewRevisionContext: { params: { projectPath: string; filename: string }; response: RevisionChapterContext | null };
     reviewConfirmSnapshot: { params: { projectPath: string; filename: string; savedDocument: unknown; fingerprint: string }; response: void };
@@ -126,12 +132,15 @@ type BunRequests = RPCSchema<{
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
     searchCitations: { params: { query: string }; response: CitationMetadata[] };
+    getWritingPreferences: { params: void; response: WritingPreferences };
+    saveWritingPreferences: { params: { expectedRevision: number; punctuation: PunctuationPolicy }; response: WritingPreferences };
     generateTextStream: {
       params: {
         model: string;
         messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
         think?: boolean;
         projectPath?: string;
+        punctuation?: PunctuationPolicy;
       };
       response: void;
     };

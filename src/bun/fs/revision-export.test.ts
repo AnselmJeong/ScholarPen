@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, realpath, symlink } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileSystem } from './manager';
-import { prepareQuartoBookImages } from '../quarto/prepare-images';
+import { prepareQuartoBookImages } from '../../plugins/quarto/main/prepare-images';
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });

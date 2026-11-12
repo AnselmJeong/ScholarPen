@@ -1,7 +1,7 @@
 import type { AgentStreamParams, AppSettings } from "../../shared/rpc-types";
 import { evidencePaperKey, type CitationSearchResult } from "../../shared/citation-evidence";
-import { citationClient } from "../citation/client";
-import { searchPaperclipEvidence } from "../citation/paperclip";
+import { citationClient } from "../../plugins/bibliography/main/client";
+import { searchPaperclipEvidence } from "../../plugins/bibliography/main/paperclip";
 import { createCitationClaims } from "./citation-claims";
 
 export async function findCitationEvidence(

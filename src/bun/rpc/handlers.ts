@@ -5,7 +5,7 @@ import type {
   OllamaStatus,
 } from "../../shared/rpc-types";
 import { ollamaClient } from "../ollama/client";
-import { citationClient } from "../citation/client";
+import { citationClient } from "../../plugins/bibliography/main/client";
 import { fileSystem } from "../fs/manager";
 
 export const rpcHandlers = {

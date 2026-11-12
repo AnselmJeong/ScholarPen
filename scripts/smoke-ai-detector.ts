@@ -1,5 +1,5 @@
 /** Real offline integration check. Can be bundled and run outside the checkout. */
-import { analyzeAIText } from "../src/bun/ai-detector/service";
+import { analyzeAIText } from "../src/plugins/ai-writing-score/main/service";
 import { formatAIDetectionReport } from "../src/shared/ai-detection";
 
 const passage = "We measured samples on three different days. The first measurement was higher than the second, but the difference was small. Further experiments will be needed to establish whether this pattern is reproducible across laboratories. ";

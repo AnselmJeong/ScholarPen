@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { detectorHome } from "../src/bun/ai-detector/runtime";
-import config from "../src/bun/ai-detector/python/detector_config.json";
+import { detectorHome } from "../src/plugins/ai-writing-score/main/runtime";
+import config from "../src/plugins/ai-writing-score/main/python/detector_config.json";
 
 const uv = Bun.which("uv");
 if (!uv) throw new Error("Install uv first: https://docs.astral.sh/uv/getting-started/installation/");
@@ -17,7 +17,7 @@ async function run(cmd: string[]) {
   if (await proc.exited !== 0) throw new Error(`Setup failed: ${cmd[0]}`);
 }
 if (!(await Bun.file(python).exists())) await run([uv, "venv", "--python", "3.12", venv]);
-await run([uv, "pip", "sync", "--require-hashes", "--python", python, join(import.meta.dir, "../src/bun/ai-detector/python/requirements.lock")]);
+await run([uv, "pip", "sync", "--require-hashes", "--python", python, join(import.meta.dir, "../src/plugins/ai-writing-score/main/python/requirements.lock")]);
 console.log("Downloading DetectorScope (Gemma 2 2B + SAE features; several GB). Manuscript text is never uploaded.");
 await run([python, "-c", `import json, sys
 from huggingface_hub import snapshot_download
@@ -26,7 +26,7 @@ snapshot_download(config["model"], revision=config["revision"])
 print("ScholarPen DetectorScope models downloaded.")
 `, JSON.stringify(config)]);
 // Verify the actual offline adapter, including model loading and highlights.
-const worker = join(import.meta.dir, "../src/bun/ai-detector/python/worker.py");
+const worker = join(import.meta.dir, "../src/plugins/ai-writing-score/main/python/worker.py");
 const proc = Bun.spawn([python, worker], {
   stdin: "pipe", stdout: "inherit", stderr: "inherit",
   env: { ...process.env, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_HUB_DISABLE_TELEMETRY: "1" },

@@ -61,7 +61,6 @@ interface EditorPaneGroupProps {
   bibReloadTrigger: number;
   onActiveFileChange: (file: FileNode | null, docFilename: string | null) => void;
   onActiveEditorChange: (editor: BlockNoteEditor<any, any, any> | null) => void;
-  onWordCountChange: (count: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
   onBibtexSaved: () => void;
   onDeepenAnalysis: (
@@ -103,7 +102,6 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
       bibReloadTrigger,
       onActiveFileChange,
       onActiveEditorChange,
-      onWordCountChange,
       onSaveStatusChange,
       onBibtexSaved,
       onDeepenAnalysis,
@@ -607,9 +605,6 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
                         initialScrollTop={scrollPositionMapRef.current.get(tab.id) ?? 0}
                         reloadTrigger={reloadTrigger}
                         bibReloadTrigger={bibReloadTrigger}
-                        onWordCountChange={(count) => {
-                          if (isCurrentActiveTab(tab.id)) onWordCountChange(count);
-                        }}
                         onEditorReady={(editor) => {
                           if (editor) {
                             editorMapRef.current.set(tab.id, editor);

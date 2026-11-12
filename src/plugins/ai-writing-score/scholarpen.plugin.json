@@ -1,0 +1,53 @@
+{
+  "manifestVersion": 1,
+  "id": "scholarpen.ai-writing-score",
+  "name": "AI Writing Score",
+  "description": "DetectorScope 설치와 로컬 작성 가능성 분석",
+  "version": "1.0.0",
+  "apiVersion": "0.1.0",
+  "dataSchemaVersion": 1,
+  "permissions": [
+    "document.read",
+    "process.tool"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "scholarpen.ai-writing-score.getAIDetectorStatus",
+        "title": "getAIDetectorStatus",
+        "legacyMethod": "getAIDetectorStatus",
+        "input": {
+          "type": "null"
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.ai-writing-score.installAIDetector",
+        "title": "installAIDetector",
+        "legacyMethod": "installAIDetector",
+        "input": {
+          "type": "null"
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.ai-writing-score.cancelAIDetectorInstall",
+        "title": "cancelAIDetectorInstall",
+        "legacyMethod": "cancelAIDetectorInstall",
+        "input": {
+          "type": "null"
+        },
+        "output": {
+          "type": "object"
+        }
+      }
+    ],
+    "slots": [
+      "settings"
+    ]
+  }
+}

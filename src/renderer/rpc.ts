@@ -1,3 +1,6 @@
+import type { PunctuationPolicy, WritingPreferences } from "../shared/writing-preferences";
+import { bundledManifests, legacyExtensionCommands } from "../shared/extensions/catalog.generated";
+import type { ExtensionInfo, ExtensionRequest } from "../shared/extensions/contracts";
 import type { AIDetectorStatus } from "../shared/ai-detector-setup";
 import type { RevisionChapterContext, RevisionResponseSave } from "../shared/review-session/chapter-context";
 import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport } from "../shared/review-session/types";
@@ -55,6 +58,8 @@ type BibliographyValidationProgressHandler = (progress: BibliographyValidationPr
 type CollabMessageHandler = (message: CollabUpdateMessage) => void;
 
 const strictRpcMethods = new Set([
+  "getWritingPreferences", "saveWritingPreferences", "extensionsList", "extensionsInvoke", "extensionsSetEnabled", "extensionsCancel",
+  ...Object.keys(legacyExtensionCommands),
   "getAIDetectorStatus", "installAIDetector", "cancelAIDetectorInstall",
   "reviewConfirmSnapshot",
   "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
@@ -371,11 +376,14 @@ function mockRpc(method: string, _args: unknown[]): unknown {
 
 async function call<T>(method: string, params?: unknown): Promise<T> {
   try {
-    if (!electrobun) throw new Error("이 기능은 ScholarPen 데스크톱 앱에서 사용할 수 있습니다.");
+    if (!electrobun?.rpc) throw new Error("이 기능은 ScholarPen 데스크톱 앱에서 사용할 수 있습니다.");
     // Use Electrobun's request proxy: electrobun?.rpc.request.methodName(params)
     // Note: void-returning methods legitimately resolve to undefined — do NOT
     // treat undefined as an error here.
-    const result = await (electrobun?.rpc as any)?.request?.[method](params);
+    const command = legacyExtensionCommands[method];
+    const result = command
+      ? await electrobun.rpc.request.extensionsInvoke({ protocolVersion: 1, requestId: crypto.randomUUID(), operation: command, args: params })
+      : await (electrobun?.rpc as any)?.request?.[method](params);
     return result as T;
   } catch (err) {
     if (strictRpcMethods.has(method)) {
@@ -387,7 +395,21 @@ async function call<T>(method: string, params?: unknown): Promise<T> {
   }
 }
 
+const previewExtensions: ExtensionInfo[] = bundledManifests.map(manifest => ({ manifest, enabled: true, state: "inactive", running: 0 }));
+
 export const rpc = {
+  getWritingPreferences: () => call<WritingPreferences>("getWritingPreferences"),
+  saveWritingPreferences: (expectedRevision: number, punctuation: PunctuationPolicy) => call<WritingPreferences>("saveWritingPreferences", { expectedRevision, punctuation }),
+  extensionsList: () => electrobun ? call<ExtensionInfo[]>("extensionsList") : Promise.resolve(previewExtensions.slice()),
+  extensionsInvoke: (request: ExtensionRequest) => call<unknown>("extensionsInvoke", request),
+  extensionsCancel: (requestId: string) => call<void>("extensionsCancel", { requestId }),
+  extensionsSetEnabled: (id: string, enabled: boolean): Promise<ExtensionInfo[]> => {
+    if (electrobun) return call<ExtensionInfo[]>("extensionsSetEnabled", { id, enabled });
+    const index = previewExtensions.findIndex(e => e.manifest.id === id);
+    if (index < 0) return Promise.reject(new Error("Unknown extension"));
+    previewExtensions[index] = { ...previewExtensions[index]!, enabled, state: enabled ? "inactive" : "disabled" };
+    return Promise.resolve(previewExtensions.slice());
+  },
   getProjectMemoryStatus: (projectPath: string) => call<ProjectMemoryStatus>("getProjectMemoryStatus", { projectPath }),
   getAuthorLearning: (projectPath: string) => call<AuthorLearningView>("getAuthorLearning", { projectPath }),
   dismissAuthorPreference: (projectPath: string, id: string) => call<AuthorLearningView>("dismissAuthorPreference", { projectPath, id }),
@@ -570,8 +592,9 @@ export const rpc = {
     model: string,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     think?: boolean,
-    projectPath?: string
-  ) => call<void>("generateTextStream", { model, messages, think, projectPath }),
+    projectPath?: string,
+    punctuation?: PunctuationPolicy
+  ) => call<void>("generateTextStream", { model, messages, think, projectPath, punctuation }),
   abortAiStream: () => call<void>("abortAiStream"),
   startOllamaOpenAIProxy: (requestId: string, body: string, projectPath?: string) =>
     call<OllamaProxyResponse>("startOllamaOpenAIProxy", { requestId, body, projectPath }),

@@ -1,3 +1,4 @@
+import { composeWritingContext } from "../ai/context-composer";
 import { ensureEditableRevision } from "./editable-copy";
 import { join, extname } from "node:path";
 import { mkdir, readFile, lstat, realpath } from "node:fs/promises";
@@ -27,7 +28,7 @@ export async function reviewEngine(projectPath: string) {
         if (!(await codexClient.models()).some(m => m.id === input.reviewerModel) || !(await claudeClient.models()).includes(input.reviserModel)) throw new Error("선택 모델을 구독 연결에서 사용할 수 없습니다. 모델을 바꾸려면 새 세션을 시작해 주세요.");
         return { codex: codex.cliVersion ?? "unknown", anthropic: claude.cliVersion ?? "unknown" };
       },
-      async complete(r) { return completeAgentModel({ provider: r.provider, model: r.model, messages: [{ role: "system", content: r.system }, { role: "user", content: r.prompt, images: r.images }], signal: r.signal, onOutput: r.onOutput }, await fileSystem.getSettings()); },
+      async complete(r) { return completeAgentModel({ provider: r.provider, model: r.model, messages: await composeWritingContext([{ role: "system", content: r.system }, { role: "user", content: r.prompt, images: r.images }], project, { purpose: r.stage.startsWith("responses-") ? "author-response" : r.stage.startsWith("plan-") ? "rewrite" : "review-evaluate", language: r.language, model: r.model }), signal: r.signal, onOutput: r.onOutput }, await fileSystem.getSettings()); },
     }); engines.set(project, engine);
   }
   return engine;

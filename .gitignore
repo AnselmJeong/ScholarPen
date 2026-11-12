@@ -9,3 +9,8 @@ artifacts/
 
 # Synthetic review-session smoke fixtures and provider outputs
 .review-smoke/
+
+# Local Python caches from the pre-plugin DetectorScope layout
+src/bun/ai-detector/python/__pycache__/
+src/bun/ai-detector/python/**/__pycache__/
+src/bun/ai-detector/python/**/*.pyc

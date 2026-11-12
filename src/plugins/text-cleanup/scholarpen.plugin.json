@@ -1,0 +1,34 @@
+{
+  "manifestVersion": 1,
+  "id": "scholarpen.text-cleanup",
+  "name": "Text Cleanup",
+  "description": "숨은 문자 정리와 언어별 Humanize",
+  "version": "1.0.0",
+  "apiVersion": "0.1.0",
+  "dataSchemaVersion": 1,
+  "permissions": [
+    "document.read",
+    "document.propose",
+    "ai.request"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "scholarpen.text-cleanup.inspect",
+        "title": "Inspect hidden characters",
+        "input": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      }
+    ],
+    "slots": []
+  }
+}

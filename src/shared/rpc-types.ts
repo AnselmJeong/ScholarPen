@@ -1,3 +1,4 @@
+import type { PunctuationPolicy } from "./writing-preferences";
 // Shared RPC type definitions between Main process and Webview
 
 import type { BibtexParseIssue } from "./bibtex-utils";
@@ -266,6 +267,7 @@ export interface AgentStreamParams {
   thinkingLevel?: AgentThinkingLevel;
   analysisMode?: "deepen" | "validate" | "find-citation" | "check-citations";
   deepenContext?: {
+    punctuation?: PunctuationPolicy;
     selectedText: string;
     protectedText: string;
     beforeSelection: string;

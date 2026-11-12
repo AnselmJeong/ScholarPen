@@ -1,0 +1,116 @@
+{
+  "manifestVersion": 1,
+  "id": "scholarpen.author-style",
+  "name": "Author Style",
+  "description": "내 글과 편집 근거로 만드는 언어·프로젝트별 문체 프로필",
+  "version": "1.2.0",
+  "apiVersion": "0.1.0",
+  "dataSchemaVersion": 1,
+  "permissions": [
+    "preferences.read",
+    "preferences.write",
+    "ai.request"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "scholarpen.author-style.getAuthorLearning",
+        "title": "getAuthorLearning",
+        "legacyMethod": "getAuthorLearning",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.author-style.dismissAuthorPreference",
+        "title": "dismissAuthorPreference",
+        "legacyMethod": "dismissAuthorPreference",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.author-style.profile",
+        "title": "내 문체 프로필",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string",
+              "enum": [
+                "view",
+                "create",
+                "update",
+                "delete",
+                "select",
+                "configure",
+                "addSample",
+                "forgetEvidence",
+                "analyze",
+                "export",
+                "import",
+                "restore",
+                "compare",
+                "observe",
+                "publishPersonal",
+                "setDefaults",
+                "linkPersonal",
+                "useDefaults"
+              ]
+            },
+            "expectedRevision": {
+              "type": "number",
+              "optional": true
+            },
+            "profileId": {
+              "type": "string",
+              "optional": true
+            },
+            "payload": {
+              "type": "object",
+              "optional": true
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "project",
+                "personal"
+              ],
+              "optional": true
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      }
+    ],
+    "slots": [
+      "project",
+      "settings",
+      "status"
+    ]
+  }
+}

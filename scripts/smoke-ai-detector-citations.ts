@@ -1,5 +1,5 @@
 /** Real model check: citekey content/length must not affect inference or highlights. */
-import { analyzeAIText } from "../src/bun/ai-detector/service";
+import { analyzeAIText } from "../src/plugins/ai-writing-score/main/service";
 import { bracketedRanges, formatAIDetectionReport } from "../src/shared/ai-detection";
 const paragraph = "The diagnostic categories changed over time [CITATION]. Kraepelin described several patterns of illness, but later authors questioned whether these patterns represented distinct diseases. We reviewed the historical descriptions alongside recent clinical observations. The available evidence does not establish a single biological boundary between these groups. ";
 const texts = ["@pichot1995the", "@dunner1976depressive; @mason2016historical; @ghaemi2002cades"]

@@ -150,7 +150,7 @@ function flatten(nodes: FileNode[]): FileNode[] {
 /** The default sources for a session: the project's files on disk, CrossRef and OpenAlex. */
 export async function projectBulkSources(session: CollabSession): Promise<BulkSources> {
   const [{ fileSystem }, { citationClient }, { getProjectSourceIndex }] = await Promise.all([
-    import("../../fs/manager"), import("../../citation/client"), import("../../project-sources"),
+    import("../../fs/manager"), import("../../../plugins/bibliography/main/client"), import("../../project-sources"),
   ]);
   const { projectPath } = session;
   const projectRelative = (path: string) => relative(projectPath, path).split(sep).join("/");

@@ -9,7 +9,7 @@ const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(g
 for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
-const { AIDetectorSetup } = await import("./AIDetectorSetup");
+const { AIDetectorSetup } = await import("../../../plugins/ai-writing-score/ui/AIDetectorSetup");
 const status = spyOn(rpc, "getAIDetectorStatus");
 const install = spyOn(rpc, "installAIDetector");
 const cancel = spyOn(rpc, "cancelAIDetectorInstall");

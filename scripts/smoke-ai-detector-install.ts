@@ -1,6 +1,6 @@
 /** Run with SCHOLARPEN_DETECTOR_HOME set to an empty directory and PATH restricted. */
-import { detectorInstaller } from "../src/bun/ai-detector/installer";
-import { detectorActivity, detectorHome } from "../src/bun/ai-detector/runtime";
+import { detectorInstaller } from "../src/plugins/ai-writing-score/main/installer";
+import { detectorActivity, detectorHome } from "../src/plugins/ai-writing-score/main/runtime";
 const cancel = process.argv.includes("--cancel");
 const initial = await detectorInstaller.getStatus();
 console.log(JSON.stringify({ initial, home: detectorHome }));

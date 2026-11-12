@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "crypto";
 import { mkdir, readFile, rename, writeFile, stat } from "fs/promises";
 import { join } from "path";
 import type { ProjectMemoryService } from "./hindsight";
-import { collectMemorySources } from "./sources";
-import type { AuthorLearning } from "./learning";
+import { collectMemorySources, type MemorySource } from "./sources";
+
 
 interface SyncedSource { hash: string; operationId: string; state: "processing" | "completed" | "failed" }
 interface SyncState { version: 1; bankId: string; sources: Record<string, SyncedSource> }
@@ -16,7 +16,7 @@ export class ProjectMemorySync {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private generation = 0;
   private errors = new Map<string, string>();
-  constructor(private client: ProjectMemoryService, private learning?: AuthorLearning) {}
+  constructor(private client: ProjectMemoryService, private sources: (path: string) => Promise<MemorySource[]> = collectMemorySources) {}
 
   error(path: string) { return this.errors.get(path); }
 
@@ -53,11 +53,11 @@ export class ProjectMemorySync {
   private async run(path: string) {
     if (!(await stat(path)).isDirectory()) throw new Error("프로젝트 폴더를 찾을 수 없습니다.");
     // Complete the scan before changing remote data. A read error must never look like source deletion.
-    const sources = await collectMemorySources(path);
-    if (this.learning) {
-      await this.learning.refresh(path).catch(error => console.warn("[Hindsight] Preference learning:", String(error)));
-      const guidance = await this.learning.guidance(path);
-      if (guidance) sources.push({ key: "author-preferences", content: guidance, context: "Inferred author editing preferences supported by repeated observations; current instructions take precedence." });
+    const sources = await this.sources(path);
+    // An empty private-style source set must not provision a remote bank for a new project.
+    if (!sources.length) {
+      try { await stat(join(path, ".scholarpen/hindsight-sync.json")); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
     }
     const bankId = await this.client.bankForProject(path);
     const dir = join(path, ".scholarpen");

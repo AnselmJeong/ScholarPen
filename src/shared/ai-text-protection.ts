@@ -1,3 +1,4 @@
+import { DEFAULT_PUNCTUATION, punctuationGuidance, type PunctuationPolicy } from "./writing-preferences";
 import { Slice, type Node as ProseMirrorNode, type Schema } from "prosemirror-model";
 import { AI_WRITING_STYLE } from "./ai-writing-style";
 import { editableSegments } from "./ai-text-segments";
@@ -26,6 +27,7 @@ type ProtectionMarker =
 
 export interface ProtectedSelection {
   namespace: string;
+  punctuation?: PunctuationPolicy;
   slice: SerializedSlice;
   protectedText: string;
   sourceLanguage: SourceLanguage;
@@ -55,13 +57,14 @@ const PROTECTED_LITERAL_PATTERN =
 
 /** Literal markup/code spans whose bytes must survive text-only cleanup. */
 export function protectedLiteralRanges(text: string) {
-  return [...text.matchAll(PROTECTED_LITERAL_PATTERN)].map(match => ({ from: match.index!, to: match.index! + match[0].length }));
+  return [...text.matchAll(PROTECTED_LITERAL_PATTERN), ...text.matchAll(/https?:\/\/[^\s<>]+/gu),
+    ...text.matchAll(/```[\s\S]*?```|~~~[\s\S]*?~~~/g)].map(match => ({ from: match.index!, to: match.index! + match[0].length }));
 }
 
 // Em dash, or a spaced en dash or double hyphen used as one. Unspaced en dashes are ranges.
 const DASH = /[ \t]*(?:—|(?<=\s)(?:–|--)(?=\s))[ \t]*/g;
 const CONTROL_MARKER = /⟦SP:[^⟧]*⟧/g;
-const QUOTED = /"[^"\n]*"|“[^”\n]*”/g;
+const QUOTED = /"[^"\n]*"|“[^”\n]*”|‘[^’\n]*’|(?<!\p{L})'[^'\n]+'(?!\p{L})/gu;
 const CONTINUES_CLAUSE = /^(?:but|and|or|nor|yet|so|while|whereas|although|though|because|since|which|who|whose|where|when|that|not|including|especially|particularly|i\.e\.|e\.g\.|그러나|하지만|그리고|또는|즉|특히|곧)(?![\p{L}])/iu;
 
 /**
@@ -70,7 +73,8 @@ const CONTINUES_CLAUSE = /^(?:but|and|or|nor|yet|so|while|whereas|although|thoug
  * single one a comma or colon, and a semicolon a full stop (a comma in a list).
  * Control markers, literal markup, quotations and parenthesised citation lists are kept.
  */
-export function removeDiscouragedPunctuation(text: string) {
+export function removeDiscouragedPunctuation(text: string, policy: PunctuationPolicy = DEFAULT_PUNCTUATION) {
+  if (policy.emDash === "allow" && policy.semicolon === "allow") return text;
   const skipped = [
     ...[...text.matchAll(CONTROL_MARKER)].map(match => ({ from: match.index!, to: match.index! + match[0].length })),
     ...protectedLiteralRanges(text),
@@ -104,7 +108,7 @@ export function removeDiscouragedPunctuation(text: string) {
   };
   const edits: Array<{ from: number; to: number; insert: string }> = [];
 
-  const dashes = [...text.matchAll(DASH)].filter(match => {
+  const dashes = (policy.emDash === "avoid" ? [...text.matchAll(DASH)] : []).filter(match => {
     const at = match.index! + match[0].search(/\S/);
     return !isSkipped(at);
   });
@@ -129,7 +133,7 @@ export function removeDiscouragedPunctuation(text: string) {
   }
 
   // Also at the end of a text node, where a control marker follows.
-  for (const match of text.matchAll(/[;；](?=(?:⟦SP:[^⟧]*⟧)*(?:\s|$))/g)) {
+  for (const match of (policy.semicolon === "avoid" ? text.matchAll(/[;；](?=(?:⟦SP:[^⟧]*⟧)*(?:\s|$))/g) : [])) {
     const at = match.index!;
     if (isSkipped(at) || depth[at] > 0 || /&#?\w+$/.test(text.slice(0, at))) continue;
     const spaces = text.slice(at + 1).match(/^[ \t]*/)![0];
@@ -329,7 +333,7 @@ export function buildInlineEditMessages(
     "Compare the selected passage with the complete document and notice internal contradictions, inconsistent terminology, scope, or claims. If the intended resolution is clear from the document, align the selected passage with it. If it is not clear, make the tension or uncertainty explicit in the wording rather than inventing a resolution. " +
     "Do not introduce new facts, evidence, quotations, citations, references, causal claims, or conclusions. Do not add a citation that is not already present. " +
     workflowInstructions +
-    " " + AI_WRITING_STYLE + " " + INLINE_EDIT_TRANSPORT;
+    " " + (selection.punctuation ? punctuationGuidance(selection.punctuation) : AI_WRITING_STYLE) + " " + INLINE_EDIT_TRANSPORT;
 
   const beforeSelection = documentContext?.beforeSelection ?? "";
   const afterSelection = documentContext?.afterSelection ?? "";
@@ -440,7 +444,7 @@ export function restoreProtectedSelection(
   response: string
 ) {
   // Every AI rewrite lands here (inline edits, Deepen, Validate, comment threads, humanize).
-  const rewrittenText = parseProtectedRewrite(removeDiscouragedPunctuation(response), selection);
+  const rewrittenText = parseProtectedRewrite(removeDiscouragedPunctuation(response, selection.punctuation), selection);
   const rewrittenSlice: SerializedSlice = {
     ...selection.slice,
     content: replaceSerializedText(selection.slice.content, rewrittenText),

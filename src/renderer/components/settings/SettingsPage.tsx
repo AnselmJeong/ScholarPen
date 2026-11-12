@@ -1,4 +1,6 @@
-import { AIDetectorSetup } from "./AIDetectorSetup";
+import { WritingPreferencesPanel } from "./WritingPreferencesPanel";
+import { ExtensionSettings } from "../../extensions/ExtensionSettings";
+import { ExtensionSlot } from "../../extensions/slots";
 import { ClaudeConnection } from "./ClaudeConnection";
 import React, { useState, useEffect, useCallback } from "react";
 import { ArrowLeft, Folder, Bot, BookOpen, RefreshCw, Sun } from "lucide-react";
@@ -268,7 +270,9 @@ export function SettingsPage({ ollamaStatus, onClose, onSettingsSaved }: Setting
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-8 py-8 space-y-8">
 
-          <AIDetectorSetup />
+          <WritingPreferencesPanel />
+              <ExtensionSettings />
+          <ExtensionSlot name="settings" />
 
           {/* AI section */}
           <SettingSection icon={Bot} title="AI">

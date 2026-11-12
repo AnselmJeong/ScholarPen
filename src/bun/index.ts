@@ -1,4 +1,8 @@
-import { detectorInstaller } from "./ai-detector/installer";
+import { writingPreferences, preparePunctuationMessages } from "./ai/writing-preferences";
+import { detectStyleLanguage } from "../shared/author-style";
+import { readDoc } from "./collab/agent/doc-model";
+import { initializeExtensions, shutdownExtensions } from "./extensions/runtime";
+import { createLegacyExtensionHandlers } from "./extensions/catalog.generated";
 import { exportReviewManuscripts } from "./review/manuscript-export";
 import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, exportReview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
 import { claudeClient } from "./claude/client";
@@ -10,12 +14,14 @@ import { watch, type FSWatcher } from "fs";
 import { join } from "path";
 import packageJson from "../../package.json";
 import { ollamaClient } from "./ollama/client";
-import { citationClient } from "./citation/client";
 import { BIBLIOGRAPHY_RELATIVE_PATH, fileSystem } from "./fs/manager";
 import { listAgentSkills } from "./agent/skill-registry";
 import { listAgentMentionableFiles } from "./agent/mention-resolver";
 import { streamScholarAgent } from "./agent/service";
-import { authorLearning, projectMemorySync } from "./memory/runtime";
+import { projectMemorySync } from "./memory/runtime";
+import { authorStyleScheduler } from "./extensions/author-style";
+import { composeWritingContext, styleContext } from "./ai/context-composer";
+import { createExtensionServices } from "./extensions/services";
 import { listProviderModels } from "./agent/providers";
 import { codexClient } from "./codex/client";
 import { getAgentThreadStore } from "./agent/thread-store";
@@ -23,13 +29,6 @@ import { getProjectSourceIndex, isProjectSourceDigestPath } from "./project-sour
 import { getCitationSourceIndex, isCitationSourcePdfPath } from "./citation-check/source-index";
 import { citationPdfCoverage } from "./citation-check/coverage";
 import { openOllamaChatCompletion, pipeResponseText } from "./ollama/openai-proxy";
-import { cleanValidateAndApplyBibliography } from "./citation/bibliography-maintenance";
-import { renderQuartoBookProject } from "./quarto/render";
-import { discoverQuartoExtensionFormats } from "./quarto/extensions";
-import {
-  proposeBibliographyRepair,
-  validateBibliographyRepair,
-} from "./citation/bibliography-repair";
 import type { BibliographyValidationProgress } from "../shared/rpc-types";
 import type { ScholarRPC } from "../shared/scholar-rpc";
 import { figureMimeType } from "../shared/figure-files";
@@ -47,7 +46,6 @@ import { enqueueDraft, zoneEditMode } from "./collab/agent/zones";
 import { parseBibtexCitekeys } from "../shared/bibtex-utils";
 import { completeAgentModel } from "./agent/providers";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
-
 
 function buildSubprocessEnv(): Record<string, string> {
   const currentPath = process.env.PATH ?? "";
@@ -112,8 +110,8 @@ const projectWriting = new ProjectWriting(collabRegistry, {
 
 // The AI co-author: a Bun-side peer that answers comment threads with edits…
 const collabAgent = new CollabAgent(collabRegistry, {
-  projectGuide: async (session) => ({ ...await projectWriting.guide(session.projectPath),
-    preferences: await authorLearning.guidance(session.projectPath).catch(() => "") }),
+  projectGuide: async (session, purpose = "rewrite") => ({ ...await projectWriting.guide(session.projectPath),
+    preferences: (await styleContext(session.projectPath, { purpose, language: detectStyleLanguage(readDoc(session).textContent), model: (await fileSystem.getSettings()).sidebarAgentModel })).text }),
   complete: completeWithSettings,
   completeBulk: (messages, signal) => completeWithSettings(messages, signal, 16384),
   onActivity: (docKey) => sendCollabActivity?.(collabAgentStatus(docKey)),
@@ -174,6 +172,7 @@ const internallyUpdatingProjects = new Set<string>();
 
 function watchProjectDir(projectPath: string) {
   projectMemorySync.start(projectPath);
+  authorStyleScheduler.start(projectPath);
   // Extract and index cited PDFs in the background, after the project has opened.
   getCitationSourceIndex(projectPath).scheduleScan(3_000);
   activeProjectWatcher?.close();
@@ -207,6 +206,10 @@ function watchProjectDir(projectPath: string) {
 }
 
 async function main() {
+  const extensions = await initializeExtensions(createExtensionServices({ fileSystem, recentlySavedFiles, internallyUpdatingProjects,
+    sendProjectUpdated: payload => sendProjectUpdated?.(payload),
+    sendBibliographyValidationProgress: payload => sendBibliographyValidationProgress?.(payload),
+    buildSubprocessEnv }));
   const url = await getMainViewUrl();
 
   // ── Application Menu ───────────────────────────────────────────
@@ -250,6 +253,11 @@ async function main() {
     maxRequestTime: 600_000,
     handlers: {
       requests: {
+        ...createLegacyExtensionHandlers(extensions),
+        extensionsList: () => extensions.list(),
+        extensionsInvoke: request => extensions.invoke(request),
+        extensionsSetEnabled: request => extensions.setEnabled(request.id, request.enabled),
+        extensionsCancel: ({ requestId }) => extensions.cancel(requestId),
         reviewExportManuscripts: async (request) => exportReviewManuscripts((await reviewEngine(request.projectPath)).store, request),
         reviewManuscript,
         reviewRevisionContext,
@@ -289,9 +297,7 @@ async function main() {
         reviewFigurePreview,
         reviewExport: exportReview,
         reviewExportResponses: exportReviewResponses,
-        getAIDetectorStatus: () => detectorInstaller.getStatus(),
-        installAIDetector: () => detectorInstaller.start(),
-        cancelAIDetectorInstall: () => detectorInstaller.cancel(),
+
         getOllamaStatus: () => ollamaClient.getStatus(),
 
         confirmAction: async ({
@@ -314,12 +320,7 @@ async function main() {
 
         listProjects: () => fileSystem.listProjects(),
         getProjectMemoryStatus: ({ projectPath }) => fileSystem.getProjectMemoryStatus(projectPath),
-        getAuthorLearning: async ({ projectPath }) => {
-          const path = await fileSystem.resolveProjectPath(projectPath);
-          const view = await authorLearning.view(path);
-          return { ...view, error: view.error || projectMemorySync.error(path) };
-        },
-        dismissAuthorPreference: async ({ projectPath, id }) => authorLearning.dismiss(await fileSystem.resolveProjectPath(projectPath), id),
+
         retainProjectMemory: ({ projectPath, content, source }) => fileSystem.retainProjectMemory(projectPath, content, source),
         recallProjectMemory: ({ projectPath, query }) => fileSystem.recallProjectMemory(projectPath, query),
         getProjectMemoryOperation: ({ projectPath, operationId }) => fileSystem.getProjectMemoryOperation(projectPath, operationId),
@@ -395,160 +396,17 @@ async function main() {
         loadManuscript: ({ projectPath }) =>
           fileSystem.loadManuscript(projectPath),
 
-        saveBibtex: async ({ projectPath, bibtex }) => {
-          // Suppress file watcher to avoid triggering a document reload
-          recentlySavedFiles.add(BIBLIOGRAPHY_RELATIVE_PATH);
-          recentlySavedFiles.add("references.bib");
-          setTimeout(() => {
-            recentlySavedFiles.delete(BIBLIOGRAPHY_RELATIVE_PATH);
-            recentlySavedFiles.delete("references.bib");
-          }, 3000);
-          await fileSystem.saveBibtex(projectPath, bibtex);
-          sendProjectUpdated?.({
-            projectPath,
-            filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-          });
-        },
-
-        saveBibtexRaw: async ({ projectPath, bibtex }) => {
-          recentlySavedFiles.add(BIBLIOGRAPHY_RELATIVE_PATH);
-          recentlySavedFiles.add("references.bib");
-          setTimeout(() => {
-            recentlySavedFiles.delete(BIBLIOGRAPHY_RELATIVE_PATH);
-            recentlySavedFiles.delete("references.bib");
-          }, 3000);
-          await fileSystem.saveBibtexRaw(projectPath, bibtex);
-          sendProjectUpdated?.({
-            projectPath,
-            filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-          });
-        },
-
-        saveBibtexValidated: async ({ projectPath, bibtex, expectedCurrentBibtex }) => {
-          recentlySavedFiles.add(BIBLIOGRAPHY_RELATIVE_PATH);
-          recentlySavedFiles.add("references.bib");
-          setTimeout(() => {
-            recentlySavedFiles.delete(BIBLIOGRAPHY_RELATIVE_PATH);
-            recentlySavedFiles.delete("references.bib");
-          }, 3000);
-          await fileSystem.saveBibtexValidated(projectPath, bibtex, expectedCurrentBibtex);
-          sendProjectUpdated?.({
-            projectPath,
-            filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-          });
-        },
-
-        loadBibtex: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
-
-        mergeBibtex: async ({ projectPath, importedBibtex }) => {
-          internallyUpdatingProjects.add(projectPath);
-          try {
-            const result = await fileSystem.mergeBibtex(projectPath, importedBibtex);
-            if (result.addedEntries > 0) {
-              sendProjectUpdated?.({
-                projectPath,
-                filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-              });
-            }
-            return result;
-          } finally {
-            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
-          }
-        },
-
-        proposeBibliographyRepair: async ({ projectPath, bibtex, mode }) => {
-          await fileSystem.loadBibtex(projectPath);
-          const settings = await fileSystem.getSettings();
-          return proposeBibliographyRepair(bibtex, mode, settings);
-        },
-
-        applyBibliographyRepair: async ({ projectPath, originalBibtex, repairedBibtex }) => {
-          validateBibliographyRepair(originalBibtex, repairedBibtex);
-          internallyUpdatingProjects.add(projectPath);
-          try {
-            const backupPath = await fileSystem.saveBibliographyMaintenance(
-              projectPath,
-              repairedBibtex,
-              "bibliography-syntax-repair",
-              originalBibtex,
-            );
-            sendProjectUpdated?.({
-              projectPath,
-              filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-            });
-            return backupPath;
-          } finally {
-            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
-          }
-        },
-
-        deduplicateBibliography: async ({ projectPath, bibtex }) => {
-          internallyUpdatingProjects.add(projectPath);
-          try {
-            const result = await fileSystem.deduplicateBibliography(projectPath, bibtex);
-            if (result.removedEntries > 0) {
-              sendProjectUpdated?.({ projectPath });
-              sendProjectUpdated?.({
-                projectPath,
-                filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-              });
-            }
-            return result;
-          } finally {
-            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
-          }
-        },
-
-        validateAndCleanBibliography: async ({ projectPath, bibtex }) => {
-          internallyUpdatingProjects.add(projectPath);
-          try {
-            const result = await cleanValidateAndApplyBibliography({
-              projectPath,
-              bibtex,
-              fileSystem,
-              onProgress: (progress) => sendBibliographyValidationProgress?.(progress),
-            });
-            if (result.backupPath) {
-              sendProjectUpdated?.({
-                projectPath,
-                filePath: join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH),
-              });
-            }
-            return result;
-          } finally {
-            setTimeout(() => internallyUpdatingProjects.delete(projectPath), 3000);
-          }
-        },
-
-        resolveDOI: ({ doi }) => citationClient.resolveDOI(doi),
-
-        searchCitations: async ({ query }) => {
-          const settings = await fileSystem.getSettings();
-          return citationClient.searchOpenAlex(query, 10, settings.openAlexApiKey || undefined);
-        },
-
         listProjectFiles: ({ projectPath }) =>
           fileSystem.listProjectFiles(projectPath),
 
         openFolderDialog: () => fileSystem.openFolderDialog(),
 
         // ── Export ─────────────────────────────────────────
-        discoverQuartoExtensions: async ({ projectPath }) =>
-          discoverQuartoExtensionFormats(await fileSystem.getQuartoProjectDirectory(projectPath)),
+
         exportFile: ({ projectPath, filename, content }) =>
           fileSystem.exportFile(projectPath, filename, content),
         exportBinaryFile: ({ projectPath, filename, base64 }) =>
           fileSystem.exportBinaryFile(projectPath, filename, base64),
-
-        renderQuartoBook: async ({ projectPath, format }) => {
-          const result = await renderQuartoBookProject({
-            projectDirectory: await fileSystem.getQuartoProjectDirectory(projectPath),
-            format,
-            environment: buildSubprocessEnv(),
-          });
-          if (result.status === "success") sendProjectUpdated?.({ projectPath });
-          return result;
-        },
 
         // ── File Management ────────────────────────────────
         readTextFile: ({ filePath }) => fileSystem.readTextFile(filePath),
@@ -726,9 +584,11 @@ async function main() {
         // Proxy Ollama chat to the renderer via aiChunk messages.
         // Fire-and-forget: return immediately so Electrobun can flush outbound
         // aiChunk messages while the stream runs in the background.
-        generateTextStream: async ({ model, messages, think, projectPath }) => {
-          const preferences = projectPath ? await authorLearning.guidance(await fileSystem.resolveProjectPath(projectPath)).catch(() => "") : "";
-          if (preferences) messages = [{ role: "system", content: preferences }, ...messages];
+        getWritingPreferences: () => writingPreferences.read(),
+        saveWritingPreferences: ({ expectedRevision, punctuation }) => writingPreferences.save(expectedRevision, punctuation),
+        generateTextStream: async ({ model, messages, think, projectPath, punctuation }) => {
+          messages = await composeWritingContext(messages, projectPath ? await fileSystem.resolveProjectPath(projectPath) : undefined, { purpose: "rewrite", model, punctuation });
+          messages = await preparePunctuationMessages(messages);
           activeAiAbortController?.abort();
           const controller = new AbortController();
           activeAiAbortController = controller;
@@ -760,13 +620,12 @@ async function main() {
         },
 
         startOllamaOpenAIProxy: async ({ requestId, body, projectPath }) => {
-          if (projectPath) {
-            const preferences = await authorLearning.guidance(await fileSystem.resolveProjectPath(projectPath)).catch(() => "");
-            if (preferences) {
-              const request = JSON.parse(body);
-              if (Array.isArray(request.messages)) request.messages.unshift({ role: "system", content: preferences });
-              body = JSON.stringify(request);
-            }
+          {
+            const request = JSON.parse(body);
+            if (Array.isArray(request.messages)) request.messages = await composeWritingContext(request.messages,
+              projectPath ? await fileSystem.resolveProjectPath(projectPath) : undefined, { purpose: "rewrite", model: request.model });
+            if (Array.isArray(request.messages)) request.messages = await preparePunctuationMessages(request.messages);
+            body = JSON.stringify(request);
           }
           activeOllamaProxyControllers.get(requestId)?.abort();
           const controller = new AbortController();
@@ -873,7 +732,8 @@ async function main() {
 }
 
 Electrobun.events.on("before-quit", () => {
-  detectorInstaller.cancel();
+  authorStyleScheduler.stop();
+  void shutdownExtensions();
   codexClient.close();
   claudeClient.close();
   void collabHistory.flush().catch(() => undefined).then(() => collabRegistry.flush());

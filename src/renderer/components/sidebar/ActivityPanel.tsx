@@ -1,4 +1,4 @@
-import { AIDetectorSetup } from "../settings/AIDetectorSetup";
+import { AIDetectorSetup } from "../../../plugins/ai-writing-score/ui/AIDetectorSetup";
 import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
@@ -25,9 +25,9 @@ import { SCHOLARPEN_AI, isAIUser, personaByUser } from "../../../shared/collab/p
 import { AIActivitySection } from "./AIActivitySection";
 import { decideChangeSet, usePendingChangeSets } from "../../collab/use-change-sets";
 import { ZonesSection } from "./ZonesSection";
-import { AIDetectionResult } from "./AIDetectionResult";
+import { AIDetectionResult } from "../../../plugins/ai-writing-score/ui/AIDetectionResult";
 import { asksForAIScore, isAIDetectionResult } from "../../../shared/ai-detection";
-import { WatermarkResultCard } from "./WatermarkResultCard";
+import { WatermarkResultCard } from "../../../plugins/text-cleanup/ui/WatermarkResultCard";
 import { exportUnresolvedComments, unresolvedCommentsFilename } from "../../../shared/collab/comment-export";
 import { aiTaskRunning, openClaimThreads, requestBulkComments, resolveAllComments } from "../../../shared/collab/bulk-comments";
 import { EditLevelControl, useEditLevel } from "./EditLevelControl";

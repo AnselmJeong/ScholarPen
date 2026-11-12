@@ -1,5 +1,5 @@
 import type { WebSearchResult } from "./web-search";
-import type { SupportingCitation } from "../citation/client";
+import type { SupportingCitation } from "../../plugins/bibliography/main/client";
 
 function escapeMarkdownText(value: string): string {
   return value.replace(/([\\`*_[\]])/g, "\\$1").replace(/\s+/g, " ").trim();

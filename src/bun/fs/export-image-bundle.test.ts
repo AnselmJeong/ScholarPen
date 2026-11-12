@@ -3,8 +3,8 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile
 import { tmpdir } from "os";
 import { join } from "path";
 import { bundleExportImages } from "./export-image-bundle";
-import { prepareQuartoBookImages } from "../quarto/prepare-images";
-import { renderQuartoBookProject } from "../quarto/render";
+import { prepareQuartoBookImages } from "../../plugins/quarto/main/prepare-images";
+import { renderQuartoBookProject } from "../../plugins/quarto/main/render";
 
 const roots: string[] = [];
 const config = 'project:\n  type: book\nbook:\n  chapters:\n    - index.qmd\n    - part: Results\n      chapters: [chapters/results.qmd]\nformat:\n  typst: {}\n';

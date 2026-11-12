@@ -1,3 +1,4 @@
+import type { PunctuationPolicy } from "../../../shared/writing-preferences";
 import { EditorState } from "prosemirror-state";
 import type { Node as PMNode } from "prosemirror-model";
 import { transformToSuggestionTransaction } from "@handlewithcare/prosemirror-suggest-changes";
@@ -49,11 +50,12 @@ function textNodes(content: PMNode, from: number) {
   return nodes;
 }
 
-export function captureBlock(block: BlockRef): BlockBase {
+export function captureBlock(block: BlockRef, punctuation?: PunctuationPolicy): BlockBase {
   const content = blockContent(block);
   const doc = content.node;
   const slice = doc.slice(0, doc.content.size);
   const protection = protectSelectionSlice(slice, doc.textContent);
+  if (punctuation) protection.punctuation = punctuation;
   return {
     blockId: block.id,
     fingerprint: blockFingerprint(block),

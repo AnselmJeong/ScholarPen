@@ -1,3 +1,4 @@
+import { punctuationFromPrompt } from "../../../shared/writing-preferences";
 import * as Y from "yjs";
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import type { CollabSession } from "../registry";
@@ -16,7 +17,7 @@ import { fitLibrary, fitProjectTexts, type BulkSources, type CitationCandidate, 
 import { protectedRewritePreview } from "../../../shared/ai-text-protection";
 import { DEFAULT_EDIT_LEVEL, EDIT_LEVEL_MAX_CHANGE, editLevelExceeded, editLevelLabel, type EditLevel } from "../../../shared/collab/writing";
 import { recordRevision, REVISIONS_MAP, type RevisionEntry } from "../../../shared/collab/revision-log";
-import { changeRate } from "./humanize/humanize";
+import { changeRate } from "../../../plugins/text-cleanup/main/humanize/humanize";
 
 const AI_ORIGIN = "ai-agent";
 const AI_META_ORIGIN = "ai-meta";
@@ -232,7 +233,7 @@ export async function runBulkComments(session: CollabSession, request: ThreadSna
   const blocks = listBlocks(doc);
   const editable = blocks.filter(block => hasInlineContent(block) && !blockContent(block).node.type.spec.code &&
     blockContent(block).node.type.name !== "codeBlock" && deps.modeFor(block.id) !== "observe");
-  const bases = editable.map(captureBlock);
+  const bases = editable.map(block => captureBlock(block, punctuationFromPrompt(deps.policy ?? "")));
   const selections = bases.map(base => base.protection);
   const slots = editableSegments(selections);
   const slotIds = new Map(slots.map(slot => [slot.id, slot]));

@@ -1,0 +1,34 @@
+{
+  "manifestVersion": 1,
+  "id": "scholarpen.document-stats",
+  "name": "Document Statistics",
+  "description": "모델 없이 문서와 선택 영역의 통계 계산",
+  "version": "1.0.0",
+  "apiVersion": "0.1.0",
+  "dataSchemaVersion": 1,
+  "permissions": [
+    "document.read"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "scholarpen.document-stats.count",
+        "title": "Count text",
+        "input": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      }
+    ],
+    "slots": [
+      "status"
+    ]
+  }
+}

@@ -10,7 +10,7 @@ import { fileSystem } from "../fs/manager";
 import { buildAgentMessages } from "./context-builder";
 import { streamAgentModel } from "./providers";
 import { asksForAIScore, detectionInputForRequest, formatAIDetectionReport } from "../../shared/ai-detection";
-import { analyzeAIText } from "../ai-detector/service";
+import { analyzeAIText } from "../extensions/ai-writing-score";
 import { findCitationEvidence } from "./find-citation";
 import { serializeCitationSearchResult } from "../../shared/citation-evidence";
 import { serializeCitationCheckResult } from "../../shared/citation-check";

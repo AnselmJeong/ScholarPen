@@ -33,7 +33,7 @@ import { RESOLVED_REVIEW_BLOCKS_MAP } from "./resolved-review";
 import { StaleClaimSweeper } from "./stale-claims";
 import { DISMISSED_FINDINGS_MAP, purgeResolvedThreads } from "./resolved-purge";
 import { checkTerminology, glossaryGuidance, type Glossary } from "../../../shared/glossary";
-import { manuscriptLanguage, type ManuscriptLanguage } from "./humanize/language";
+import { manuscriptLanguage, type ManuscriptLanguage } from "../../../plugins/text-cleanup/main/humanize/language";
 import { retireAbbreviationNotices } from "./retired-abbreviation-notices";
 
 export interface ReviewerDeps {

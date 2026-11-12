@@ -1,3 +1,4 @@
+import { extensionEnabled } from "../extensions/state";
 import React, { useMemo, useState } from "react";
 import { BlockNoteSchema, createParagraphBlockSpec, defaultStyleSpecs, mergeCSSClasses } from "@blocknote/core";
 import type { BlockNoteEditor } from "@blocknote/core";
@@ -248,6 +249,8 @@ export function requestRemoveWatermarkManuscript(editor: BlockNoteEditor<any, an
 }
 
 function requestDocumentAction(editor: BlockNoteEditor<any, any, any>, action: NonNullable<ThreadMeta["documentAction"]>, text: string) {
+  const owner = action === "ai-score" ? "scholarpen.ai-writing-score" : action === "humanize" || action === "remove-watermark" ? "scholarpen.text-cleanup" : null;
+  if (owner && !extensionEnabled(owner)) return;
   const peer = getEditorCollab(editor);
   if (!peer) return;
   // Document actions need no inline anchor. Selecting a paragraph here both

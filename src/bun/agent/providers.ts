@@ -1,3 +1,4 @@
+import { preparePunctuationMessages } from "../ai/writing-preferences";
 import { claudeClient } from "../claude/client";
 import { codexClient } from "../codex/client";
 import { openAIImageMessages } from "../../shared/agent-images";
@@ -56,6 +57,7 @@ export async function completeAgentModel(
   request: AgentCompletionRequest,
   settings: AppSettings,
 ): Promise<string> {
+  request = { ...request, messages: await preparePunctuationMessages(request.messages) };
   if (request.provider === "codex" || request.provider === "anthropic") {
     const client = request.provider === "codex" ? codexClient : claudeClient;
     let text = "";
@@ -124,6 +126,7 @@ export async function* streamAgentModel(
   request: AgentStreamRequest,
   settings: AppSettings,
 ): AsyncGenerator<string> {
+  request = { ...request, messages: await preparePunctuationMessages(request.messages) };
   if (request.provider === "codex" || request.provider === "anthropic") {
     const client = request.provider === "codex" ? codexClient : claudeClient;
     yield* client.stream(request);

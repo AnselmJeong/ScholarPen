@@ -1,0 +1,231 @@
+{
+  "manifestVersion": 1,
+  "id": "scholarpen.bibliography",
+  "name": "Bibliography",
+  "description": "정규 참고문헌 편집, DOI 검색과 검증",
+  "version": "1.0.0",
+  "apiVersion": "0.1.0",
+  "dataSchemaVersion": 1,
+  "permissions": [
+    "workspace.read",
+    "workspace.write",
+    "ai.request"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "scholarpen.bibliography.saveBibtex",
+        "title": "saveBibtex",
+        "legacyMethod": "saveBibtex",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "bibtex": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "null"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.saveBibtexRaw",
+        "title": "saveBibtexRaw",
+        "legacyMethod": "saveBibtexRaw",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "bibtex": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "null"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.saveBibtexValidated",
+        "title": "saveBibtexValidated",
+        "legacyMethod": "saveBibtexValidated",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "bibtex": {
+              "type": "string"
+            },
+            "expectedCurrentBibtex": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "null"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.loadBibtex",
+        "title": "loadBibtex",
+        "legacyMethod": "loadBibtex",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.mergeBibtex",
+        "title": "mergeBibtex",
+        "legacyMethod": "mergeBibtex",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "importedBibtex": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.proposeBibliographyRepair",
+        "title": "proposeBibliographyRepair",
+        "legacyMethod": "proposeBibliographyRepair",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "bibtex": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "deterministic",
+                "llm"
+              ]
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.applyBibliographyRepair",
+        "title": "applyBibliographyRepair",
+        "legacyMethod": "applyBibliographyRepair",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "originalBibtex": {
+              "type": "string"
+            },
+            "repairedBibtex": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.deduplicateBibliography",
+        "title": "deduplicateBibliography",
+        "legacyMethod": "deduplicateBibliography",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "bibtex": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.validateAndCleanBibliography",
+        "title": "validateAndCleanBibliography",
+        "legacyMethod": "validateAndCleanBibliography",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "bibtex": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.resolveDOI",
+        "title": "resolveDOI",
+        "legacyMethod": "resolveDOI",
+        "input": {
+          "type": "object",
+          "properties": {
+            "doi": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.bibliography.searchCitations",
+        "title": "searchCitations",
+        "legacyMethod": "searchCitations",
+        "input": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "array"
+        }
+      }
+    ],
+    "slots": [
+      "toolbar"
+    ]
+  }
+}

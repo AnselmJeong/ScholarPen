@@ -1,4 +1,4 @@
-import { AIDetectorSetup } from "../settings/AIDetectorSetup";
+import { AIDetectorSetup } from "../../../plugins/ai-writing-score/ui/AIDetectorSetup";
 import { imageAttachmentAdapter, imagesFromMessage, restoredImageAttachments } from "../../ai/image-attachments";
 import { MAX_MESSAGE_IMAGES } from "@shared/agent-images";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
@@ -59,7 +59,7 @@ import {
 import { buildCitationCheckMessage, type CitationCheckRequest } from "../../ai/check-citations";
 import { onProjectUpdated, rpc } from "../../rpc";
 import ReactMarkdown from "react-markdown";
-import { AIDetectionResult } from "./AIDetectionResult";
+import { AIDetectionResult } from "../../../plugins/ai-writing-score/ui/AIDetectionResult";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -1218,6 +1218,7 @@ export function AISidebar({
             ? {
                 selectedText: deepen.selectedText,
                 protectedText: deepen.protection.protectedText,
+                punctuation: deepen.protection.punctuation,
                 beforeSelection: deepen.documentContext.beforeSelection,
                 afterSelection: deepen.documentContext.afterSelection,
               }

@@ -1,18 +1,17 @@
+import { ExtensionSlot, ExtensionWorkspaceProvider } from "./extensions/slots";
 import { RevisionResponseEditor } from "./components/review/RevisionResponseEditor";
 import { ResponseDrafts } from "./components/review/response-drafts";
 import { OriginalManuscriptPane } from "./components/review/OriginalManuscriptPane";
 import { RevisionContextPanel, useRevisionContext } from "./components/review/RevisionContextPanel";
 import { ReviewWorkspace } from "./components/review/ReviewWorkspace";
 import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
-import { BookMarked, BookOpen, PanelRightClose, PanelRightOpen, PenLine, Play, Settings } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, PenLine, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { LeftSidebar } from "./components/sidebar/LeftSidebar";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { StatusBar } from "./components/editor/StatusBar";
 import { ExportDialog, type ExportProgress } from "./components/editor/ExportDialog";
 import { documentRelativeFilename, editingProject } from "./utils/document-tree";
-import { QuartoBookDialog, type QuartoBookSetup } from "./components/editor/QuartoBookDialog";
-import { QuartoRenderDialog } from "./components/editor/QuartoRenderDialog";
 import { AboutDialog } from "./components/AboutDialog";
 import { SettingsPage } from "./components/settings/SettingsPage";
 import { rpc, onMenuAction, onImportMarkdown, onProjectUpdated } from "./rpc";
@@ -23,23 +22,14 @@ import {
 } from "./blocks/markdown-serializer";
 import { markdownToScholarBlocks } from "./blocks/markdown-parser";
 import { scholarSchema } from "./blocks/schema";
-import { collectDocumentNodes, findBibliographyNode } from "./utils/document-tree";
+import { collectDocumentNodes } from "./utils/document-tree";
 import type {
   AppSettings,
   FileNode,
   OllamaStatus,
   ProjectInfo,
-  QuartoRenderFormat,
-  QuartoRenderResult,
-  QuartoExtensionDiscovery,
 } from "../shared/rpc-types";
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
-import {
-  buildQuartoBookConfig,
-  collectQuartoChapterFilenames,
-  findQuartoConfigNode,
-  getQuartoRenderFormats,
-} from "../shared/quarto-config";
 import { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "./ai/deepen-analysis";
 import type { FindCitationRequest } from "./ai/find-citation";
@@ -47,7 +37,6 @@ import type { CitationCheckRequest } from "./ai/check-citations";
 import { useAIResponsePreferences } from "./hooks/useAIResponsePreferences";
 import { normalizeProjectRelativePath, type ProjectFileReference } from "../shared/project-file-reference";
 import packageJson from "../../package.json";
-import { toBase64 } from "lib0/buffer";
 import { ActivityPanel, ActivityPanelHeader, type RightPanelTab } from "./components/sidebar/ActivityPanel";
 import { HistoryPanel } from "./components/sidebar/HistoryPanel";
 import { getEditorCollab } from "./collab/editor-collab";
@@ -95,19 +84,9 @@ export function App() {
   const [pendingDeepenRequest, setPendingDeepenRequest] = useState<DeepenAnalysisRequest | null>(null);
   const [pendingFindCitationRequest, setPendingFindCitationRequest] = useState<FindCitationRequest | null>(null);
   const [pendingCitationCheckRequest, setPendingCitationCheckRequest] = useState<CitationCheckRequest | null>(null);
-  const [wordCount, setWordCount]                     = useState(0);
   const [saveStatus, setSaveStatus]                   = useState<SaveStatus>("saved");
   const [exportDialogOpen, setExportDialogOpen]       = useState(false);
   const [exportTargets, setExportTargets]             = useState<FileNode[]>([]);
-  const [quartoBookDialogOpen, setQuartoBookDialogOpen] = useState(false);
-  const [quartoBookYaml, setQuartoBookYaml]           = useState<string | null>(null);
-  const [quartoExtensions, setQuartoExtensions] = useState<QuartoExtensionDiscovery>({ formats: [], warnings: [] });
-  const [quartoBookLoading, setQuartoBookLoading]     = useState(false);
-  const [quartoBookLoadError, setQuartoBookLoadError] = useState<string | null>(null);
-  const [quartoRenderDialogOpen, setQuartoRenderDialogOpen] = useState(false);
-  const [quartoRenderFormats, setQuartoRenderFormats] = useState<QuartoRenderFormat[]>([]);
-  const [quartoRenderLoading, setQuartoRenderLoading] = useState(false);
-  const [quartoRenderLoadError, setQuartoRenderLoadError] = useState<string | null>(null);
   const [aiSidebarWidth, setAiSidebarWidth]           = useState(576);
   const [revisionSidebarWidth, setRevisionSidebarWidth] = useState(320);
   const [leftSidebarWidth, setLeftSidebarWidth]       = useState(280);
@@ -133,11 +112,6 @@ export function App() {
   const citationCheckAppliersRef = useRef(
     new Map<string, (protectedRevision: string | null) => string | null>(),
   );
-  const quartoChapterFilenames = useMemo(
-    () => collectQuartoChapterFilenames(fileTree),
-    [fileTree],
-  );
-
   const handleDeepenResult = useCallback(
     (requestId: string, protectedRevision: string | null) => {
       const applyRevision = deepenRevisionAppliersRef.current.get(requestId);
@@ -236,12 +210,6 @@ export function App() {
     setActiveDocumentFilename(null);
     setExportTargets([]);
     setExportDialogOpen(false);
-    setQuartoBookDialogOpen(false);
-    setQuartoBookYaml(null);
-    setQuartoBookLoadError(null);
-    setQuartoRenderDialogOpen(false);
-    setQuartoRenderFormats([]);
-    setQuartoRenderLoadError(null);
     try {
       const tree = await rpc.listProjectFiles(project.path);
       setFileTree(tree);
@@ -287,88 +255,6 @@ export function App() {
       initialPage: reference.page,
     });
   }, [activeEditingProject, handleFileSelect, refreshFileTree]);
-
-  const handleShowReferences = useCallback(async () => {
-    if (!activeEditingProject) return;
-    try {
-      // The canonical file may have been replaced by an external editor or a
-      // cloud-sync client without producing a reliable fs.watch event. Refresh
-      // both the tree metadata and the already-open viewer from disk.
-      const latestTree = await rpc.listProjectFiles(activeEditingProject.path);
-      await refreshFileTree();
-      setBibReloadTrigger((value) => value + 1);
-      const bibliography = findBibliographyNode(latestTree);
-      if (bibliography) handleFileSelect(bibliography);
-    } catch (error) {
-      console.error("Could not refresh references.bib:", error);
-    }
-  }, [activeEditingProject, handleFileSelect, refreshFileTree]);
-
-  const handleOpenQuartoBookDialog = useCallback(async () => {
-    if (!activeProject) return;
-    setQuartoBookDialogOpen(true);
-    setQuartoBookLoading(true);
-    setQuartoBookLoadError(null);
-    setQuartoBookYaml(null);
-    setQuartoExtensions({ formats: [], warnings: [] });
-    try {
-      const [latestTree, extensions] = await Promise.all([
-        rpc.listProjectFiles(activeProject.path),
-        rpc.discoverQuartoExtensions(activeProject.path),
-      ]);
-      setQuartoExtensions(extensions);
-      setFileTree(latestTree);
-      const configNode = findQuartoConfigNode(latestTree);
-      setQuartoBookYaml(configNode ? await rpc.readTextFile(configNode.path) : null);
-    } catch (loadError) {
-      setQuartoBookLoadError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Could not read the current _quarto.yml.",
-      );
-    } finally {
-      setQuartoBookLoading(false);
-    }
-  }, [activeProject]);
-
-  const handleOpenQuartoRenderDialog = useCallback(async () => {
-    if (!activeProject) return;
-    setQuartoRenderDialogOpen(true);
-    setQuartoRenderLoading(true);
-    setQuartoRenderLoadError(null);
-    setQuartoRenderFormats([]);
-    try {
-      const latestTree = await rpc.listProjectFiles(activeProject.path);
-      setFileTree(latestTree);
-      const configNode = findQuartoConfigNode(latestTree);
-      if (!configNode) {
-        throw new Error("Create exports/_quarto.yml in the Quarto book editor before rendering.");
-      }
-      const configSource = await rpc.readTextFile(configNode.path);
-      const formats = getQuartoRenderFormats(configSource);
-      if (formats.length === 0) {
-        throw new Error(
-          "No output format is configured in exports/_quarto.yml. Select an output format in the Quarto book editor.",
-        );
-      }
-      setQuartoRenderFormats(formats);
-    } catch (error) {
-      setQuartoRenderLoadError(
-        error instanceof Error ? error.message : "Could not read the Quarto render configuration.",
-      );
-    } finally {
-      setQuartoRenderLoading(false);
-    }
-  }, [activeProject]);
-
-  const handleRenderQuartoBook = useCallback(async (
-    format: QuartoRenderFormat,
-  ): Promise<QuartoRenderResult> => {
-    if (!activeProject) throw new Error("Open a project first.");
-    const result = await rpc.renderQuartoBook(activeProject.path, format);
-    if (result.status === "success") await refreshFileTree();
-    return result;
-  }, [activeProject, refreshFileTree]);
 
   const handleEditorReady = useCallback((editor: BlockNoteEditor<any, any, any> | null) => {
     editorRef.current = editor;
@@ -524,74 +410,6 @@ export function App() {
     void refreshFileTree();
   }, [activeProject, exportTargets, refreshFileTree]);
 
-  const handleGenerateQuartoBook = useCallback(async ({
-    title,
-    authors,
-    cslFilename,
-    cslFile,
-    qmdFilenames,
-    language,
-    outputDir,
-    bibliographyFiles,
-    formats,
-    existingYaml,
-    extensionFormats,
-    options,
-    referenceDocFile,
-  }: QuartoBookSetup) => {
-    if (!activeProject) throw new Error("Open a project first.");
-
-    const latestTree = await rpc.listProjectFiles(activeProject.path);
-    const currentConfigNode = findQuartoConfigNode(latestTree);
-    const currentYaml = currentConfigNode
-      ? await rpc.readTextFile(currentConfigNode.path)
-      : null;
-    if (currentYaml !== existingYaml) {
-      throw new Error(
-        "_quarto.yml changed outside this editor. Close and reopen the dialog to load the latest version.",
-      );
-    }
-
-    const config = buildQuartoBookConfig({
-      title,
-      authors,
-      cslFilename,
-      qmdFilenames,
-      language,
-      outputDir,
-      bibliographyFiles,
-      formats,
-      existingYaml,
-      extensionFormats,
-      options,
-    });
-
-    if (cslFile) {
-      await rpc.exportFile(activeProject.path, cslFile.name, await cslFile.text());
-    }
-    if (referenceDocFile && formats.includes("docx")) {
-      await rpc.exportBinaryFile(
-        activeProject.path,
-        referenceDocFile.name,
-        toBase64(new Uint8Array(await referenceDocFile.arrayBuffer())),
-      );
-    }
-    const configPath = await rpc.exportFile(
-      activeProject.path,
-      "_quarto.yml",
-      config,
-    );
-    setQuartoBookYaml(config);
-    setFileTree(await rpc.listProjectFiles(activeProject.path));
-    handleFileSelect({
-      name: "_quarto.yml",
-      path: configPath,
-      kind: "unknown",
-      isDirectory: false,
-      lastModified: Date.now(),
-    });
-  }, [activeProject, handleFileSelect]);
-
   const handleImportFromFile = useCallback(async (filePath: string, openDocument = true) => {
     if (!activeProject) throw new Error("Open a project first.");
     const content = await rpc.readTextFile(filePath);
@@ -674,6 +492,8 @@ export function App() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
+    <ExtensionWorkspaceProvider value={{ project: activeProject, editingProject: activeEditingProject, activeFile, files: fileTree, editor: activeEditor,
+      selectFile: handleFileSelect, setFiles: setFileTree, refreshFiles: refreshFileTree, reloadBibliography: () => setBibReloadTrigger(value => value + 1) }}>
     <div className="flex flex-col h-screen overflow-hidden bg-background">
       {/* Top Bar */}
       <header className="flex items-center justify-between px-5 h-12 flex-shrink-0" style={{ background: "hsl(var(--background))", boxShadow: "0 1px 0 rgba(91,33,182,0.08)" }}>
@@ -690,68 +510,7 @@ export function App() {
             className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
             <Settings className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
           </button>
-          <TooltipProvider delayDuration={400}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleShowReferences}
-                  disabled={!activeProject}
-                  aria-label="Show references"
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
-                    disabled:cursor-not-allowed disabled:opacity-30
-                    ${activeFile?.kind === "reference"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    }`}
-                >
-                  <BookOpen className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Show references</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider delayDuration={400}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleOpenQuartoBookDialog}
-                  disabled={!activeProject}
-                  aria-label="Configure Quarto book"
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
-                    disabled:cursor-not-allowed disabled:opacity-30
-                    ${activeFile?.name === "_quarto.yml"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    }`}
-                >
-                  <BookMarked className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Configure Quarto book</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider delayDuration={400}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleOpenQuartoRenderDialog}
-                  disabled={!activeProject}
-                  aria-label="Render Quarto book"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  <Play className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Render Quarto book</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <ExtensionSlot name="toolbar" />
 
           <button disabled={!activeProject} onClick={() => { setReviewWorkspaceOpen(true); setAiSidebarOpen(false); }} className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-accent disabled:opacity-40">Review &amp; Revision</button>
           <button
@@ -825,7 +584,6 @@ export function App() {
               setActiveDocumentFilename(docFilename);
             }}
             onActiveEditorChange={handleEditorReady}
-            onWordCountChange={setWordCount}
             onSaveStatusChange={setSaveStatus}
             onBibtexSaved={() => setBibReloadTrigger(n => n + 1)}
             onDeepenAnalysis={(request, applyRevision) => {
@@ -968,7 +726,6 @@ export function App() {
         ollamaStatus={ollamaStatus}
         sidebarAgentProvider={appSettings.sidebarAgentProvider}
         sidebarAgentModel={appSettings.sidebarAgentModel}
-        wordCount={wordCount}
         onToggleAI={() => setAiSidebarOpen(v => !v)}
         saveStatus={saveStatus === "unsaved" || responseDrafts.status() === "unsaved" ? "unsaved" : saveStatus === "saving" || responseDrafts.status() === "saving" ? "saving" : "saved"}
       />
@@ -985,33 +742,12 @@ export function App() {
         documentNames={exportTargets.map((target) => target.name.replace(/\.scholarpen\.json$/, ""))}
       />
 
-      <QuartoBookDialog
-        key={activeProject?.path ?? "no-project"}
-        open={quartoBookDialogOpen}
-        onOpenChange={setQuartoBookDialogOpen}
-        qmdFilenames={quartoChapterFilenames}
-        initialYaml={quartoBookYaml}
-        extensions={quartoExtensions}
-        loading={quartoBookLoading}
-        loadError={quartoBookLoadError}
-        onGenerate={handleGenerateQuartoBook}
-      />
-
-      <QuartoRenderDialog
-        key={`render-${activeProject?.path ?? "no-project"}`}
-        open={quartoRenderDialogOpen}
-        onOpenChange={setQuartoRenderDialogOpen}
-        formats={quartoRenderFormats}
-        loading={quartoRenderLoading}
-        loadError={quartoRenderLoadError}
-        onRender={handleRenderQuartoBook}
-      />
-
       <AboutDialog
         open={aboutDialogOpen}
         onOpenChange={setAboutDialogOpen}
         version={packageJson.version}
       />
     </div>
+    </ExtensionWorkspaceProvider>
   );
 }

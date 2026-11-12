@@ -217,7 +217,7 @@ export function AIInlineEditPanel({
         let revised = "";
         try {
           revised = accumulatedRef.current.trim()
-            ? removeDiscouragedPunctuation(resolveInlineEditResponse(accumulatedRef.current, snapshot.protection))
+            ? removeDiscouragedPunctuation(resolveInlineEditResponse(accumulatedRef.current, snapshot.protection), snapshot.protection.punctuation)
             : "";
         } catch (err) {
           setError((err as Error).message);
@@ -272,7 +272,8 @@ export function AIInlineEditPanel({
             { role: "user", content: messages.user },
           ],
           false,
-          projectPath
+          projectPath,
+          snapshot.protection.punctuation
         );
       } catch (err) {
         setError((err as Error).message);

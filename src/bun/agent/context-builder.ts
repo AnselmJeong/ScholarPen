@@ -1,11 +1,11 @@
 import { validateAgentImages } from "../../shared/agent-images";
 import { AI_WRITING_STYLE } from "../../shared/ai-writing-style";
 import { projectMemoryPrompt, type ProjectMemoryHit } from "../../shared/project-memory";
-import { authorLearning } from "../memory/runtime";
+import { legacyWritingPurpose, styleContext } from "../ai/context-composer";
 import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
-import { citationClient, type SupportingCitation } from "../citation/client";
+import { citationClient, type SupportingCitation } from "../../plugins/bibliography/main/client";
 import { buildCitationReferenceList, buildWebReferenceList } from "./references";
 import { loadAgentSkill } from "./skill-registry";
 import { resolveMentionedFiles } from "./mention-resolver";
@@ -382,7 +382,7 @@ export async function buildAgentMessages(
     ),
     buildProjectSourcePrompt(projectSources),
     projectMemoryPrompt(memories),
-    params.projectPath ? await authorLearning.guidance(params.projectPath).catch(() => "") : "",
+    (await styleContext(params.projectPath ?? undefined, { purpose: params.analysisMode === "deepen" || isValidate ? "rewrite" : isFindCitation || params.analysisMode === "check-citations" ? "extract" : legacyWritingPurpose(params.message), language: params.lang, model: params.model, punctuation: params.deepenContext?.punctuation })).text,
     memoryUnavailable ? "Project memory retrieval was unavailable for this request. Do not claim to have consulted stored project memories." : "",
     webContext(webResults),
   ].filter(Boolean);

@@ -1,3 +1,4 @@
+import { ExtensionSlot } from "../../extensions/slots";
 import { useClaudeStatus } from "../../hooks/useClaudeStatus";
 import React from "react";
 import type { LLMProvider, OllamaStatus } from "../../../shared/rpc-types";
@@ -9,12 +10,11 @@ interface StatusBarProps {
   ollamaStatus: OllamaStatus;
   sidebarAgentProvider?: LLMProvider;
   sidebarAgentModel?: string;
-  wordCount: number;
   onToggleAI: () => void;
   saveStatus?: SaveStatus;
 }
 
-export function StatusBar({ ollamaStatus, sidebarAgentProvider = "ollama", sidebarAgentModel, wordCount, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
+export function StatusBar({ ollamaStatus, sidebarAgentProvider = "ollama", sidebarAgentModel, onToggleAI, saveStatus = "saved" }: StatusBarProps) {
   const codexStatus = useCodexStatus(sidebarAgentProvider === "codex");
   const { status: claudeStatus } = useClaudeStatus(sidebarAgentProvider === "anthropic");
   const subscriptionStatus = sidebarAgentProvider === "codex" ? codexStatus : sidebarAgentProvider === "anthropic" ? claudeStatus : null;
@@ -56,7 +56,7 @@ export function StatusBar({ ollamaStatus, sidebarAgentProvider = "ollama", sideb
 
       <div className="flex items-center gap-4">
         {/* Word count */}
-        <span>{wordCount.toLocaleString()} words</span>
+        <ExtensionSlot name="status" />
 
         {/* Save status */}
         <span className={`flex items-center gap-1 ${

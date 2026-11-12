@@ -1,3 +1,5 @@
+import { refreshWritingPreferences } from "./extensions/writing-preferences";
+import { initializeExtensionsUI } from "./extensions/state";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "./styles/global.css";
@@ -71,7 +73,7 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");
 
 async function bootstrap() {
-  await applyInitialTheme();
+  await Promise.all([applyInitialTheme(), initializeExtensionsUI(), refreshWritingPreferences().catch(() => undefined)]);
   createRoot(root!).render(
     <React.StrictMode>
       <ErrorBoundary>

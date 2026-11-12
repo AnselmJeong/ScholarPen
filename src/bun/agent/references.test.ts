@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SupportingCitation } from "../citation/client";
+import type { SupportingCitation } from "../../plugins/bibliography/main/client";
 import { buildCitationReferenceList, buildWebReferenceList } from "./references";
 
 describe("verified citation references", () => {

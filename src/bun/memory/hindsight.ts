@@ -177,6 +177,12 @@ export class ProjectMemoryService {
 
   async recall(projectPath: string, query: string, signal?: AbortSignal): Promise<ProjectMemoryHit[]> {
     if (!query.trim()) return [];
+    // Legacy automatic author evidence is being retired. Do not re-inject deleted/private
+    // style material while remote deletion is pending, including derived memories.
+    try {
+      const ledger = JSON.parse(await readFile(join(projectPath, ".scholarpen/hindsight-sync.json"), "utf8"));
+      if (ledger && typeof ledger.sources === "object" && Object.keys(ledger.sources).length) return [];
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
     // Context retrieval must not create banks for arbitrary/unopened projects.
     const binding = await this.readBinding(projectPath);
     if (!binding) return [];

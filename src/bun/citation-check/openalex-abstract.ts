@@ -1,5 +1,5 @@
 import type { BibtexEntry } from "../../shared/bibtex-utils";
-import { reconstructOpenAlexAbstract } from "../citation/client";
+import { reconstructOpenAlexAbstract } from "../../plugins/bibliography/main/client";
 import { cleanDoi, squash } from "./pdf-text";
 import type { CachedAbstract, CitationSourceIndex } from "./source-index";
 

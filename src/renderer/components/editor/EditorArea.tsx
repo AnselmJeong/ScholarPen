@@ -1,3 +1,5 @@
+import { punctuationSnapshot } from "../../extensions/writing-preferences";
+import { useExtensionEnabled } from "../../extensions/state";
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
 import { NoteToolbarButton } from "../../blocks/note-toolbar-button";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -64,16 +66,16 @@ import type { CitationCheckRequest } from "../../ai/check-citations";
 import { createCitationCheckRequest } from "../../ai/check-citations";
 import { referenceSuggestions } from "../../blocks/reference-suggestions";
 import { mergeProjectReferences, type ReferenceDocument } from "../../../shared/project-references";
-import { QuartoPropertiesDialog } from "./QuartoPropertiesDialog";
+import { QuartoPropertiesDialog } from "../../../plugins/quarto/ui/QuartoPropertiesDialog";
 import { EditorSideMenu } from "./EditorSideMenu";
 import { EditorOutline } from "./EditorOutline";
 import { useOutlineVisibility } from "./outline-visibility";
-import { QuartoBlockControls } from "./QuartoBlockControls";
+import { QuartoBlockControls } from "../../../plugins/quarto/ui/QuartoBlockControls";
 import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../../collab/collab-peer";
 import { reconcileBlocks } from "../../collab/reconcile";
 import { setEditorCollab } from "../../collab/editor-collab";
 import { acceptedDocument } from "../../collab/suggestions";
-import { observeAuthorEdits } from "../../collab/author-learning";
+import { observeAuthorStyle } from "../../extensions/author-style";
 import { AIEditHighlightExtension, AIZoneBadgeExtension, AI_EDITS_MAP } from "../../collab/ai-edit-highlight";
 import { createReviewStore, SuggestionReviewExtension } from "../../collab/suggestion-review";
 import { SuggestionReviewBar } from "./SuggestionReviewBar";
@@ -128,7 +130,6 @@ interface EditorAreaProps {
   documentFilename: string | null;
   ollamaStatus: OllamaStatus;
   initialScrollTop?: number;
-  onWordCountChange: (count: number) => void;
   onEditorReady: (editor: BlockNoteEditor<any, any, any> | null) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
   onSaveStatusChange: (status: SaveStatus) => void;
@@ -212,7 +213,6 @@ function CollabEditorArea({
   documentFilename,
   ollamaStatus,
   initialScrollTop = 0,
-  onWordCountChange,
   onEditorReady,
   onScrollPositionChange,
   onSaveStatusChange,
@@ -266,7 +266,6 @@ function CollabEditorArea({
   const inFlightSaveCountRef = useRef(0);
   const loadRequestSeqRef = useRef(0);
   const suppressSaveUntilRef = useRef(0);
-  const wordCountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [aiEditSnapshot, setAiEditSnapshot] = useState<SelectionSnapshot | null>(null);
   const [citekeys, setCitekeys] = useState<string[]>([]);
@@ -275,6 +274,8 @@ function CollabEditorArea({
   const [doiLoading, setDoiLoading] = useState(false);
   const [doiError, setDoiError] = useState<string | null>(null);
   const [documentReady, setDocumentReady] = useState(false);
+  const authorStyleEnabled = useExtensionEnabled("scholarpen.author-style");
+  const quartoEnabled = useExtensionEnabled("scholarpen.quarto");
   const [propertiesBlockId, setPropertiesBlockId] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
@@ -292,16 +293,12 @@ function CollabEditorArea({
     ? marginPresentation.wide ? "wide" : "compact" : "none";
   const hasRestoredScrollRef = useRef(false);
   const initialScrollTopRef = useRef(initialScrollTop);
-  const onWordCountChangeRef = useRef(onWordCountChange);
   const onSaveStatusChangeRef = useRef(onSaveStatusChange);
 
   useEffect(() => {
     initialScrollTopRef.current = initialScrollTop;
   }, [initialScrollTop]);
 
-  useEffect(() => {
-    onWordCountChangeRef.current = onWordCountChange;
-  }, [onWordCountChange]);
 
   useEffect(() => {
     onSaveStatusChangeRef.current = onSaveStatusChange;
@@ -339,8 +336,9 @@ function CollabEditorArea({
   // Notify parent when editor mounts/unmounts.
   useEffect(() => {
     if (!documentReady || !peer) return;
-    return observeAuthorEdits(editor, peer);
-  }, [editor, peer, documentReady]);
+    if (!authorStyleEnabled) return;
+    return observeAuthorStyle(editor, peer, project.path, documentFilename || "manuscript.scholarpen.json");
+  }, [editor, peer, documentReady, authorStyleEnabled, project.path, documentFilename]);
 
   useEffect(() => {
     if (!documentReady) return;
@@ -411,11 +409,6 @@ function CollabEditorArea({
   }, []);
 
   const finishDocumentLoad = useCallback((loadSeq: number) => {
-    requestAnimationFrame(() => {
-      const text = editor.prosemirrorView?.state.doc.textContent ?? "";
-      const count = text.trim() ? text.trim().split(/\s+/).length : 0;
-      onWordCountChangeRef.current(count);
-    });
     restoreScrollPosition();
     // Scroll restoration uses two frames; navigation must run afterwards.
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -472,16 +465,6 @@ function CollabEditorArea({
   useEffect(() => {
     restoreScrollPosition();
   }, [restoreScrollPosition]);
-
-  const scheduleWordCount = useCallback(() => {
-    if (wordCountTimerRef.current) clearTimeout(wordCountTimerRef.current);
-    wordCountTimerRef.current = setTimeout(() => {
-      wordCountTimerRef.current = null;
-      const text = editor.prosemirrorView?.state.doc.textContent ?? "";
-      const count = text.trim() ? text.trim().split(/\s+/).length : 0;
-      onWordCountChangeRef.current(count);
-    }, 0);
-  }, [editor]);
 
   const enqueueSave = useCallback((filename: string, getContent: () => Promise<unknown>, revision: number) => {
     if (!project) return Promise.resolve();
@@ -641,6 +624,7 @@ function CollabEditorArea({
     const selectedText = editor.getSelectedText();
     if (!selectedText.trim()) return;
     const protection = protectSelectionSlice(view.state.doc.slice(from, to), selectedText);
+    protection.punctuation = punctuationSnapshot();
     const documentContext = buildInlineEditDocumentContext(view.state.doc, from, to);
     trackAISelection(view, from, to, protection);
 
@@ -686,7 +670,6 @@ function CollabEditorArea({
   const handleChange = useCallback(() => {
     if (deletingRef.current) return;
     if (Date.now() < suppressSaveUntilRef.current) return;
-    scheduleWordCount();
     if (!project) return;
     dirtyRevisionRef.current += 1;
     updateSaveStatus("unsaved");
@@ -696,7 +679,7 @@ function CollabEditorArea({
       saveTimerRef.current = null;
       enqueueSave(filename, readSettledDocumentSnapshot, dirtyRevisionRef.current);
     }, 2 * 1000); // 2 seconds
-  }, [project, documentFilename, scheduleWordCount, updateSaveStatus, enqueueSave, readSettledDocumentSnapshot]);
+  }, [project, documentFilename, updateSaveStatus, enqueueSave, readSettledDocumentSnapshot]);
 
   useEffect(() => {
     return () => {
@@ -704,10 +687,7 @@ function CollabEditorArea({
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
-      if (wordCountTimerRef.current) {
-        clearTimeout(wordCountTimerRef.current);
-        wordCountTimerRef.current = null;
-      }
+
     };
   }, []);
 
@@ -793,7 +773,7 @@ function CollabEditorArea({
           <MessageSquare size={13} /> Notes & edits <span>{marginPresentation.count}</span>
         </button>}
       </div>
-      {propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={`${project.path}/${documentFilename}/${propertiesBlockId}`}
+      {quartoEnabled && propertiesBlockId && editor.getBlock(propertiesBlockId) && <QuartoPropertiesDialog key={`${project.path}/${documentFilename}/${propertiesBlockId}`}
         editor={editor} blockId={propertiesBlockId} onClose={() => setPropertiesBlockId(null)} />}
       <div className="scholar-editor-body">
       <div
@@ -806,7 +786,7 @@ function CollabEditorArea({
       >
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
         <div ref={reviewCanvasRef} className="sp-review-canvas" data-margin-layout={marginLayout}>
-          <QuartoBlockControls editor={editor} enabled={documentReady} onOpen={setPropertiesBlockId}>
+          <QuartoBlockControls editor={editor} enabled={documentReady && quartoEnabled} onOpen={setPropertiesBlockId}>
           <BlockNoteView
             editor={editor}
             onChange={handleChange}

@@ -1,3 +1,5 @@
+import { punctuationFromPrompt } from "../../../shared/writing-preferences";
+import { extensionEnabled, runExtensionTask } from "../../extensions/runtime";
 import * as Y from "yjs";
 import type { OllamaMessage } from "../../../shared/rpc-types";
 import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
@@ -41,16 +43,16 @@ import {
   isKoreanProse,
   parseHumanizeDiagnosis,
   sampleParagraphs,
-} from "./humanize/humanize";
-import { manuscriptLanguage } from "./humanize/language";
-import { englishHumanizeGuidance } from "./humanize/english";
+} from "../../../plugins/text-cleanup/main/humanize/humanize";
+import { manuscriptLanguage } from "../../../plugins/text-cleanup/main/humanize/language";
+import { englishHumanizeGuidance } from "../../../plugins/text-cleanup/main/humanize/english";
 import { cleanDocumentWatermarks } from "./watermark/document";
 import { editableSegments, parseTextEdits } from "../../../shared/ai-text-segments";
 import { completeWithDeadline } from "./completion";
 import { protectedRewritePreview, restoreProtectedSelection } from "../../../shared/ai-text-protection";
 import type { Node as PMNode } from "prosemirror-model";
 import { asksForAIScore, formatAIDetectionReport, type AIDetectionReport } from "../../../shared/ai-detection";
-import { analyzeAIText } from "../../ai-detector/service";
+import { analyzeAIText } from "../../extensions/ai-writing-score";
 import { resolveMentionedFiles, type MentionedFileContext } from "../../agent/mention-resolver";
 import { runBulkComments } from "./bulk-comments";
 import { projectBulkSources, type BulkSources } from "./bulk-sources";
@@ -84,7 +86,7 @@ export interface CollabAgentDeps {
   /** Per-model-call deadline, not a limit on processing the whole manuscript. */
   completionTimeoutMs?: number;
   /** The project's glossary and manuscript map, followed by every AI edit; none when absent. */
-  projectGuide?: (session: CollabSession) => Promise<{ glossary: Glossary; map: ManuscriptMap; preferences?: string }>;
+  projectGuide?: (session: CollabSession, purpose?: "draft" | "rewrite") => Promise<{ glossary: Glossary; map: ManuscriptMap; preferences?: string }>;
   /** The project around a document for coordinated revisions; defaults to its files on disk. */
   bulkSources?: (session: CollabSession) => BulkSources | Promise<BulkSources>;
   /** Decides suggestion vs direct edits for a block (zones refine this in stage 5). */
@@ -373,8 +375,8 @@ export class CollabAgent {
   }
 
   /** The author's standing rules for one job: how far edits may go, and the project's terms and chapters. */
-  async policyFor(session: CollabSession, level: EditLevel) {
-    const guide = await this.deps.projectGuide?.(session).catch(() => null);
+  async policyFor(session: CollabSession, level: EditLevel, purpose: "draft" | "rewrite" = "rewrite") {
+    const guide = await this.deps.projectGuide?.(session, purpose).catch(() => null);
     return [editLevelGuidance(level), guide ? glossaryGuidance(guide.glossary) : "", guide ? mapGuidance(guide.map, session.filename) : "", guide?.preferences ?? ""]
       .filter(Boolean).join("\n\n");
   }
@@ -391,6 +393,20 @@ export class CollabAgent {
   }
 
   private async runCommentJob(job: Job, attachment: Attachment, threadId: string, signal: AbortSignal) {
+    const thread = readThreads(attachment.session.ydoc.getMap(COLLAB_THREADS_MAP)).find(item => item.id === threadId);
+    if (!thread) return;
+    const latest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
+    const plugin = thread.meta.documentAction === "ai-score" || asksForAIScore(latest) ? "scholarpen.ai-writing-score"
+      : thread.meta.documentAction === "remove-watermark" || thread.meta.documentAction === "humanize" || asksForHumanize(conversationOf(thread)) ? "scholarpen.text-cleanup" : null;
+    if (plugin && !extensionEnabled(plugin)) {
+      this.setThread(attachment, threadId, { assignee: "me", status: "open", statusNote: "Enable this plugin in Settings → Extensions to run this action." });
+      return;
+    }
+    if (plugin) return runExtensionTask(plugin, scoped => this.runEnabledCommentJob(job, attachment, threadId, scoped), signal);
+    return this.runEnabledCommentJob(job, attachment, threadId, signal);
+  }
+
+  private async runEnabledCommentJob(job: Job, attachment: Attachment, threadId: string, signal: AbortSignal) {
     const { session } = attachment;
     const thread = readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).find((item) => item.id === threadId);
     if (!thread || !threadWantsAI(thread)) return;
@@ -683,7 +699,7 @@ export class CollabAgent {
       }
       if (fresh.length === 0) continue;
       attachment.presence.claim(fresh[0].id, "editing");
-      const bases: BlockBase[] = fresh.map((block) => captureBlock(block));
+      const bases: BlockBase[] = fresh.map((block) => captureBlock(block, punctuationFromPrompt(job.policy ?? "")));
       const first = blockContent(fresh[0]);
       const last = blockContent(fresh[fresh.length - 1]);
       const messages = buildCommentEditMessages({

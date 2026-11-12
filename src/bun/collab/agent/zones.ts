@@ -92,7 +92,7 @@ export function enqueueDraft(
   const title = section.heading.node.firstChild?.textContent.trim() ?? "Section";
   return agent.enqueue(attachment, { kind: "draft", label: title, blockId: section.heading.id },
     (job, att, signal) => runDraft(att, section.heading!.id, async (messages, callSignal) => {
-      const policy = await agent.policyFor(att.session, "structural");
+      const policy = await agent.policyFor(att.session, "structural", "draft");
       return complete(messages.map((message, index) => index === 0 ? { ...message, content: `${message.content}\n\n${policy}` } : message), callSignal);
     }, signal));
 }

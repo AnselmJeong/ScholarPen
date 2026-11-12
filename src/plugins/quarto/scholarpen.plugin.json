@@ -1,0 +1,56 @@
+{
+  "manifestVersion": 1,
+  "id": "scholarpen.quarto",
+  "name": "Quarto Publishing",
+  "description": "책 구성과 Quarto 렌더링",
+  "version": "1.0.0",
+  "apiVersion": "0.1.0",
+  "dataSchemaVersion": 1,
+  "permissions": [
+    "workspace.read",
+    "workspace.write",
+    "process.tool"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "scholarpen.quarto.discoverQuartoExtensions",
+        "title": "discoverQuartoExtensions",
+        "legacyMethod": "discoverQuartoExtensions",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      },
+      {
+        "id": "scholarpen.quarto.renderQuartoBook",
+        "title": "renderQuartoBook",
+        "legacyMethod": "renderQuartoBook",
+        "input": {
+          "type": "object",
+          "properties": {
+            "projectPath": {
+              "type": "string"
+            },
+            "format": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object"
+        }
+      }
+    ],
+    "slots": [
+      "toolbar"
+    ]
+  }
+}

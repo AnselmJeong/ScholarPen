@@ -1,3 +1,4 @@
+import { extensionEnabled } from "../extensions/state";
 import React from "react";
 import { insertOrUpdateBlockForSlashMenu, BlockNoteEditor } from "@blocknote/core";
 import { DefaultReactSuggestionItem } from "@blocknote/react";
@@ -98,7 +99,12 @@ export function getScholarSlashMenuItems(
       onItemClick: () =>
         insertOrUpdateBlockForSlashMenu(editor, { type: "abstract" }),
     },
-  ];
+  ].filter(item => {
+    const owner = item.title === "Insert DOI" ? "scholarpen.bibliography"
+      : item.title === "AI writing score" ? "scholarpen.ai-writing-score"
+      : item.title === "Humanize" || item.title === "Remove watermark" ? "scholarpen.text-cleanup" : null;
+    return !owner || extensionEnabled(owner);
+  });
 }
 
 // ── Custom heading items H1–H5 ─────────────────────────────────────────────

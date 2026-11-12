@@ -4,7 +4,7 @@ import { COLLAB_FRAGMENT } from "../../../../shared/collab/protocol";
 import { protectedLiteralRanges } from "../../../../shared/ai-text-protection";
 import type { CollabSession } from "../../registry";
 import { blockAt, hasSuggestionMarks, readDoc } from "../doc-model";
-import { cleanUnicode, type UnicodeEdit } from "./unicode";
+import { cleanUnicode, type UnicodeEdit } from "../../../../plugins/text-cleanup/main/watermark/unicode";
 
 /** Explicit whole-document cleanup. One reversible Yjs transaction; no AI rewrite. */
 export function cleanDocumentWatermarks(session: CollabSession, origin: unknown) {

@@ -22,7 +22,7 @@ async function render(provider: LLMProvider = "codex", model = "gpt-6.1-sol", ol
   if (!root) { container = document.createElement("div"); document.body.append(container); root = createRoot(container); }
   await act(async () => root!.render(<StatusBar sidebarAgentProvider={provider} sidebarAgentModel={model}
     ollamaStatus={{ connected: ollamaConnected, models: ["ollama-model"], activeModel: "ollama-model" }}
-    wordCount={123} onToggleAI={() => {}} />));
+    onToggleAI={() => {}} />));
 }
 afterEach(async () => { await act(async () => root?.unmount()); root = undefined; container?.remove(); status.mockReset(); claudeStatus.mockReset(); });
 afterAll(() => {

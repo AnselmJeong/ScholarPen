@@ -1,4 +1,4 @@
-import { reconstructOpenAlexAbstract } from "../citation/client";
+import { reconstructOpenAlexAbstract } from "../../plugins/bibliography/main/client";
 import type { FetchLike, WebSearchResult } from "./web-search";
 
 const OPENALEX_WORKS_URL = "https://api.openalex.org/works";

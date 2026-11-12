@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { QuartoPropertiesDialog } from "../components/editor/QuartoPropertiesDialog";
+import { QuartoPropertiesDialog } from "../../plugins/quarto/ui/QuartoPropertiesDialog";
 
 export function QuartoPropertiesButton({ editor, blockId, label }: {
   editor: BlockNoteEditor<any, any, any>; blockId: string; label: string;
