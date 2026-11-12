@@ -1,6 +1,6 @@
 import React, { useCallback } from "react";
 import { BookOpen } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../renderer/components/ui/tooltip";
+import { ToolbarButton } from "../../renderer/components/ui/toolbar-button";
 import { findBibliographyNode } from "../../renderer/utils/document-tree";
 import { rpc } from "../../renderer/rpc";
 import type { ExtensionUIProps } from "../../renderer/extensions/slots";
@@ -22,29 +22,6 @@ export default function BibliographyUI({ workspace }: ExtensionUIProps) {
     }
   }, [activeEditingProject, handleFileSelect, refreshFileTree]);
 
-  return <>
-          <TooltipProvider delayDuration={400}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleShowReferences}
-                  disabled={!activeProject}
-                  aria-label="Show references"
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
-                    disabled:cursor-not-allowed disabled:opacity-30
-                    ${activeFile?.kind === "reference"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    }`}
-                >
-                  <BookOpen className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Show references</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-  </>;
+  return <ToolbarButton label="Show references" icon={BookOpen} onClick={handleShowReferences}
+    isDisabled={!activeProject} isActive={activeFile?.kind === "reference"} />;
 }

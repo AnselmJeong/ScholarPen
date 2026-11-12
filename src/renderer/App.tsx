@@ -6,7 +6,7 @@ import { RevisionContextPanel, useRevisionContext } from "./components/review/Re
 import { ReviewWorkspace } from "./components/review/ReviewWorkspace";
 import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { PanelRightClose, PanelRightOpen, PenLine, Settings } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
+import { ToolbarButton } from "./components/ui/toolbar-button";
 import { Button } from "@astryxdesign/core/Button";
 import { LeftSidebar } from "./components/sidebar/LeftSidebar";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
@@ -518,23 +518,16 @@ export function App() {
         </div>
         <div className="workbench-toolbar flex items-center gap-1">
           <ExtensionSlot name="toolbar" />
-          <Button label="Settings" variant="ghost" size="sm" isIconOnly tooltip="Settings"
-            icon={<Settings className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />}
-            onClick={() => setCurrentView("settings")} />
+          <ToolbarButton label="Settings" icon={Settings} onClick={() => setCurrentView("settings")} />
           <span className="mx-1 h-4 w-px bg-sidebar-border" aria-hidden="true" />
           <Button label="Review & Revision" variant="secondary" size="sm" isDisabled={!activeProject}
             onClick={() => { setReviewWorkspaceOpen(true); setAiSidebarOpen(false); }} />
-          <Button
+          <ToolbarButton
             label={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
-            tooltip={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
-            variant="ghost" size="sm" isIconOnly
+            icon={aiSidebarOpen ? PanelRightClose : PanelRightOpen}
+            isActive={aiSidebarOpen}
             aria-expanded={aiSidebarOpen}
             aria-controls="ai-sidebar"
-            data-active={aiSidebarOpen || undefined}
-            className="workbench-toggle"
-            icon={aiSidebarOpen
-              ? <PanelRightClose className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
-              : <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />}
             onClick={() => setAiSidebarOpen(open => !open)}
           />
         </div>

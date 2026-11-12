@@ -13,17 +13,11 @@ import {
   type MessageState,
   type ThreadMessageLike,
 } from "@assistant-ui/react";
-import { BookOpen, Bot, ChevronDown, ChevronRight, Clipboard, Copy, Globe2, MessageSquare, Paperclip, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
+import { BookOpen, Bot, Check, ChevronDown, ChevronRight, Clipboard, Copy, Globe2, MessageSquare, Paperclip, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu as AstryxDropdownMenu } from "@astryxdesign/core/DropdownMenu";
+import { Button as AstryxButton } from "@astryxdesign/core/Button";
 import { cn } from "@/lib/utils";
 import type {
   ActiveDocumentContext,
@@ -510,72 +504,52 @@ function ThreadHistoryPanel({
   return (
     <div className="border-b border-border bg-background px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              className="h-8 min-w-0 flex-1 justify-start gap-2 px-2 text-left"
-              title={activeThread?.title ?? "Thread 선택"}
-            >
-              <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                {activeThread?.title ?? "Threads"}
-              </span>
-              <span className="flex-shrink-0 text-[11px] text-muted-foreground">
-                {threads.length}
-              </span>
-              <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-[min(520px,calc(100vw-2rem))] max-h-80 overflow-y-auto">
-            <DropdownMenuLabel>Threads</DropdownMenuLabel>
-            {threads.length === 0 ? (
-              <DropdownMenuItem disabled className="text-xs text-muted-foreground">
-                저장된 thread 없음
-              </DropdownMenuItem>
-            ) : (
-              threads.map((thread) => (
-                <DropdownMenuItem
-                  key={thread.id}
-                  onSelect={() => onSelectThread(thread.id)}
-                  className={cn(
-                    "group flex items-center gap-2 rounded-md px-2 py-2",
-                    activeThreadId === thread.id && "bg-primary/10",
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-foreground">{thread.title}</p>
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      {thread.provider} · {thread.model} · {formatThreadTime(thread.updatedAt)}
-                    </p>
-                  </div>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-6 w-6 flex-shrink-0 opacity-60 hover:opacity-100"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onDeleteThread(thread.id);
-                    }}
-                    title="thread 삭제"
-                    type="button"
-                  >
-                    <Trash2 className="h-3 w-3 text-muted-foreground" />
-                  </Button>
-                </DropdownMenuItem>
-              ))
+        <div className="min-w-0 flex-1">
+          <AstryxDropdownMenu
+            menuWidth="min(520px, calc(100vw - 2rem))"
+            menuMaxHeight={360}
+            items={[
+              {
+                type: "section" as const,
+                title: "Threads",
+                items: threads.length === 0
+                  ? [{ label: "저장된 thread 없음", isDisabled: true }]
+                  : threads.map((thread) => ({
+                    label: thread.title,
+                    description: `${thread.provider} · ${thread.model} · ${formatThreadTime(thread.updatedAt)}`,
+                    endContent: activeThreadId === thread.id ? <Check className="h-3.5 w-3.5 text-primary" aria-hidden="true" /> : undefined,
+                    onClick: () => onSelectThread(thread.id),
+                  })),
+              },
+              { type: "divider" as const },
+              { label: "새 thread", icon: Plus, onClick: onNewThread },
+              ...(threads.length > 0 ? [{
+                label: "Thread 삭제",
+                icon: Trash2,
+                items: threads.map((thread) => ({
+                  label: thread.title,
+                  variant: "destructive" as const,
+                  onClick: () => onDeleteThread(thread.id),
+                })),
+              }] : []),
+            ]}
+            renderTrigger={(trigger) => (
+              <button {...trigger} type="button" title={activeThread?.title ?? "Thread 선택"}
+                className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+                <MessageSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                  {activeThread?.title ?? "Threads"}
+                </span>
+                <span className="flex-shrink-0 font-mono-ui text-[11px] text-muted-foreground">
+                  {threads.length}
+                </span>
+                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
+              </button>
             )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={onNewThread} className="gap-2 text-xs">
-              <Plus className="h-3.5 w-3.5" />
-              새 thread
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button size="icon" variant="ghost" className="h-8 w-8 flex-shrink-0" onClick={onNewThread} title="새 thread">
-          <Plus className="h-3.5 w-3.5" />
-        </Button>
+          />
+        </div>
+        <AstryxButton label="새 thread" tooltip="새 thread" variant="ghost" size="sm" isIconOnly
+          icon={<Plus className="h-3.5 w-3.5" aria-hidden="true" />} onClick={onNewThread} />
       </div>
     </div>
   );

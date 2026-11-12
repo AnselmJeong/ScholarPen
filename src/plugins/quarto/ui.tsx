@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { BookMarked, Play } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../renderer/components/ui/tooltip";
+import { ToolbarButton } from "../../renderer/components/ui/toolbar-button";
 import { QuartoBookDialog, type QuartoBookSetup } from "./ui/QuartoBookDialog";
 import { QuartoRenderDialog } from "./ui/QuartoRenderDialog";
 import type { QuartoExtensionDiscovery, QuartoRenderFormat, QuartoRenderResult } from "../../shared/rpc-types";
@@ -159,45 +159,10 @@ export default function QuartoUI({ workspace }: ExtensionUIProps) {
   }, [activeProject, handleFileSelect]);
 
   return <>
-          <TooltipProvider delayDuration={400}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleOpenQuartoBookDialog}
-                  disabled={!activeProject}
-                  aria-label="Configure Quarto book"
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors
-                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
-                    disabled:cursor-not-allowed disabled:opacity-30
-                    ${activeFile?.name === "_quarto.yml"
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    }`}
-                >
-                  <BookMarked className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Configure Quarto book</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider delayDuration={400}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleOpenQuartoRenderDialog}
-                  disabled={!activeProject}
-                  aria-label="Render Quarto book"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  <Play className="h-4 w-4" strokeWidth={1.8} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Render Quarto book</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>      <QuartoBookDialog
+          <ToolbarButton label="Configure Quarto book" icon={BookMarked} onClick={handleOpenQuartoBookDialog}
+            isDisabled={!activeProject} isActive={activeFile?.name === "_quarto.yml"} />
+          <ToolbarButton label="Render Quarto book" icon={Play} onClick={handleOpenQuartoRenderDialog} isDisabled={!activeProject} />
+      <QuartoBookDialog
         key={activeProject?.path ?? "no-project"}
         open={quartoBookDialogOpen}
         onOpenChange={setQuartoBookDialogOpen}

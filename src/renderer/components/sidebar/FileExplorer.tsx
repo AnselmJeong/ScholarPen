@@ -27,23 +27,14 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu";
+import { ContextMenu, type ContextMenuOption } from "@astryxdesign/core/ContextMenu";
 import { AppDialog } from "@/components/ui/app-dialog";
 import { Button as AstryxButton } from "@astryxdesign/core/Button";
 import { TextInput } from "@astryxdesign/core/TextInput";
 import { Text } from "@astryxdesign/core/Text";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
 import type { ProjectInfo, FileNode } from "@shared/rpc-types";
@@ -52,13 +43,6 @@ import {
   selectablePathsWithin, toggleFileSelection, runFileBatch,
   type FileBatchResult,
 } from "./file-selection";
-
-// ── Context Menu ──────────────────────────────────────────────
-interface ContextMenuState {
-  x: number;
-  y: number;
-  node: FileNode;
-}
 
 // ── Props ──────────────────────────────────────────────────────
 interface FileExplorerProps {
@@ -116,7 +100,8 @@ interface TreeNodeProps {
   activeFile: FileNode | null;
   query: string;
   onFileSelect: (file: FileNode) => void;
-  onContextMenu: (e: React.MouseEvent, node: FileNode) => void;
+  /** Right-click actions for a row (Astryx ContextMenu). */
+  menuItems: (node: FileNode) => ContextMenuOption[];
   renamingNode: FileNode | null;
   onRenameSubmit: (node: FileNode, newName: string) => void;
   onRenameCancel: () => void;
@@ -161,7 +146,7 @@ function TreeNode({
   activeFile,
   query,
   onFileSelect,
-  onContextMenu,
+  menuItems,
   renamingNode,
   onRenameSubmit,
   onRenameCancel,
@@ -211,8 +196,8 @@ function TreeNode({
 
     return (
       <div>
+        <ContextMenu items={menuItems(node)} label={`${name} actions`} size="sm" menuWidth={220}>
         <div
-          onContextMenu={(e) => onContextMenu(e, node)}
           className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-sm text-foreground hover:bg-sidebar-accent transition-colors"
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
@@ -240,6 +225,7 @@ function TreeNode({
             <span className="truncate text-xs font-medium">{name}</span>
           </button>
         </div>
+        </ContextMenu>
         {(isOpen || !!query) && node.children && (
           <div>
             {node.children.map((child) => (
@@ -250,7 +236,7 @@ function TreeNode({
                 activeFile={activeFile}
                 query={query}
                 onFileSelect={onFileSelect}
-                onContextMenu={onContextMenu}
+                menuItems={menuItems}
                 renamingNode={renamingNode}
                 onRenameSubmit={onRenameSubmit}
                 onRenameCancel={onRenameCancel}
@@ -295,8 +281,8 @@ function TreeNode({
   }
 
   return (
+    <ContextMenu items={menuItems(node)} label={`${name} actions`} size="sm" menuWidth={220}>
     <div
-      onContextMenu={(e) => onContextMenu(e, node)}
       className={cn(
         "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
         isActive
@@ -333,6 +319,7 @@ function TreeNode({
         <span className="truncate">{name}</span>
       </button>
     </div>
+    </ContextMenu>
   );
 }
 
@@ -359,7 +346,6 @@ export function FileExplorer({
   const [newDocDialogOpen, setNewDocDialogOpen] = useState(false);
   const [newDocName, setNewDocName] = useState("");
   const [creating, setCreating] = useState(false);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renamingNode, setRenamingNode] = useState<FileNode | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteTargets, setDeleteTargets] = useState<FileNode[]>([]);
@@ -374,13 +360,6 @@ export function FileExplorer({
   const selectedDocuments = selectedFiles.filter(file => file.kind === "document");
   const selectedImports = selectedFiles.filter(isImportableFile);
 
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handler = () => setContextMenu(null);
-    window.addEventListener("click", handler);
-    return () => window.removeEventListener("click", handler);
-  }, [contextMenu]);
 
   useEffect(() => {
     setSelectionMode(false);
@@ -456,14 +435,8 @@ export function FileExplorer({
   }, [onProjectChange]);
 
   // ── Context menu actions ─────────────────────────────────
-  const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, node });
-  }, []);
 
   const handleRename = useCallback((node: FileNode) => {
-    setContextMenu(null);
     setRenamingNode(node);
   }, []);
 
@@ -479,7 +452,6 @@ export function FileExplorer({
   }, [onRefreshTree, onFileRenamed]);
 
   const handleDelete = useCallback((node: FileNode) => {
-    setContextMenu(null);
     setDeleteTargets([node]);
     setDeleteConfirmOpen(true);
   }, []);
@@ -512,12 +484,10 @@ export function FileExplorer({
   }, [deleteTargets, performBatch]);
 
   const handleImport = useCallback(async (node: FileNode) => {
-    setContextMenu(null);
     await performBatch([node], "Imported", true);
   }, [performBatch]);
 
   const handleExport = useCallback((node: FileNode) => {
-    setContextMenu(null);
     onExportDocuments([node]);
   }, [onExportDocuments]);
 
@@ -555,69 +525,59 @@ export function FileExplorer({
   }, [onRefreshTree, refreshing]);
 
   // ── Context menu items ──────────────────────────────────
-  const getContextMenuItems = (node: FileNode) => {
-    const items: { label: string; icon: React.ReactNode; action: () => void; className?: string }[] = [];
+  const getContextMenuItems = (node: FileNode): ContextMenuOption[] => {
+    const rename: ContextMenuOption = { label: "Rename", icon: Pencil, onClick: () => handleRename(node) };
+    const remove: ContextMenuOption = { label: "Delete", icon: Trash2, variant: "destructive", onClick: () => handleDelete(node) };
+    const select: ContextMenuOption = { label: "Select files...", icon: ListChecks, onClick: () => {
+      setSelectionMode(true);
+      setSelectedPaths((current) => new Set([...current, node.path]));
+    } };
+    const items: ContextMenuOption[] = [];
 
     if (node.isDirectory && node.name === "documents") {
-      items.push({
-        label: "Find & Replace in Documents...",
-        icon: <Search className="h-3.5 w-3.5" />,
-        action: () => {
-          setContextMenu(null);
-          onFindReplaceDocuments();
-        },
-      });
+      items.push({ label: "Find & Replace in Documents...", icon: Search, onClick: () => onFindReplaceDocuments() }, { type: "divider" });
     }
 
     if (node.kind === "document") {
-      items.push({ label: "Export...", icon: <Download className="h-3.5 w-3.5" />, action: () => handleExport(node) });
-      items.push({
-        label: "Select files...",
-        icon: <ListChecks className="h-3.5 w-3.5" />,
-        action: () => {
-          setContextMenu(null);
-          setSelectionMode(true);
-          setSelectedPaths((current) => {
-            const next = new Set(current);
-            next.add(node.path);
-            return next;
-          });
-        },
-      });
-      items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
-      items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
-    } else if (isImportableFile(node)) {
-      const ext = node.name.slice(node.name.lastIndexOf(".")).toLowerCase();
-      if ([".md", ".qmd", ".markdown"].includes(ext)) {
-        items.push({ label: "Import as Document", icon: <Upload className="h-3.5 w-3.5" />, action: () => handleImport(node) });
-        items.push({ label: "Select files...", icon: <ListChecks className="h-3.5 w-3.5" />, action: () => {
-          setContextMenu(null); setSelectionMode(true);
-          setSelectedPaths(current => new Set([...current, node.path]));
-        } });
-      }
-      items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
-      items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
+      items.push({ label: "Export...", icon: Download, onClick: () => handleExport(node) }, select, { type: "divider" }, rename, remove);
+    } else if (isImportableFile(node) && [".md", ".qmd", ".markdown"].includes(node.name.slice(node.name.lastIndexOf(".")).toLowerCase())) {
+      items.push({ label: "Import as Document", icon: Upload, onClick: () => handleImport(node) }, select, { type: "divider" }, rename, remove);
     } else {
-      items.push({ label: "Rename", icon: <Pencil className="h-3.5 w-3.5" />, action: () => handleRename(node) });
-      items.push({ label: "Delete", icon: <Trash2 className="h-3.5 w-3.5 text-red-500" />, action: () => handleDelete(node), className: "text-red-600" });
+      items.push(rename, remove);
     }
 
     return items;
   };
 
   return (
-    <TooltipProvider delayDuration={500}>
+    <>
       <div inert={batchBusy} className="w-56 flex-shrink-0 bg-sidebar flex flex-col h-full select-none">
         {/* Project header */}
         <div className="px-3 pt-4 pb-2">
           <p className="workbench-section-label mb-2">
             Project
           </p>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="flex w-full items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 py-1.5 hover:border-input transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+          <DropdownMenu
+            menuWidth={220}
+            menuMaxHeight={420}
+            items={[
+              ...(projects.length > 0 ? [{
+                type: "section" as const,
+                title: "Projects",
+                items: projects.map((p) => ({
+                  label: p.name,
+                  icon: Folder,
+                  endContent: activeProject?.path === p.path ? <Check className="h-3.5 w-3.5 text-primary" aria-hidden="true" /> : undefined,
+                  onClick: () => onProjectChange(p),
+                })),
+              }, { type: "divider" as const }] : []),
+              { label: "Open folder...", icon: FolderOpenIcon, onClick: () => void handleOpenFolder() },
+            ]}
+            renderTrigger={(trigger) => (
+              <button {...trigger} type="button" aria-label={`Project: ${activeProject?.name ?? "No project"}`}
+                className="flex w-full items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 py-1.5 hover:border-input transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
                 <div className="flex h-6 w-6 items-center justify-center rounded flex-shrink-0 bg-muted text-muted-foreground">
-                  <PenLine className="h-3.5 w-3.5" />
+                  <PenLine className="h-3.5 w-3.5" aria-hidden="true" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <span className="block truncate text-xs font-semibold text-foreground">
@@ -629,40 +589,15 @@ export function FileExplorer({
                     </span>
                   )}
                 </div>
-                <ChevronDown className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                <ChevronDown className="h-3 w-3 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
               </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-52">
-              {projects.length > 0 && (
-                <>
-                  <DropdownMenuLabel>Projects</DropdownMenuLabel>
-                  {projects.map((p) => (
-                    <DropdownMenuItem
-                      key={p.path}
-                      onClick={() => onProjectChange(p)}
-                      className={cn(activeProject?.path === p.path && "bg-accent")}
-                    >
-                      <Folder className="h-3.5 w-3.5" />
-                      <span className="truncate">{p.name}</span>
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                </>
-              )}
-              <DropdownMenuItem onClick={handleOpenFolder}>
-                <FolderOpenIcon className="h-3.5 w-3.5" />
-                Open folder...
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <button
-            type="button"
-            onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
-            className="mt-2 flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-input text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            New Project
-          </button>
+            )}
+          />
+          <div className="mt-2">
+            <AstryxButton label="New Project" variant="ghost" size="sm" width="100%"
+              icon={<Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+              onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }} />
+          </div>
         </div>
 
 
@@ -682,40 +617,20 @@ export function FileExplorer({
               </p>
             )}
             {activeProject && (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center">
                 {selectableFiles.length > 0 && (
-                  <button
-                    onClick={() => {
-                      if (selectionMode) exitSelectionMode();
-                      else setSelectionMode(true);
-                    }}
-                    className={cn(
-                      "transition-colors",
-                      selectionMode
-                        ? "text-primary hover:text-primary/70"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                    title={selectionMode ? "Cancel selection" : "Select documents or Markdown files"}
-                    aria-label={selectionMode ? "Cancel file selection" : "Select documents or Markdown files"}
-                  >
-                    {selectionMode ? <X className="h-3.5 w-3.5" /> : <ListChecks className="h-3.5 w-3.5" />}
-                  </button>
+                  <AstryxButton
+                    label={selectionMode ? "Cancel file selection" : "Select documents or Markdown files"}
+                    tooltip={selectionMode ? "Cancel selection" : "Select documents or Markdown files"}
+                    variant="ghost" size="sm" isIconOnly className="workbench-toggle" data-active={selectionMode || undefined}
+                    icon={selectionMode ? <X className="h-3.5 w-3.5" aria-hidden="true" /> : <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />}
+                    onClick={() => { if (selectionMode) exitSelectionMode(); else setSelectionMode(true); }}
+                  />
                 )}
-                <button
-                  onClick={handleRefreshExplorer}
-                  disabled={refreshing}
-                  className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-                  title="Reload explorer"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-                </button>
-                <button
-                  onClick={() => setNewDocDialogOpen(true)}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                  title="New Document"
-                >
-                  <FilePlus className="h-3.5 w-3.5" />
-                </button>
+                <AstryxButton label="Reload explorer" tooltip="Reload explorer" variant="ghost" size="sm" isIconOnly
+                  isLoading={refreshing} icon={<RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />} onClick={handleRefreshExplorer} />
+                <AstryxButton label="New Document" tooltip="New Document" variant="ghost" size="sm" isIconOnly
+                  icon={<FilePlus className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => setNewDocDialogOpen(true)} />
               </div>
             )}
           </div>
@@ -723,15 +638,8 @@ export function FileExplorer({
           {/* Search */}
           {activeProject && (
             <div className="px-2 pb-2">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-                <Input
-                  placeholder="Search files..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-6 h-6 text-xs"
-                />
-              </div>
+              <TextInput label="Search files" isLabelHidden size="sm" type="search" startIcon={Search} placeholder="Search files..."
+                value={searchQuery} onChange={setSearchQuery} hasClear />
             </div>
           )}
 
@@ -753,7 +661,7 @@ export function FileExplorer({
                     activeFile={activeFile}
                     query={searchQuery}
                     onFileSelect={onFileSelect}
-                    onContextMenu={handleContextMenu}
+                    menuItems={getContextMenuItems}
                     renamingNode={renamingNode}
                     onRenameSubmit={handleRenameSubmit}
                     onRenameCancel={() => setRenamingNode(null)}
@@ -788,23 +696,17 @@ export function FileExplorer({
                   {selectedFiles.length}/{selectableFiles.length}
                 </span>
               </div>
-              <Button
-                size="sm"
-                className="h-7 w-full rounded-lg text-[11px]"
-                disabled={selectedDocuments.length === 0}
-                onClick={handleExportSelected}
-              >
-                <Download className="h-3 w-3" />
-                Export {selectedDocuments.length || ""} {selectedDocuments.length === 1 ? "section" : "sections"}
-              </Button>
-              <Button size="sm" variant="outline" className="mt-1 h-7 w-full rounded-lg text-[11px]"
-                disabled={selectedImports.length === 0} onClick={() => performBatch(selectedImports, "Imported")}>
-                <Upload className="h-3 w-3" /> Import {selectedImports.length || ""} MD/QMD
-              </Button>
-              <Button size="sm" variant="destructive" className="mt-1 h-7 w-full rounded-lg text-[11px]"
-                disabled={selectedFiles.length === 0} onClick={() => { setDeleteTargets(selectedFiles); setDeleteConfirmOpen(true); }}>
-                <Trash2 className="h-3 w-3" /> Delete {selectedFiles.length || ""} files
-              </Button>
+              <div className="flex flex-col gap-1">
+                <AstryxButton size="sm" variant="primary" width="100%" isDisabled={selectedDocuments.length === 0} onClick={handleExportSelected}
+                  icon={<Download className="h-3 w-3" aria-hidden="true" />}
+                  label={`Export ${selectedDocuments.length || ""} ${selectedDocuments.length === 1 ? "section" : "sections"}`} />
+                <AstryxButton size="sm" variant="secondary" width="100%" isDisabled={selectedImports.length === 0}
+                  onClick={() => performBatch(selectedImports, "Imported")} icon={<Upload className="h-3 w-3" aria-hidden="true" />}
+                  label={`Import ${selectedImports.length || ""} MD/QMD`} />
+                <AstryxButton size="sm" variant="destructive" width="100%" isDisabled={selectedFiles.length === 0}
+                  onClick={() => { setDeleteTargets(selectedFiles); setDeleteConfirmOpen(true); }} icon={<Trash2 className="h-3 w-3" aria-hidden="true" />}
+                  label={`Delete ${selectedFiles.length || ""} files`} />
+              </div>
             </div>
           )}
         </div>
@@ -817,29 +719,6 @@ export function FileExplorer({
         {/* bottom padding */}
         <div className="py-2" />
       </div>
-
-      {/* Context Menu */}
-      {contextMenu && (
-        <div
-          className="fixed z-50 bg-popover border border-border text-popover-foreground rounded-md shadow-lg py-1 min-w-[140px] !w-auto text-sm"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {getContextMenuItems(contextMenu.node).map((item, i) => (
-            <button
-              key={i}
-              onClick={item.action}
-              className={cn(
-                "flex w-full items-center gap-2 px-3 py-1.5 hover:bg-accent transition-colors text-left",
-                item.className
-              )}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* New Project Dialog */}
       <AppDialog isOpen={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen} title="New Project" width={400} purpose="form"
@@ -877,6 +756,6 @@ export function FileExplorer({
           {deleteTargets.map(file => <li key={file.path}>{file.path.replace(`${activeProject?.path}/`, "")}</li>)}
         </ul>
       </AppDialog>
-    </TooltipProvider>
+    </>
   );
 }
