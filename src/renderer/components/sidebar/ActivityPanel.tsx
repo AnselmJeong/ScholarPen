@@ -1,3 +1,5 @@
+import { Tab, TabList } from "@astryxdesign/core/TabList";
+import { Button } from "@astryxdesign/core/Button";
 import { AIDetectorSetup } from "../../../plugins/ai-writing-score/ui/AIDetectorSetup";
 import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
@@ -435,23 +437,17 @@ export function ActivityPanelHeader({ tab, onTab, onClose, revisionAvailable = f
   onTab: (tab: RightPanelTab) => void;
   onClose: () => void;
 }) {
+  const tabs = [...(revisionAvailable ? ["revision" as const] : []), "activity", "history", "project", "assistant"] as const;
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
-      {([...(revisionAvailable ? ["revision" as const] : []), "activity", "history", "project", "assistant"] as const).map((value) => (
-        <button
-          key={value}
-          type="button"
-          onClick={() => onTab(value)}
-          className={cn("rounded px-2 py-1 text-xs font-medium",
-            tab === value ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}
-        >
-          {TAB_LABEL[value]}
-        </button>
-      ))}
-      <button type="button" onClick={onClose} aria-label="Close panel"
-        className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
-        <X className="h-3.5 w-3.5" />
-      </button>
+    <div className="workbench-panel-header flex h-9 flex-shrink-0 items-end gap-1 border-b border-sidebar-border pl-1 pr-1.5">
+      <div className="min-w-0 flex-1">
+        <TabList value={tab} onChange={(value) => onTab(value as RightPanelTab)} size="sm" role="tablist" aria-label="Side panel">
+          {tabs.map((value) => <Tab key={value} value={value} label={TAB_LABEL[value]} />)}
+        </TabList>
+      </div>
+      <div className="flex h-full items-center">
+        <Button label="Close panel" variant="ghost" size="sm" isIconOnly icon={<X className="h-3.5 w-3.5" aria-hidden="true" />} onClick={onClose} />
+      </div>
     </div>
   );
 }

@@ -1,0 +1,2 @@
+/* Declared before any other stylesheet so cascade-layer order is fixed: Astryx reset < Tailwind preflight < Astryx components < Astryx theme. App rules stay unlayered. */
+@layer reset, tw-preflight, astryx-base, astryx-theme;

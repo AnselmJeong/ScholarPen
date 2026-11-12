@@ -7,6 +7,7 @@ import { ReviewWorkspace } from "./components/review/ReviewWorkspace";
 import React, { Suspense, lazy, useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from "react";
 import { PanelRightClose, PanelRightOpen, PenLine, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
+import { Button } from "@astryxdesign/core/Button";
 import { LeftSidebar } from "./components/sidebar/LeftSidebar";
 import { EditorPaneGroup, type EditorPaneGroupHandle } from "./components/editor/EditorPaneGroup";
 import { StatusBar } from "./components/editor/StatusBar";
@@ -496,36 +497,46 @@ export function App() {
       selectFile: handleFileSelect, setFiles: setFileTree, refreshFiles: refreshFileTree, reloadBibliography: () => setBibReloadTrigger(value => value + 1) }}>
     <div className="flex flex-col h-screen overflow-hidden bg-background">
       {/* Top Bar */}
-      <header className="flex items-center justify-between px-5 h-12 flex-shrink-0" style={{ background: "hsl(var(--background))", boxShadow: "0 1px 0 rgba(91,33,182,0.08)" }}>
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg flex-shrink-0"
-               style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}>
-            <PenLine className="h-4 w-4 text-white" />
+      <header className="workbench-titlebar flex items-center justify-between pl-3 pr-2 h-10 flex-shrink-0 border-b border-sidebar-border bg-sidebar">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="flex h-6 w-6 items-center justify-center rounded-md flex-shrink-0 bg-primary text-primary-foreground">
+            <PenLine className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
           </div>
-          <span className="text-sm font-bold tracking-tight text-foreground">ScholarPen</span>
+          <span className="text-[13px] font-semibold tracking-tight text-foreground">ScholarPen</span>
+          {activeProject && (
+            <span className="workbench-path flex min-w-0 items-center gap-1.5 text-muted-foreground">
+              <span aria-hidden="true">/</span>
+              <span className="truncate text-foreground/80">{activeProject.name}</span>
+              {activeFile && !activeFile.isDirectory && (
+                <>
+                  <span aria-hidden="true">/</span>
+                  <span className="truncate">{activeFile.name.replace(/\.scholarpen\.json$/, "")}</span>
+                </>
+              )}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setCurrentView("settings")}
-            title="Settings" aria-label="Settings"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40">
-            <Settings className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
-          </button>
+        <div className="workbench-toolbar flex items-center gap-1">
           <ExtensionSlot name="toolbar" />
-
-          <button disabled={!activeProject} onClick={() => { setReviewWorkspaceOpen(true); setAiSidebarOpen(false); }} className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-xs font-medium text-primary hover:bg-accent disabled:opacity-40">Review &amp; Revision</button>
-          <button
-            type="button"
-            onClick={() => setAiSidebarOpen(open => !open)}
-            title={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
-            aria-label={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
+          <Button label="Settings" variant="ghost" size="sm" isIconOnly tooltip="Settings"
+            icon={<Settings className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />}
+            onClick={() => setCurrentView("settings")} />
+          <span className="mx-1 h-4 w-px bg-sidebar-border" aria-hidden="true" />
+          <Button label="Review & Revision" variant="secondary" size="sm" isDisabled={!activeProject}
+            onClick={() => { setReviewWorkspaceOpen(true); setAiSidebarOpen(false); }} />
+          <Button
+            label={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
+            tooltip={aiSidebarOpen ? "Hide AI sidebar" : "Show AI sidebar"}
+            variant="ghost" size="sm" isIconOnly
             aria-expanded={aiSidebarOpen}
             aria-controls="ai-sidebar"
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${aiSidebarOpen ? "bg-primary/10 text-primary hover:bg-primary/15" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
-          >
-            {aiSidebarOpen
+            data-active={aiSidebarOpen || undefined}
+            className="workbench-toggle"
+            icon={aiSidebarOpen
               ? <PanelRightClose className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
               : <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />}
-          </button>
+            onClick={() => setAiSidebarOpen(open => !open)}
+          />
         </div>
       </header>
 
@@ -555,7 +566,7 @@ export function App() {
         {/* Resize handle */}
         <div
           hidden={!leftSidebarOpen}
-          className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
+          className="workbench-splitter" role="separator" aria-orientation="vertical"
           onMouseDown={handleLeftResizeMouseDown}
         />
 
@@ -647,10 +658,10 @@ export function App() {
         {aiSidebarOpen && (
           <>
             <div
-              className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/20 active:bg-primary/40 transition-colors"
+              className="workbench-splitter" role="separator" aria-orientation="vertical"
               onMouseDown={handleAIResizeMouseDown}
             />
-            <div id="ai-sidebar" className="flex h-full flex-shrink-0 flex-col border-l border-border bg-background" style={{ width: rightPanelTab === "revision" ? revisionSidebarWidth : aiSidebarWidth }}>
+            <div id="ai-sidebar" className="flex h-full flex-shrink-0 flex-col bg-sidebar" style={{ width: rightPanelTab === "revision" ? revisionSidebarWidth : aiSidebarWidth }}>
               <ActivityPanelHeader revisionAvailable={Boolean(isRevisionDocument)} tab={rightPanelTab} onTab={setRightPanelTab} onClose={() => setAiSidebarOpen(false)} />
               {rightPanelTab === "revision" && <RevisionContextPanel state={revisionContext} filename={revisionFilename} editor={activeEditor} onShowManuscript={() => setRevisionView("manuscript")} />}
               <div className="flex min-h-0 flex-1 flex-col" style={{ display: rightPanelTab === "activity" ? "flex" : "none" }}>

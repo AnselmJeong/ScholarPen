@@ -301,19 +301,13 @@ function TreeNode({
     <div
       onContextMenu={(e) => onContextMenu(e, node)}
       className={cn(
-        "flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs transition-colors",
+        "flex w-full items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
         isActive
-          ? "font-semibold"
-          : "hover:bg-sidebar-accent/50"
+          ? "font-medium bg-primary/10 text-primary shadow-[inset_2px_0_0_hsl(var(--primary))]"
+          : "text-sidebar-foreground hover:bg-sidebar-accent"
       )}
       style={{
         paddingLeft: `${depth * 12 + 10}px`,
-        ...(isActive ? {
-          background: "rgba(91,33,182,0.12)",
-          color: "#5b21b6",
-        } : {
-          color: "var(--scholar-text)",
-        })
       }}
     >
       {selectionMode && isSelectableFile(node) && (
@@ -629,27 +623,26 @@ export function FileExplorer({
       <div inert={batchBusy} className="w-56 flex-shrink-0 bg-sidebar flex flex-col h-full select-none">
         {/* Project header */}
         <div className="px-3 pt-4 pb-2">
-          <p className="text-[10px] font-semibold uppercase tracking-widest mb-2" style={{ color: "var(--scholar-muted)" }}>
+          <p className="workbench-section-label mb-2">
             Project
           </p>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-sidebar-accent transition-colors text-left" style={{ background: "rgba(139,92,246,0.08)" }}>
-                <div className="flex h-6 w-6 items-center justify-center rounded-md flex-shrink-0"
-                     style={{ background: "linear-gradient(135deg, #5b21b6 0%, #4c1d95 100%)" }}>
-                  <PenLine className="h-3.5 w-3.5 text-white" />
+              <button className="flex w-full items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 py-1.5 hover:border-input transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+                <div className="flex h-6 w-6 items-center justify-center rounded flex-shrink-0 bg-muted text-muted-foreground">
+                  <PenLine className="h-3.5 w-3.5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <span className="block truncate text-xs font-semibold" style={{ color: "var(--scholar-text)" }}>
+                  <span className="block truncate text-xs font-semibold text-foreground">
                     {activeProject?.name ?? "No project"}
                   </span>
                   {activeProject && (
-                    <span className="block text-[10px] font-medium uppercase tracking-wide" style={{ color: "var(--scholar-muted)" }}>
+                    <span className="block font-mono-ui text-[10px] text-muted-foreground">
                       Active Manuscript
                     </span>
                   )}
                 </div>
-                <ChevronDown className="h-3 w-3 flex-shrink-0" style={{ color: "var(--scholar-muted)" }} />
+                <ChevronDown className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-52">
@@ -678,7 +671,7 @@ export function FileExplorer({
           <button
             type="button"
             onClick={() => { setNewProjectName(""); setNewProjectDialogOpen(true); }}
-            className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-primary/20 text-xs font-medium text-primary transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            className="mt-2 flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-input text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
             New Project
@@ -692,12 +685,12 @@ export function FileExplorer({
             {selectionMode ? (
               <div className="flex min-w-0 items-center gap-1.5">
                 <ListChecks className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
-                <p className="truncate text-[10px] font-semibold uppercase tracking-widest text-primary">
+                <p className="workbench-section-label truncate !text-primary">
                   {selectedFiles.length} selected
                 </p>
               </div>
             ) : (
-              <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: "var(--scholar-muted)" }}>
+              <p className="workbench-section-label">
                 Explorer
               </p>
             )}
@@ -790,7 +783,7 @@ export function FileExplorer({
             <div
               className="mx-2 mb-2 flex-shrink-0 rounded-xl border p-2 shadow-sm"
               style={{
-                borderColor: "rgba(91,33,182,0.16)",
+                borderColor: "hsl(var(--primary) / 0.2)",
                 background: "hsl(var(--sidebar-accent) / 0.35)",
               }}
             >

@@ -257,6 +257,41 @@ export function onBibliographyValidationProgress(
   };
 }
 
+function browserDemoMock(method: string): unknown {
+  const now = Date.now();
+  const file = (name: string, path: string, kind: FileNode["kind"]): FileNode => ({ name, path, kind, isDirectory: false, lastModified: now });
+  const folder = (name: string, path: string, children: FileNode[]): FileNode => ({ name, path, kind: "folder", isDirectory: true, children, lastModified: now });
+  const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text, styles: {} }] });
+  const heading = (text: string, level: number) => ({ type: "heading", props: { level }, content: [{ type: "text", text, styles: {} }] });
+  switch (method) {
+    case "listProjects":
+      return [{ name: "demo-paper", path: "/demo-paper", files: [], lastModified: now }];
+    case "listProjectFiles":
+      return [
+        folder("documents", "/demo-paper/documents", [
+          file("introduction.scholarpen.json", "/demo-paper/documents/introduction.scholarpen.json", "document"),
+          file("methods.scholarpen.json", "/demo-paper/documents/methods.scholarpen.json", "document"),
+        ]),
+        folder("drafts", "/demo-paper/drafts", [file("outline.md", "/demo-paper/drafts/outline.md", "note")]),
+        folder("resources", "/demo-paper/resources", [file("smith2021sleep.pdf", "/demo-paper/resources/smith2021sleep.pdf", "pdf")]),
+        folder("exports", "/demo-paper/exports", [file("references.bib", "/demo-paper/exports/references.bib", "reference")]),
+      ];
+    case "loadDocument":
+    case "loadManuscript":
+      return [
+        heading("Introduction", 1),
+        paragraph("Sleep deprivation impairs working memory, but the size of the effect varies widely between studies. We ask whether this variation reflects differences in task load rather than in the deprivation itself."),
+        heading("Background", 2),
+        paragraph("Earlier meta-analyses pooled tasks with very different demands. Here we separate low-load and high-load conditions and re-estimate the effect within each."),
+        paragraph("수면 박탈이 작업 기억에 미치는 영향은 과제 부하에 따라 달라질 수 있다."),
+        heading("Aims", 2),
+        paragraph("We test three predictions, each preregistered before data collection."),
+      ];
+    default:
+      return undefined;
+  }
+}
+
 // Fallback mock for browser development
 function mockRpc(method: string, _args: unknown[]): unknown {
   console.warn(`[RPC] Using mock for ${method}`);
@@ -367,6 +402,12 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     listAgentMentionableFiles: [],
     listAgentThreads: [],
   };
+  // Browser-only design preview (`?demo`): one sample project and manuscript,
+  // so the editor surfaces can be reviewed without the desktop app.
+  if (typeof location !== "undefined" && new URLSearchParams(location.search).has("demo")) {
+    const demo = browserDemoMock(method);
+    if (demo !== undefined) return demo;
+  }
   if (method === "collabOpen") {
     // Browser-only development: no Bun peer, so every editor seeds itself from JSON.
     const params = _args[0] as { projectPath: string; filename: string };

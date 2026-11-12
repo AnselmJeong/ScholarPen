@@ -1,8 +1,11 @@
+import "./styles/layers.css"; // first: fixes the cascade-layer order for Astryx + Tailwind
 import { refreshWritingPreferences } from "./extensions/writing-preferences";
 import { initializeExtensionsUI } from "./extensions/state";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "./styles/global.css";
+import { Theme } from "@astryxdesign/core/theme";
+import { themes, defaultThemeSlug } from "../astryx-themes";
 import { App } from "./App";
 import { rpc } from "./rpc";
 
@@ -36,6 +39,16 @@ export function useIsDark(): boolean {
     return () => window.removeEventListener("themechange", handler);
   }, []);
   return isDark;
+}
+
+/** Astryx theme root: follows the app's light/dark choice (settings → theme). */
+function AstryxRoot({ children }: { children: React.ReactNode }) {
+  const isDark = useIsDark();
+  return (
+    <Theme theme={themes[defaultThemeSlug]} mode={isDark ? "dark" : "light"}>
+      {children}
+    </Theme>
+  );
 }
 
 class ErrorBoundary extends React.Component<
@@ -77,7 +90,9 @@ async function bootstrap() {
   createRoot(root!).render(
     <React.StrictMode>
       <ErrorBoundary>
-        <App />
+        <AstryxRoot>
+          <App />
+        </AstryxRoot>
       </ErrorBoundary>
     </React.StrictMode>
   );

@@ -36,14 +36,14 @@ export function TabBar({
   return (
     <div
       className={`
-        flex items-center h-9 bg-muted/40 min-w-0 flex-shrink-0
-        border-b transition-colors
-        ${isFocused ? "border-blue-400" : "border-border"}
+        workbench-tabbar flex items-stretch h-9 bg-sidebar min-w-0 flex-shrink-0
+        border-b border-sidebar-border
       `}
+      data-focused={isFocused || undefined}
       onClick={onPaneFocus}
     >
-      {leadingControls && <div className="flex flex-shrink-0 px-1">{leadingControls}</div>}
-      <div className="flex flex-1 min-w-0 h-full items-end overflow-x-auto [&::-webkit-scrollbar]:hidden"
+      {leadingControls && <div className="flex flex-shrink-0 items-center px-1">{leadingControls}</div>}
+      <div className="flex flex-1 min-w-0 h-full items-stretch overflow-x-auto [&::-webkit-scrollbar]:hidden"
         style={{ scrollbarWidth: "none" }}>
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
@@ -53,6 +53,7 @@ export function TabBar({
           <div
             key={tab.id}
             ref={isActive ? activeTabRef : undefined}
+            data-active={isActive || undefined}
             onClick={(e) => { e.stopPropagation(); onTabClick(tab.id); }}
             onMouseDown={(e) => {
               if (e.button !== 0) return;
@@ -63,17 +64,19 @@ export function TabBar({
             }}
             title={tab.file.path}
             className={`
-              group relative flex items-center gap-1.5 px-3 h-8 text-xs
+              workbench-tab group relative flex items-center gap-1.5 pl-3 pr-1.5 text-xs
               whitespace-nowrap select-none flex-shrink-0 cursor-pointer
-              border-r border-border transition-colors
+              border-r border-sidebar-border transition-colors
               ${isActive
-                ? "bg-background text-foreground font-medium shadow-[inset_0_-2px_0_0] shadow-blue-500"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ? "bg-background text-foreground -mb-px"
+                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
               }
             `}
           >
             <span className="max-w-[140px] truncate">{label}</span>
             <button
+              type="button"
+              aria-label={`Close ${label}`}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); onTabClose(tab.id); }}
               className={`
@@ -94,7 +97,7 @@ export function TabBar({
       {/* Remaining space also triggers pane focus */}
       <div className="flex-1 h-full" />
       </div>
-      {trailingControls && <div className="flex flex-shrink-0 px-1">{trailingControls}</div>}
+      {trailingControls && <div className="flex flex-shrink-0 items-center px-1">{trailingControls}</div>}
     </div>
   );
 }

@@ -1,4 +1,17 @@
-@tailwind base;
+/*
+ * Cascade layers (Astryx + Tailwind v3 coexistence).
+ * The order itself is declared first in ./layers.css (imported before this
+ * file in main.tsx). Astryx ships its reset in `reset`, component styles in
+ * `astryx-base` and the theme in `astryx-theme`; Tailwind preflight is put in
+ * its own low layer so it never overrides theme tokens, while the app's own
+ * utilities and rules stay unlayered and keep winning.
+ */
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
+
+@layer tw-preflight {
+  @tailwind base;
+}
 @tailwind components;
 @tailwind utilities;
 
@@ -7,76 +20,76 @@
   30%            { transform: translateY(-5px); opacity: 1;   }
 }
 
-/* ── Design System: "The Digital Curator" ──────────────────────────
- * Surface hierarchy (tonal layering — no hard borders):
- *   Base (#f5f3ff)         → desk / background (stronger lavender)
- *   surface-low (#ede9fe)  → sidebar / file explorer
- *   surface-lowest (#fff)  → active document / editor
- *   surface-high (#ddd6fe) → AI sidebar
- * Primary: #5b21b6 (Violet-800) → darker, more authoritative indigo
- * On-surface: #1e1b4b (near-black indigo for text)
- * Fonts: system-ui (SF Pro / Segoe UI) for UI; Georgia/Iowan Old Style for editor
+/* ── Design System: "Workbench" (Astryx, src/themes/workbench) ──────
+ * App tokens below are HSL triplets (Tailwind `hsl(var(--x) / <alpha>)`)
+ * tuned to the Astryx Workbench theme, which extends Neutral:
+ *   background  → editor / document surface (white · graphite)
+ *   sidebar     → chrome: top bar, file explorer, AI panel, status bar
+ *   border      → hairline dividers between panes
+ *   primary     → the single indigo working accent (focus, selection, CTA)
+ * Astryx components read the theme's own --color-* tokens; keep both sets
+ * in step when the theme changes.
  * ─────────────────────────────────────────────────────────────── */
 
 :root {
   color-scheme: light;
 
-  /* Base surfaces — stronger lavender identity */
-  --background:            250  67% 97%;   /* #f5f3ff */
-  --foreground:            244  47% 20%;   /* #1e1b4b — on-surface */
+  --background:            0   0% 100%;   /* editor surface */
+  --foreground:            0   0%   7%;   /* #111111 */
 
-  --card:                  0   0%  100%;
-  --card-foreground:       244  47% 20%;
-  --popover:               0   0%  100%;
-  --popover-foreground:    244  47% 20%;
+  --card:                  0   0% 100%;
+  --card-foreground:       0   0%   7%;
+  --popover:               0   0% 100%;
+  --popover-foreground:    0   0%   7%;
 
-  /* Primary: Violet #5b21b6 */
-  --primary:               263  80% 42%;
-  --primary-foreground:    0   0%  100%;
+  /* Indigo working accent: #4f46e5 (Astryx --color-accent) */
+  --primary:               243  75% 59%;
+  --primary-foreground:    0   0% 100%;
 
-  /* Sidebar: strong lavender surface */
-  --secondary:             252  80% 95%;   /* #ede9fe */
-  --secondary-foreground:  244  47% 20%;
-  --muted:                 252  60% 93%;
-  --muted-foreground:      244  20% 55%;
+  --secondary:             0   0%  95%;
+  --secondary-foreground:  0   0%   7%;
+  --muted:                 0   0%  95%;   /* #f1f1f1 */
+  --muted-foreground:      0   0%  42%;   /* #6a6a6a */
 
-  /* Accent */
-  --accent:                252  80% 95%;
-  --accent-foreground:     263  80% 42%;
+  /* Hover / pressed: neutral, never tinted */
+  --accent:                0   0%  92%;
+  --accent-foreground:     0   0%   7%;
 
-  /* Destructive */
-  --destructive:           0 72% 51%;
+  --destructive:           356 61% 49%;   /* #c9303a */
   --destructive-foreground: 0 0% 100%;
 
-  /* Ghost borders only */
-  --border:                252  30% 88%;
-  --input:                 252  30% 82%;
-  --ring:                  263  80% 42%;
+  --border:                0   0%  89%;
+  --input:                 0   0%  83%;   /* #d4d4d4 */
+  --ring:                  243  75% 59%;
 
-  --radius: 0.5rem;
+  --radius: 0.375rem;
 
-  /* Sidebar: surface-low */
-  --sidebar:               252  80% 95%;   /* #ede9fe */
-  --sidebar-foreground:    244  47% 20%;
-  --sidebar-accent:        263  70% 90%;
-  --sidebar-accent-foreground: 263 80% 35%;
-  --sidebar-border:        252  40% 90%;
+  /* Chrome */
+  --sidebar:               0   0%  97%;
+  --sidebar-foreground:    0   0%  11%;
+  --sidebar-accent:        0   0%  91%;
+  --sidebar-accent-foreground: 0 0% 7%;
+  --sidebar-border:        0   0%  89%;
 
-  /* Scholar tokens */
-  --scholar-bg:            #f5f3ff;
-  --scholar-sidebar:       #ede9fe;
-  --scholar-border:        rgba(139, 92, 246, 0.12);
-  --scholar-text:          #1e1b4b;
-  --scholar-muted:         #6d6d8e;
-  --scholar-accent:        #5b21b6;
-  --scholar-surface-high:  #ddd6fe;
-  --scholar-shadow:        0 10px 30px -10px rgba(30, 27, 75, 0.10);
+  /* Legacy scholar tokens, now aliases of the workbench tokens */
+  --scholar-bg:            hsl(var(--background));
+  --scholar-sidebar:       hsl(var(--sidebar));
+  --scholar-border:        hsl(var(--border));
+  --scholar-text:          hsl(var(--foreground));
+  --scholar-muted:         hsl(var(--muted-foreground));
+  --scholar-accent:        hsl(var(--primary));
+  --scholar-surface-high:  hsl(var(--muted));
+  --scholar-shadow:        0 8px 24px -12px rgba(0, 0, 0, 0.18);
+
+  --font-mono-ui: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@layer reset {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 html,
@@ -87,8 +100,8 @@ body,
 }
 
 body {
-  /* System sans-serif: SF Pro on macOS, Segoe UI on Windows */
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Platform UI font: SF Pro on macOS, Segoe UI on Windows */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Apple SD Gothic Neo", sans-serif;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   -webkit-font-smoothing: antialiased;
@@ -98,41 +111,81 @@ body {
 .dark {
   color-scheme: dark;
 
-  --background:            244  30%  9%;
-  --foreground:            240  20% 90%;
-  --card:                  244  30% 11%;
-  --card-foreground:       240  20% 90%;
-  --popover:               244  30% 10%;
-  --popover-foreground:    240  20% 90%;
-  --primary:               263  70% 65%;
-  --primary-foreground:    0   0%  100%;
-  --secondary:             244  25% 15%;
-  --secondary-foreground:  240  20% 80%;
-  --muted:                 244  25% 13%;
-  --muted-foreground:      240  10% 55%;
-  --accent:                263  40% 20%;
-  --accent-foreground:     263  70% 80%;
-  --destructive:           0 72% 51%;
-  --destructive-foreground: 0 0% 100%;
-  --border:                244  20% 22%;
-  --input:                 244  20% 25%;
-  --ring:                  263  70% 65%;
-  --sidebar:               244  30%  7%;
-  --sidebar-foreground:    240  20% 85%;
-  --sidebar-accent:        263  40% 20%;
-  --sidebar-accent-foreground: 263 70% 80%;
-  --sidebar-border:        244  20% 18%;
+  --background:            0   0%  11%;   /* #1c1c1c */
+  --foreground:            0   0%  91%;
+  --card:                  0   0%  13%;
+  --card-foreground:       0   0%  91%;
+  --popover:               0   0%  14%;
+  --popover-foreground:    0   0%  91%;
+  --primary:               238 100% 82%;  /* #a5a8ff */
+  --primary-foreground:    0   0%   7%;
+  --secondary:             0   0%  15%;
+  --secondary-foreground:  0   0%  85%;
+  --muted:                 0   0%  15%;
+  --muted-foreground:      0   0%  62%;   /* #9e9e9e */
+  --accent:                0   0%  19%;
+  --accent-foreground:     0   0%  93%;
+  --destructive:           6 100% 68%;    /* #ff705d */
+  --destructive-foreground: 0 0% 7%;
+  --border:                0   0%  21%;
+  --input:                 0   0%  28%;
+  --ring:                  238 100% 82%;
+  --sidebar:               0   0%   8%;   /* #141414 */
+  --sidebar-foreground:    0   0%  85%;
+  --sidebar-accent:        0   0%  17%;
+  --sidebar-accent-foreground: 0 0% 93%;
+  --sidebar-border:        0   0%  18%;
 
-  /* Scholar tokens — dark mode overrides */
-  --scholar-bg:            #0d0b1a;
-  --scholar-sidebar:       #0f0d1f;
-  --scholar-border:        rgba(139, 92, 246, 0.15);
-  --scholar-text:          #e2e0f0;
-  --scholar-muted:         #9090b0;
-  --scholar-accent:        #a78bfa;
-  --scholar-surface-high:  #1e1a3a;
-  --scholar-shadow:        0 10px 30px -10px rgba(0, 0, 0, 0.40);
+  --scholar-shadow:        0 8px 24px -12px rgba(0, 0, 0, 0.6);
 }
+
+/* ── Workbench chrome ─────────────────────────────────────────────── */
+.font-mono-ui { font-family: var(--font-mono-ui); font-variant-numeric: tabular-nums; }
+
+/* Title bar: project / document path in the code face */
+.workbench-path { font-family: var(--font-mono-ui); font-size: 11px; }
+.workbench-toolbar > * { flex-shrink: 0; }
+.workbench-toggle[data-active] { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); }
+
+/* Status bar: hairline-separated segments */
+.workbench-status-item {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding-inline: 10px; white-space: nowrap;
+  border-right: 1px solid hsl(var(--sidebar-border));
+}
+.workbench-statusbar > div:last-child > .workbench-status-item { border-right: 0; border-left: 1px solid hsl(var(--sidebar-border)); }
+.workbench-status-item:empty { display: none; }
+
+/* Tabs: the active tab joins the editor surface; a top accent line shows
+   which split pane has focus. */
+.workbench-tab[data-active]::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: hsl(var(--muted-foreground) / 0.45);
+}
+.workbench-tabbar[data-focused] .workbench-tab[data-active]::before { background: hsl(var(--primary)); }
+
+/* Pane splitters: a hairline with a wider invisible grab area */
+.workbench-splitter {
+  position: relative; z-index: 20; width: 1px; flex-shrink: 0;
+  background: hsl(var(--sidebar-border)); cursor: col-resize; transition: background-color 120ms;
+}
+.workbench-splitter::after { content: ""; position: absolute; inset: 0 -3px; }
+.workbench-splitter:hover { background: hsl(var(--primary) / 0.6); }
+.workbench-splitter:active { background: hsl(var(--primary)); }
+.workbench-splitter[hidden] { display: none; }
+
+/* Section labels in side panels */
+.workbench-section-label {
+  font-family: var(--font-mono-ui); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--muted-foreground));
+}
+
+/* Thin, quiet scrollbars across panes */
+.bg-sidebar ::-webkit-scrollbar, .workbench-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.bg-sidebar ::-webkit-scrollbar-thumb, .workbench-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--foreground) / 0.14); border-radius: 8px; border: 2px solid transparent; background-clip: content-box;
+}
+.bg-sidebar ::-webkit-scrollbar-track { background: transparent; }
 
 /* ── BlockNote editor overrides ─────────────────────────────────── */
 .quarto-block-controls-host {
@@ -184,7 +237,7 @@ body {
   --bn-colors-side-menu: hsl(var(--muted-foreground));
 }
 .bn-editor {
-  color: #1e1b4b;
+  color: hsl(var(--foreground));
   min-height: 100%;
 }
 
@@ -198,7 +251,7 @@ body {
 [data-color-scheme="dark"] .bn-editor .bn-block-group,
 [data-color-scheme="dark"] .ProseMirror {
   background: hsl(var(--background)) !important;
-  color: hsl(240 20% 88%) !important;
+  color: hsl(var(--foreground)) !important;
 }
 
 /* ── Editor typography — scholarly serif body text ──────────────── */
@@ -212,7 +265,7 @@ body {
                "Iowan Old Style", "New York", Georgia, "Times New Roman", serif;
   font-size: 16px;
   line-height: 1.8;
-  color: #1e1b4b;
+  color: hsl(var(--foreground));
   word-break: keep-all;
 }
 
@@ -221,7 +274,7 @@ body {
 .dark .bn-editor li,
 .dark .bn-editor td,
 .dark .bn-editor th {
-  color: hsl(240 20% 88%);
+  color: hsl(var(--foreground));
 }
 
 /* Headings: system-ui for structural clarity */
@@ -233,12 +286,12 @@ body {
 
 .bn-editor .bn-block-content :is(h1, h2, h3, h4, h5, h6) {
   font-family: system-ui, -apple-system, sans-serif;
-  color: #1e1b4b;
+  color: hsl(var(--foreground));
   letter-spacing: -0.01em;
 }
 
 .dark .bn-editor .bn-block-content :is(h1, h2, h3, h4, h5, h6) {
-  color: hsl(240 20% 92%);
+  color: hsl(var(--foreground));
 }
 
 /* Outrank .bn-default-styles hN regardless of stylesheet load order.
