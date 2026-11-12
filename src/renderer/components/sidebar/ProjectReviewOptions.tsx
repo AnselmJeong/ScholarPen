@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import type { CollabPeer } from "../../collab/collab-peer";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
 import { rpc } from "../../rpc";
+import { PanelError, PanelNote } from "./panel-kit";
 import {
   PROJECT_REVIEW_SETTINGS_KEY,
   REVIEW_CATEGORIES,
@@ -39,30 +41,27 @@ export function ProjectReviewOptions({ collab }: { collab: Pick<CollabPeer, "doc
   };
 
   return (
-    <details className="mx-3 mb-2 rounded border border-border text-xs">
-      <summary className="cursor-pointer px-2 py-1.5 font-medium">
+    <details className="rounded-md border border-sidebar-border bg-background">
+      <summary className="cursor-pointer px-2 py-1.5 text-xs font-medium">
         Comment types · Project
         {disabled && <span className="ml-2 font-normal text-muted-foreground">{REVIEW_CATEGORIES.length - disabled.length}/{REVIEW_CATEGORIES.length} on</span>}
       </summary>
-      <p className="px-2 pb-2 text-[11px] leading-4 text-muted-foreground">
-        Applies to every document in this project. Turning a type off stops new comments and hides its open ones from the list; they are kept, not resolved.
-      </p>
-      <fieldset disabled={saving || disabled === null} className="max-h-72 space-y-1 overflow-y-auto px-2 pb-2">
-        <legend className="sr-only">Project comment types</legend>
-        {REVIEW_CATEGORIES.map(category => (
-          <label key={category.id} className="flex cursor-pointer items-start gap-2 rounded py-1">
-            <input type="checkbox" className="mt-0.5" checked={disabled !== null && !disabled.includes(category.id)}
-              aria-label={category.label} onChange={event => void toggle(category.id, event.target.checked)} />
-            <span>
-              <span className="block font-medium">{category.label}</span>
-              <span className="block text-[11px] leading-4 text-muted-foreground">{category.description}</span>
-            </span>
-          </label>
-        ))}
-      </fieldset>
-      {disabled?.length === REVIEW_CATEGORIES.length && <p className="px-2 pb-2 text-[11px] text-muted-foreground">All types are off. Automatic comments are paused.</p>}
-      {saving && <p className="px-2 pb-2 text-[11px] text-muted-foreground" role="status">Saving project settings…</p>}
-      {error && <p className="px-2 pb-2 text-[11px] text-red-600" role="alert">{error}</p>}
+      <div className="space-y-2 px-2 pb-2">
+        <PanelNote>
+          Applies to every document in this project. Turning a type off stops new comments and hides its open ones from the list; they are kept, not resolved.
+        </PanelNote>
+        <fieldset disabled={saving || disabled === null} className="max-h-72 space-y-2 overflow-y-auto">
+          <legend className="sr-only">Project comment types</legend>
+          {REVIEW_CATEGORIES.map(category => (
+            <CheckboxInput key={category.id} size="sm" label={category.label} description={category.description}
+              value={disabled !== null && !disabled.includes(category.id)} isDisabled={saving || disabled === null}
+              onChange={checked => void toggle(category.id, checked)} />
+          ))}
+        </fieldset>
+        {disabled?.length === REVIEW_CATEGORIES.length && <PanelNote>All types are off. Automatic comments are paused.</PanelNote>}
+        {saving && <PanelNote role="status">Saving project settings…</PanelNote>}
+        {error && <PanelError>{error}</PanelError>}
+      </div>
     </details>
   );
 }

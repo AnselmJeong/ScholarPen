@@ -1,5 +1,11 @@
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { Button } from "@astryxdesign/core/Button";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Link } from "@astryxdesign/core/Link";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { PanelActions, PanelEmpty, PanelError, PanelHeader, PanelNote, PanelQuote } from "./panel-kit";
 import { AIDetectorSetup } from "../../../plugins/ai-writing-score/ui/AIDetectorSetup";
 import { rpc } from "../../rpc";
 import React, { useEffect, useMemo, useState } from "react";
@@ -202,91 +208,65 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
   };
 
   if (!editor || !collab) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-        Open a document to see its comments and AI activity.
-      </div>
-    );
+    return <PanelEmpty>Open a document to see its comments and AI activity.</PanelEmpty>;
   }
 
+  const exportDisabled = exporting || counts.open === 0 || !projectPath || collab.docKey !== `${projectPath}::${documentName}`;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <AIDetectorSetup compact />
       <AIActivitySection editor={editor} />
       <WatermarkResultCard threads={threads} onDismiss={threadId => setMeta(threadId, { resultDismissedAt: Date.now() })} />
-      {categoryError && <p role="alert" className="px-3 py-1 text-xs text-red-600">{categoryError}</p>}
+      {categoryError && <div className="px-3 py-1"><PanelError>{categoryError}</PanelError></div>}
       <ZonesSection editor={editor} />
       <RevisionHistory ydoc={collab.ydoc} documentName={documentName} projectPath={projectPath} onExported={onExported} />
-      <div className="flex items-center gap-1 border-b border-border px-3 py-2">
-        <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="mr-auto truncate text-xs font-medium text-foreground">
-          Comments{documentName ? ` · ${documentName.replace(".scholarpen.json", "")}` : ""}
-        </span>
-        {(["open", "ai", "mine"] as Filter[]).map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setFilter(value)}
-            className={cn(
-              "rounded px-1.5 py-0.5 text-[11px] capitalize",
-              filter === value ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted",
-            )}
-          >
-            {value === "ai" ? "AI" : value} {counts[value] > 0 ? counts[value] : ""}
-          </button>
-        ))}
-      </div>
-      <div className="border-b border-border px-3 py-2">
-        <button type="button" onClick={() => void exportComments()}
-          disabled={exporting || counts.open === 0 || !projectPath || collab.docKey !== `${projectPath}::${documentName}`}
-          title="현재 문서의 미해결 코멘트 전체를 본문·답글과 함께 exports 폴더에 저장합니다."
-          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40">
-          <Download className="h-3.5 w-3.5" />
-          {exporting ? "Exporting…" : `Export unresolved (.md) · ${counts.open}`}
-        </button>
-        <div className="mt-2 flex items-center gap-2" role="group" aria-label="All open comments">
-          <button type="button" onClick={askAll} disabled={!bulkTargets.length || bulkBusy}
-            title="Address AI and your comments together in one consistent manuscript revision. AI reads the project's other documents and cites from references.bib, adding verified new works to it first."
-            className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
-            <Bot className="h-3 w-3" /> Ask AI
-          </button>
-          <button type="button" onClick={() => { resolveAllComments(collab.ydoc, inScope); setBulkError(null); }} disabled={!counts.open}
-            title="Dismiss all open comments without changing the manuscript or accepting suggested edits"
-            className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40">
-            <Check className="h-3 w-3" /> Resolve all
-          </button>
-          <span className="text-[11px] text-muted-foreground">All comments · AI + yours</span>
-        </div>
+      <PanelHeader icon={MessageSquare} title="Comments" meta={documentName ? documentName.replace(".scholarpen.json", "") : undefined}>
+        <SegmentedControl label="Comment filter" size="sm" layout="fill" value={filter} onChange={(value) => setFilter(value as Filter)}>
+          {(["open", "ai", "mine"] as Filter[]).map((value) => (
+            <SegmentedControlItem key={value} value={value}
+              label={`${value === "ai" ? "AI" : value === "open" ? "Open" : "Mine"}${counts[value] > 0 ? ` ${counts[value]}` : ""}`} />
+          ))}
+        </SegmentedControl>
+        {/* Saves every unresolved comment of this document, with replies, to exports/. */}
+        <Button label={exporting ? "Exporting…" : `Export unresolved (.md) · ${counts.open}`} size="sm" variant="ghost"
+          isDisabled={exportDisabled} isLoading={exporting} icon={<Download className="h-3.5 w-3.5" aria-hidden />} onClick={() => void exportComments()} />
+        <PanelActions label="All open comments">
+          <Button label="Ask AI" size="sm" variant="primary" isDisabled={!bulkTargets.length || bulkBusy}
+            tooltip="Address AI and your comments together in one consistent manuscript revision. AI reads the project's other documents and cites from references.bib, adding verified new works to it first."
+            icon={<Bot className="h-3 w-3" aria-hidden />} onClick={askAll} />
+          <Button label="Resolve all" size="sm" variant="secondary" isDisabled={!counts.open}
+            tooltip="Dismiss all open comments without changing the manuscript or accepting suggested edits"
+            icon={<Check className="h-3 w-3" aria-hidden />} onClick={() => { resolveAllComments(collab.ydoc, inScope); setBulkError(null); }} />
+          <Text type="supporting">All comments · AI + yours</Text>
+        </PanelActions>
         <EditLevelControl ydoc={collab.ydoc} />
-        {!!bulkTargets.length && <input value={bulkInstructions} onInput={event => setBulkInstructions(event.currentTarget.value)}
-          aria-label="Instructions for all comments" placeholder="Optional direction for the whole revision…"
-          className="mt-2 w-full rounded border border-border bg-background px-2 py-1 text-xs" />}
-        {bulkError && <p role="alert" className="mt-1 text-[11px] text-red-600">{bulkError}</p>}
+        {!!bulkTargets.length && <TextInput label="Instructions for all comments" isLabelHidden size="sm" value={bulkInstructions}
+          onChange={setBulkInstructions} onEnter={askAll} placeholder="Optional direction for the whole revision…" />}
+        {bulkError && <PanelError>{bulkError}</PanelError>}
         {(hiddenByType > 0 || showDisabledTypes) && (
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <PanelNote>
             {showDisabledTypes
               ? "Showing comments of types turned off in this project. "
               : `${hiddenByType} open ${hiddenByType === 1 ? "comment" : "comments"} of types turned off in this project hidden. `}
-            <button type="button" onClick={() => setShowDisabledTypes(value => !value)} className="underline hover:text-foreground">
-              {showDisabledTypes ? "Hide" : "Show"}
-            </button>
-          </p>
+            <Link onClick={() => setShowDisabledTypes(value => !value)}>{showDisabledTypes ? "Hide" : "Show"}</Link>
+          </PanelNote>
         )}
-        {exportResult && <p role={exportResult.error ? "alert" : "status"}
-          className={cn("mt-1 break-all text-[11px]", exportResult.error ? "text-red-600" : "text-muted-foreground")}>
-          {exportResult.message}
-        </p>}
-      </div>
+        {exportResult && (exportResult.error
+          ? <PanelError>{exportResult.message}</PanelError>
+          : <PanelNote role="status" className="break-all">{exportResult.message}</PanelNote>)}
+      </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <DecisionQueue ydoc={collab.ydoc} threads={threads} level={editLevel} reference={referenceText}
           onSelect={threadId => editor.getExtension(CommentsExtension)?.selectThread(threadId)}
           blocked={pendingChangeSets.size ? "Accept or reject the pending edits first, so AI can work from one settled manuscript." : null} />
         {visible.length === 0 && (
-          <p className="p-4 text-xs leading-5 text-muted-foreground">
-            {filter === "open"
-              ? "No open threads. Select text and use the comment button, or type / and choose Add Comment. ScholarPen AI starts on each comment you save."
-              : "Nothing here."}
-          </p>
+          <div className="p-4">
+            <PanelNote>
+              {filter === "open"
+                ? "No open threads. Select text and use the comment button, or type / and choose Add Comment. ScholarPen AI starts on each comment you save."
+                : "Nothing here."}
+            </PanelNote>
+          </div>
         )}
         {visible.map((thread) => (
           <ThreadRow
@@ -339,92 +319,69 @@ function ThreadRow({ thread, reference, detached, onSelect, onAssign, onResolve,
   const last = [...thread.comments].reverse().find((comment) => !comment.deleted);
   const detection = thread.meta.documentAction === "ai-score" || asksForAIScore(first?.text ?? "") || isAIDetectionResult(last?.text ?? "");
 
+  const statusVariant = status === "in-progress" ? "purple" : status === "proposed" ? "success" : status === "resolved" ? "neutral" : "info";
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={(event) => { if (event.key === "Enter") onSelect(); }}
-      className="group cursor-pointer border-b border-border px-3 py-2.5 hover:bg-muted/50"
+      className="group cursor-pointer space-y-1 border-b border-sidebar-border px-3 py-2.5 hover:bg-sidebar-accent/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      <div className="mb-1 flex items-center gap-1.5 text-[11px]">
-        {author ? <Bot className="h-3 w-3" style={{ color: author.color }} /> : <User className="h-3 w-3 text-blue-600" />}
-        <span className="font-medium text-foreground">{author ? author.name : "You"}</span>
+      <div className="flex items-center gap-1.5">
+        {author ? <Bot className="h-3.5 w-3.5" style={{ color: author.color }} aria-hidden /> : <User className="h-3.5 w-3.5 text-primary" aria-hidden />}
+        <Text type="label" weight="semibold">{author ? author.name : "You"}</Text>
         {thread.meta.severity && (
-          <span className={cn("rounded px-1 text-[10px]",
-            thread.meta.severity === "high" ? "bg-red-500/10 text-red-600"
-              : thread.meta.severity === "medium" ? "bg-amber-500/10 text-amber-700" : "bg-muted text-muted-foreground")}>
-            {reviewCategoryLabel(thread.meta.category)}
-          </span>
+          <Badge label={reviewCategoryLabel(thread.meta.category)}
+            variant={thread.meta.severity === "high" ? "error" : thread.meta.severity === "medium" ? "warning" : "neutral"} />
         )}
-        <span className={cn("ml-auto flex items-center gap-1 rounded-full px-1.5 py-px text-[10px]",
-          status === "in-progress" ? "bg-violet-500/10 text-violet-700"
-            : status === "proposed" ? "bg-emerald-500/10 text-emerald-700"
-              : status === "resolved" ? "bg-muted text-muted-foreground" : "bg-blue-500/10 text-blue-700")}>
-          {status === "in-progress" && <CircleDot className="h-2.5 w-2.5 animate-pulse" />}
-          {STATUS_LABEL[status]}
-          {thread.meta.assignee && status !== "resolved" &&
-            ` · ${thread.meta.assignee === "ai" ? SCHOLARPEN_AI.shortName : "you"}`}
+        <span className="ml-auto">
+          <Badge variant={statusVariant}
+            icon={status === "in-progress" ? <CircleDot className="h-2.5 w-2.5 animate-pulse" aria-hidden /> : undefined}
+            label={`${STATUS_LABEL[status]}${thread.meta.assignee && status !== "resolved" ? ` · ${thread.meta.assignee === "ai" ? SCHOLARPEN_AI.shortName : "you"}` : ""}`} />
         </span>
       </div>
-      {reference ? (
-        <p className="mb-1 truncate border-l-2 border-amber-400/70 pl-2 text-[11px] text-muted-foreground">{reference}</p>
-      ) : detached && (
-        <p className="mb-1 border-l-2 border-border pl-2 text-[11px] italic text-muted-foreground">
-          The commented text is no longer in the document.
-        </p>
-      )}
+      {reference ? <PanelQuote>{reference}</PanelQuote> : detached && <PanelQuote muted>The commented text is no longer in the document.</PanelQuote>}
       <p className="line-clamp-3 text-xs leading-5 text-foreground">{first?.text || "(empty comment)"}</p>
       {replies > 0 && last && last !== first && (
         isAIUser(last.userId) && last.text.startsWith("**DetectorScope ·")
           ? <AIDetectionResult text={last.text} />
-          : <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+          : <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
               <span className="font-medium">{personaByUser(last.userId)?.shortName ?? "You"}:</span> {last.text}
             </p>
       )}
       {thread.meta.statusNote && status !== "resolved" && (
-        <p className="mt-1 text-[11px] italic leading-4 text-muted-foreground">{thread.meta.statusNote}</p>
+        <p className="text-xs italic leading-5 text-muted-foreground">{thread.meta.statusNote}</p>
       )}
-      <div className="mt-1.5 flex flex-wrap gap-1 opacity-70 group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
-        {onDecideChange && (
-          <>
-            <button type="button" onClick={() => onDecideChange(true)}
-              className="flex items-center gap-1 rounded border border-emerald-600/30 px-1.5 py-0.5 text-[11px] text-emerald-700 hover:bg-emerald-500/10">
-              <Check className="h-3 w-3" /> {coordinated ? "Accept coordinated revision" : "Accept change"}
-            </button>
-            <button type="button" onClick={() => onDecideChange(false)}
-              className="flex items-center gap-1 rounded border border-red-600/30 px-1.5 py-0.5 text-[11px] text-red-600 hover:bg-red-500/10">
-              <X className="h-3 w-3" /> {coordinated ? "Reject coordinated revision" : "Reject change"}
-            </button>
-          </>
-        )}
-        {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && !detection && (
-          <SmallButton icon={<Bot className="h-3 w-3" />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
-            onClick={() => onAssign("ai")} />
-        )}
-        {thread.meta.assignee !== "me" && (
-          <SmallButton icon={<User className="h-3 w-3" />} label="I'll handle" onClick={() => onAssign("me")} />
-        )}
-        <SmallButton icon={<Check className="h-3 w-3" />} label="Resolve" onClick={onResolve} />
-        {onMute && fromAI && (
-          <SmallButton icon={<BellOff className="h-3 w-3" />} label="Disable type in project" onClick={onMute} />
-        )}
+      <div className="pt-0.5 opacity-80 group-hover:opacity-100" onClick={(event) => event.stopPropagation()}>
+        <PanelActions>
+          {onDecideChange && (
+            <>
+              <Button size="sm" variant="secondary" icon={<Check className="h-3 w-3" aria-hidden />}
+                label={coordinated ? "Accept coordinated revision" : "Accept change"} onClick={() => onDecideChange(true)} />
+              <Button size="sm" variant="ghost" icon={<X className="h-3 w-3" aria-hidden />}
+                label={coordinated ? "Reject coordinated revision" : "Reject change"} onClick={() => onDecideChange(false)} />
+            </>
+          )}
+          {thread.meta.assignee !== "ai" && !thread.meta.bulkRequestId && !detection && (
+            <SmallButton icon={<Bot className="h-3 w-3" aria-hidden />} label={`Ask ${SCHOLARPEN_AI.shortName}`}
+              onClick={() => onAssign("ai")} />
+          )}
+          {thread.meta.assignee !== "me" && (
+            <SmallButton icon={<User className="h-3 w-3" aria-hidden />} label="I'll handle" onClick={() => onAssign("me")} />
+          )}
+          <SmallButton icon={<Check className="h-3 w-3" aria-hidden />} label="Resolve" onClick={onResolve} />
+          {onMute && fromAI && (
+            <SmallButton icon={<BellOff className="h-3 w-3" aria-hidden />} label="Disable type in project" onClick={onMute} />
+          )}
+        </PanelActions>
       </div>
     </div>
   );
 }
 
 function SmallButton({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-    >
-      {icon}
-      {label}
-    </button>
-  );
+  return <Button size="sm" variant="ghost" icon={icon} label={label} onClick={onClick} />;
 }
 
 export type RightPanelTab = "activity" | "history" | "assistant" | "project" | "revision";

@@ -1,13 +1,11 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as Y from "yjs";
 
-const dom = new Window({ url: "http://localhost" });
-const keys = ["window", "document", "navigator", "Node", "HTMLElement", "HTMLInputElement", "HTMLTextAreaElement", "Event", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { controlByLabel, installDom } from "../../test-support/dom";
+const env = installDom();
+const dom = env.dom;
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
 const { DecisionQueue } = await import("./DecisionQueue");
@@ -46,8 +44,7 @@ afterEach(async () => {
 });
 afterAll(() => {
   [exportFile, getGlossary, saveGlossary, getMap, getReport, runCheck].forEach(spy => spy.mockRestore());
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  void dom.happyDOM.abort();
+  env.restore();
 });
 
 test("an answered decision goes back to the AI on its thread", async () => {
@@ -70,7 +67,7 @@ test("the edit level control writes the document's level", async () => {
   await render(<EditLevelControl ydoc={ydoc} />);
   await act(async () => button("Proofread").click());
   expect(editLevelOf(ydoc.getMap(WRITING_MAP))).toBe("proofread");
-  expect(container.querySelector('[aria-checked="true"]')?.textContent).toBe("Proofread");
+  expect(container.querySelector('[aria-checked="true"]')?.textContent?.trim()).toBe("Proofread");
 });
 
 test("revision history lists AI revisions and exports the response letter", async () => {
@@ -98,7 +95,7 @@ test("the Project tab edits the glossary and shows the consistency report", asyn
   runCheck.mockResolvedValue({ job: { state: "running", detail: "Reading" }, report: null });
   const opened: string[] = [];
   await render(<ProjectPanel projectPath="/project" onOpenDocument={filename => opened.push(filename)} />);
-  expect(container.querySelector<HTMLInputElement>('input[aria-label="Abbreviation"]')?.value).toBe("RCT");
+  expect(controlByLabel(container, "Abbreviation")?.value).toBe("RCT");
   await act(async () => button("burnout").click()); // A term the manuscript map found.
   await act(async () => button("Save glossary").click());
   expect(saveGlossary).toHaveBeenCalledWith("/project", { entries: [{ term: "randomized controlled trial", abbreviation: "RCT" }, { term: "burnout", definition: "chronic exhaustion" }] });

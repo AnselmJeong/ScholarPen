@@ -1,24 +1,15 @@
 import { afterAll, expect, mock, test } from "bun:test";
-import { Window } from "happy-dom";
+import { controlByLabel, installDom } from "../test-support/dom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { Fragment, Slice } from "prosemirror-model";
 import type { CollabUpdateMessage } from "../../shared/collab/protocol";
 
 // Two mounted editors and the real Bun registry, joined by an in-process stand-in for Electrobun RPC.
-const dom = new Window();
+const env = installDom();
+const dom = env.dom;
 Object.defineProperty(dom.document, "compatMode", { value: "CSS1Compat" });
-const globals = ["window", "document", "navigator", "Node", "Element", "HTMLElement", "MutationObserver", "CustomEvent", "Event", "MouseEvent", "KeyboardEvent", "DocumentFragment", "DOMParser", "Text", "NodeFilter", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true,
-  value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
-afterAll(() => {
-  for (const [key, descriptor] of previous) {
-    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-    else Reflect.deleteProperty(globalThis, key);
-  }
-  dom.happyDOM.abort();
-});
+afterAll(() => env.restore());
 
 const jsonFiles = new Map<string, unknown>([["/p/agent.scholarpen.json", [
   { id: "claim", type: "paragraph", content: "These data prove the hypothesis beyond doubt." },
@@ -349,13 +340,13 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
   expect(commentExports.at(-1)?.content).toContain("@AI make this sentence shorter");
   expect(commentExports.at(-1)?.content).toContain("Rewritten");
   expect(readThreads(a.peer.ydoc.getMap("threads"))[0].resolved).toBe(false);
-  expect(panel.querySelector('[role="status"]')?.textContent).toContain("1개 코멘트 저장됨");
+  expect([...panel.querySelectorAll('[role="status"]')].map(node => node.textContent).join("\n")).toContain("1개 코멘트 저장됨");
   const resolve = [...panel.querySelectorAll("button")].find((button) => button.textContent?.includes("Resolve"))!;
   await act(async () => { resolve.click(); });
   await settle();
   expect(readThreads(a.peer.ydoc.getMap("threads"))[0]).toMatchObject({ resolved: true, meta: { status: "resolved" } });
   expect(panel.textContent).toContain("No open threads");
-  expect(exportButton.disabled).toBe(true);
+  expect(exportButton.getAttribute("aria-disabled") === "true" || exportButton.disabled).toBe(true);
   await act(async () => { panelRoot.unmount(); });
 
   await act(async () => { a.root.unmount(); b.root.unmount(); });
@@ -545,11 +536,15 @@ for (const accept of [true, false]) {
       expect(exportButton.nextElementSibling).toBe(group);
       // The AI filter must not exclude author comments from the bulk action.
       await act(async () => { Array.from(panel.querySelectorAll("button")).find(button => button.textContent === "AI 1")!.click(); });
-      const input = panel.querySelector<HTMLInputElement>('[aria-label="Instructions for all comments"]')!;
+      const input = controlByLabel<HTMLInputElement>(panel, "Instructions for all comments")!;
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(dom.HTMLInputElement.prototype, "value")!.set!;
+        input.focus();
         setter.call(input, "Keep my terminology.");
         input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        // React may fall back to its keyup-based change detection under happy-dom.
+        input.dispatchEvent(new dom.KeyboardEvent("keyup", { key: "a", bubbles: true }) as unknown as Event);
       });
       await act(async () => { Array.from(group.querySelectorAll("button")).find(button => button.textContent?.includes("Ask AI"))!.click(); });
       for (let i = 0; i < 100 && !listChangeSets(a.editor.prosemirrorState.doc).length; i++) {
@@ -618,7 +613,7 @@ test("the comment list hides project-disabled types and marks comments whose tex
   expect(panel.textContent).toContain("This does not follow.");
   expect(panel.textContent).not.toContain("Report the effect size.");
   expect(panel.textContent).toContain("1 open comment of types turned off in this project hidden.");
-  expect(panel.textContent).toContain("open 2");
+  expect(panel.textContent).toContain("Open 2");
   // The anchored claim quotes its passage; the one whose text is gone says so.
   expect(panel.textContent).toContain("did not differ from placebo");
   expect(panel.textContent).toContain("The commented text is no longer in the document.");

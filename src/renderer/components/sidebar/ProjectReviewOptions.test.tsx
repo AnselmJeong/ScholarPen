@@ -1,14 +1,12 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import * as Y from "yjs";
 import { PROJECT_REVIEW_SETTINGS_KEY, REVIEW_MAP, REVIEW_CATEGORIES } from "../../../shared/collab/review";
 
-const dom = new Window({ url: "http://localhost" });
-const globals = ["window", "document", "navigator", "HTMLElement", "Event", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(globals.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { controlByLabel, installDom } from "../../test-support/dom";
+const env = installDom();
+const dom = env.dom;
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
 const { ProjectReviewOptions } = await import("./ProjectReviewOptions");
@@ -25,15 +23,14 @@ async function render(collab: ReturnType<typeof peer>) {
   if (!root) { container = document.createElement("div"); document.body.append(container); root = createRoot(container); }
   await act(async () => root!.render(<ProjectReviewOptions key={collab.docKey} collab={collab} />));
 }
-function checkbox(label: string) { return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!; }
+function checkbox(label: string) { return controlByLabel(container, label)!; }
 afterEach(async () => {
   await act(async () => root?.unmount()); root = undefined; container?.remove();
   docs.splice(0).forEach(doc => doc.destroy()); save.mockReset();
 });
 afterAll(() => {
   save.mockRestore();
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  void dom.happyDOM.abort();
+  env.restore();
 });
 
 test("one Citation option saves the project toggle and follows the server broadcast", async () => {

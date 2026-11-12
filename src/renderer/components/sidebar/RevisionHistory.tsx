@@ -1,17 +1,21 @@
 import React, { useEffect, useState } from "react";
 import type * as Y from "yjs";
 import { ChevronDown, ChevronRight, FileText, History } from "lucide-react";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { Text } from "@astryxdesign/core/Text";
 import { rpc } from "../../rpc";
-import { cn } from "../../lib/utils";
+import { PanelActions, PanelError, PanelNote, PanelSection } from "./panel-kit";
 import { buildResponseLetter, readRevisions, REVISIONS_MAP, type RevisionEntry, type RevisionStatus } from "../../../shared/collab/revision-log";
 import { editLevelLabel } from "../../../shared/collab/writing";
 
-const STATUS: Record<RevisionStatus, { label: string; className: string }> = {
-  pending: { label: "Pending", className: "bg-blue-500/10 text-blue-700" },
-  accepted: { label: "Accepted", className: "bg-emerald-500/10 text-emerald-700" },
-  partial: { label: "Partly accepted", className: "bg-amber-500/10 text-amber-700" },
-  rejected: { label: "Rejected", className: "bg-muted text-muted-foreground" },
-  applied: { label: "Applied", className: "bg-emerald-500/10 text-emerald-700" },
+const STATUS: Record<RevisionStatus, { label: string; variant: "info" | "success" | "warning" | "neutral" }> = {
+  pending: { label: "Pending", variant: "info" },
+  accepted: { label: "Accepted", variant: "success" },
+  partial: { label: "Partly accepted", variant: "warning" },
+  rejected: { label: "Rejected", variant: "neutral" },
+  applied: { label: "Applied", variant: "success" },
 };
 
 function useRevisions(ydoc: Y.Doc) {
@@ -38,7 +42,6 @@ export function RevisionHistory({ ydoc, documentName, projectPath, onExported }:
   onExported?: () => Promise<void>;
 }) {
   const entries = useRevisions(ydoc);
-  const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [includePending, setIncludePending] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
@@ -56,66 +59,52 @@ export function RevisionHistory({ ydoc, documentName, projectPath, onExported }:
   };
 
   return (
-    <div className="border-b border-border">
-      <button type="button" onClick={() => setOpen(value => !value)}
-        className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[11px] font-medium text-foreground hover:bg-muted/50">
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        <History className="h-3 w-3" /> Revision history
-        <span className="ml-1 font-normal text-muted-foreground">{entries.length} AI revisions</span>
-      </button>
-      {open && (
-        <div className="px-3 pb-2">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => void exportLetter()} disabled={!projectPath || !documentName}
-              title="Write each answered comment with the response and the revised text to exports/"
-              className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-40">
-              <FileText className="h-3 w-3" /> Export response to reviewers
+    <PanelSection title="Revision history" icon={History} summary={`${entries.length} AI revisions`}>
+      <PanelActions>
+        <Button label="Export response to reviewers" size="sm" variant="secondary" isDisabled={!projectPath || !documentName}
+          tooltip="Write each answered comment with the response and the revised text to exports/"
+          icon={<FileText className="h-3 w-3" aria-hidden />} onClick={() => void exportLetter()} />
+        <CheckboxInput label="include pending" size="sm" value={includePending} onChange={setIncludePending} />
+      </PanelActions>
+      {message && (message.error ? <PanelError>{message.text}</PanelError> : <PanelNote role="status" className="break-all">{message.text}</PanelNote>)}
+      <ul className="space-y-1.5">
+        {entries.map(entry => (
+          <li key={entry.id} className="rounded-md border border-sidebar-border bg-background">
+            <button type="button" onClick={() => setExpanded(value => value === entry.id ? null : entry.id)} aria-expanded={expanded === entry.id}
+              className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-sidebar-accent/60">
+              {expanded === entry.id ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />}
+              <Badge label={STATUS[entry.status].label} variant={STATUS[entry.status].variant} />
+              <Text type="body" maxLines={1}>{entry.label}</Text>
+              <span className="ml-auto shrink-0 font-mono-ui text-[11px] text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</span>
             </button>
-            <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-              <input type="checkbox" checked={includePending} onChange={event => setIncludePending(event.currentTarget.checked)} />
-              include pending
-            </label>
-          </div>
-          {message && <p role={message.error ? "alert" : "status"} className={cn("mb-2 break-all text-[11px]", message.error ? "text-red-600" : "text-muted-foreground")}>{message.text}</p>}
-          <ul className="space-y-1.5">
-            {entries.map(entry => (
-              <li key={entry.id} className="rounded border border-border">
-                <button type="button" onClick={() => setExpanded(value => value === entry.id ? null : entry.id)}
-                  className="flex w-full items-center gap-1.5 px-2 py-1 text-left text-[11px] hover:bg-muted/50">
-                  <span className={cn("rounded-full px-1.5 py-px text-[10px]", STATUS[entry.status].className)}>{STATUS[entry.status].label}</span>
-                  <span className="truncate text-foreground">{entry.label}</span>
-                  <span className="ml-auto shrink-0 text-muted-foreground">{new Date(entry.createdAt).toLocaleString()}</span>
-                </button>
-                {expanded === entry.id && (
-                  <div className="space-y-1.5 border-t border-border px-2 py-1.5 text-[11px] leading-4">
-                    <p className="text-muted-foreground">
-                      {entry.kind === "coordinated" ? "Coordinated revision" : "Comment revision"}
-                      {entry.level ? ` · ${editLevelLabel(entry.level)} level` : ""} · {entry.paragraphs.length} paragraphs
+            {expanded === entry.id && (
+              <div className="space-y-1.5 border-t border-sidebar-border px-2 py-1.5 text-xs leading-5">
+                <PanelNote>
+                  {entry.kind === "coordinated" ? "Coordinated revision" : "Comment revision"}
+                  {entry.level ? ` · ${editLevelLabel(entry.level)} level` : ""} · {entry.paragraphs.length} paragraphs
+                </PanelNote>
+                {entry.summary && <p className="text-foreground">{entry.summary}</p>}
+                {entry.items.map(item => (
+                  <div key={item.threadId} className="border-l-2 border-border pl-2">
+                    <p className="text-muted-foreground">{item.commentBy === "ai" ? "AI review" : "Comment"}: {item.comment}</p>
+                    <p className={item.outcome === "needs-user" ? "text-amber-700 dark:text-amber-400" : "text-foreground"}>
+                      {item.outcome === "needs-user" ? "Question: " : "Response: "}{item.response}
                     </p>
-                    {entry.summary && <p className="text-foreground">{entry.summary}</p>}
-                    {entry.items.map(item => (
-                      <div key={item.threadId} className="border-l-2 border-border pl-2">
-                        <p className="text-muted-foreground">{item.commentBy === "ai" ? "AI review" : "Comment"}: {item.comment}</p>
-                        <p className={item.outcome === "needs-user" ? "text-amber-700" : "text-foreground"}>
-                          {item.outcome === "needs-user" ? "Question: " : "Response: "}{item.response}
-                        </p>
-                      </div>
-                    ))}
-                    {entry.references?.length ? <p className="text-muted-foreground">References added: {entry.references.map(ref => `@${ref.citekey}`).join(", ")}</p> : null}
-                    {entry.paragraphs.map(paragraph => (
-                      <details key={paragraph.blockId}>
-                        <summary className="cursor-pointer text-muted-foreground">Changed paragraph</summary>
-                        <p className="mt-1 text-red-700/80 line-through decoration-red-400/60">{paragraph.before}</p>
-                        <p className="mt-1 text-emerald-800 dark:text-emerald-300">{paragraph.after}</p>
-                      </details>
-                    ))}
                   </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+                ))}
+                {entry.references?.length ? <PanelNote>References added: {entry.references.map(ref => `@${ref.citekey}`).join(", ")}</PanelNote> : null}
+                {entry.paragraphs.map(paragraph => (
+                  <details key={paragraph.blockId}>
+                    <summary className="cursor-pointer text-muted-foreground">Changed paragraph</summary>
+                    <p className="mt-1 text-red-700/80 line-through decoration-red-400/60 dark:text-red-300/80">{paragraph.before}</p>
+                    <p className="mt-1 text-emerald-800 dark:text-emerald-300">{paragraph.after}</p>
+                  </details>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </PanelSection>
   );
 }

@@ -1,9 +1,14 @@
 import React, { useState } from "react";
 import type * as Y from "yjs";
 import { HelpCircle, Send, User } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { TextArea } from "@astryxdesign/core/TextArea";
+import { Card } from "@astryxdesign/core/Card";
 import type { ThreadSnapshot } from "../../../shared/collab/threads";
 import { answerDecision, answerDecisionsTogether, dismissDecision, openDecisions } from "../../../shared/collab/decisions";
 import type { EditLevel } from "../../../shared/collab/writing";
+import { PanelActions, PanelBlock, PanelError, PanelQuote } from "./panel-kit";
+import { Text } from "@astryxdesign/core/Text";
 
 /**
  * Questions ScholarPen AI needs the author to answer. Each answer goes back
@@ -37,50 +42,44 @@ export function DecisionQueue({ ydoc, threads, level, reference, onSelect, block
   };
 
   return (
-    <section className="border-b border-border bg-amber-500/5 px-3 py-2" aria-label="Decisions for you">
-      <h3 className="mb-1 flex items-center gap-1 text-[11px] font-medium text-foreground">
-        <HelpCircle className="h-3 w-3 text-amber-600" /> Decisions for you · {decisions.length}
+    <PanelBlock label="Decisions for you" tone="attention">
+      <h3 className="flex items-center gap-1.5">
+        <HelpCircle className="h-3.5 w-3.5 text-amber-600" aria-hidden />
+        <Text type="label" weight="semibold">Decisions for you · {decisions.length}</Text>
       </h3>
       <ul className="space-y-2">
         {decisions.map(thread => {
           const quoted = thread.meta.scope === "document" ? "Whole manuscript" : reference(thread.id);
           return (
-            <li key={thread.id} className="rounded border border-border bg-background p-2">
-              {quoted && (
-                <button type="button" onClick={() => onSelect(thread.id)}
-                  className="mb-1 block w-full truncate border-l-2 border-amber-400/70 pl-2 text-left text-[11px] text-muted-foreground hover:text-foreground">
-                  {quoted}
-                </button>
-              )}
-              <p className="text-xs leading-5 text-foreground">{thread.meta.decision!.question}</p>
-              <textarea value={answers.get(thread.id) ?? ""} rows={2} aria-label="Your answer"
-                onChange={event => { const value = event.currentTarget.value; setAnswers(previous => new Map(previous).set(thread.id, value)); }}
-                placeholder="Your decision, evidence or source…"
-                className="mt-1 w-full resize-y rounded border border-border bg-background px-2 py-1 text-xs" />
-              <div className="mt-1 flex gap-1">
-                <button type="button" disabled={!answers.get(thread.id)?.trim()}
-                  onClick={() => run(() => answerDecision(ydoc, thread.id, answers.get(thread.id) ?? ""), [thread.id])}
-                  className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted disabled:opacity-40">
-                  <Send className="h-3 w-3" /> Answer · AI continues
-                </button>
-                <button type="button" onClick={() => run(() => dismissDecision(ydoc, thread.id), [thread.id])}
-                  className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted">
-                  <User className="h-3 w-3" /> I'll handle it
-                </button>
-              </div>
+            <li key={thread.id}>
+              <Card padding={2}>
+                <div className="space-y-1.5">
+                  {quoted && <PanelQuote onClick={() => onSelect(thread.id)}>{quoted}</PanelQuote>}
+                  <Text type="body" display="block">{thread.meta.decision!.question}</Text>
+                  <TextArea label="Your answer" isLabelHidden rows={2} value={answers.get(thread.id) ?? ""}
+                    placeholder="Your decision, evidence or source…"
+                    onChange={value => setAnswers(previous => new Map(previous).set(thread.id, value))} />
+                  <PanelActions>
+                    <Button label="Answer · AI continues" size="sm" variant="secondary" isDisabled={!answers.get(thread.id)?.trim()}
+                      icon={<Send className="h-3 w-3" aria-hidden />}
+                      onClick={() => run(() => answerDecision(ydoc, thread.id, answers.get(thread.id) ?? ""), [thread.id])} />
+                    <Button label="I'll handle it" size="sm" variant="ghost" icon={<User className="h-3 w-3" aria-hidden />}
+                      onClick={() => run(() => dismissDecision(ydoc, thread.id), [thread.id])} />
+                  </PanelActions>
+                </div>
+              </Card>
             </li>
           );
         })}
       </ul>
       {decisions.length > 1 && (
-        <button type="button" disabled={!answered.length || !!blocked} title={blocked ?? undefined}
+        <Button size="sm" variant="primary" isDisabled={!answered.length || !!blocked} tooltip={blocked ?? undefined}
+          icon={<Send className="h-3 w-3" aria-hidden />}
+          label={`Send ${answered.length || ""} answers · one coordinated revision`}
           onClick={() => run(() => answerDecisionsTogether(ydoc, new Map(answered.map(thread => [thread.id, answers.get(thread.id)!])), level),
-            answered.map(thread => thread.id))}
-          className="mt-2 flex items-center gap-1 rounded border border-amber-600/30 px-2 py-1 text-[11px] text-amber-800 hover:bg-amber-500/10 disabled:opacity-40 dark:text-amber-300">
-          <Send className="h-3 w-3" /> Send {answered.length || ""} answers · one coordinated revision
-        </button>
+            answered.map(thread => thread.id))} />
       )}
-      {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
-    </section>
+      {error && <PanelError>{error}</PanelError>}
+    </PanelBlock>
   );
 }

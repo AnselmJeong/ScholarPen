@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { BlockNoteEditor } from "@blocknote/core";
 import { ArrowLeft, Bot, Check, ChevronDown, ChevronRight, Copy, FileClock, History as HistoryIcon, Pencil, Pin, RotateCcw, User, X } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { Button } from "@astryxdesign/core/Button";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { PanelEmpty, PanelError, PanelHeader, PanelNote } from "./panel-kit";
 import { onCollabHistoryChanged, rpc } from "../../rpc";
 import { getEditorCollab } from "../../collab/editor-collab";
 import { asCheckpoint, currentTexts, readVersion, restoreBlock, restoreDocument } from "../../collab/history-restore";
@@ -59,12 +64,12 @@ function EntryIcon({ entry, className }: { entry: HistoryEntry; className?: stri
     : entry.kind === "restore" ? RotateCcw
       : entry.kind === "start" ? FileClock
         : entry.kind === "author" ? User : HistoryIcon;
-  return <Icon className={cn("h-3 w-3 shrink-0", entry.kind === "ai" ? "text-violet-600" : "text-muted-foreground", className)} />;
+  return <Icon className={cn("h-3.5 w-3.5 shrink-0", entry.kind === "ai" ? "text-primary" : "text-muted-foreground", className)} aria-hidden />;
 }
 
 function StatsLine({ stats }: { stats: HistoryStats }) {
   return (
-    <span className="shrink-0 tabular-nums text-muted-foreground">
+    <span className="shrink-0 font-mono-ui text-[11px] tabular-nums text-muted-foreground">
       {stats.added > 0 && <span className="text-emerald-700 dark:text-emerald-400">+{stats.added}</span>}
       {stats.added > 0 && stats.removed > 0 && " "}
       {stats.removed > 0 && <span className="text-red-700 dark:text-red-400">−{stats.removed}</span>}
@@ -124,16 +129,13 @@ function NameForm({ initial, placeholder, onSave, onCancel }: {
 }) {
   const [value, setValue] = useState(initial);
   return (
-    <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); onSave(value); }}>
-      <input autoFocus value={value} onChange={(event) => setValue(event.currentTarget.value)} placeholder={placeholder}
-        onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }}
-        className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] outline-none focus:border-primary" />
-      <button type="submit" aria-label="Save name" className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">
-        <Check className="h-3.5 w-3.5" />
-      </button>
-      <button type="button" aria-label="Cancel" onClick={onCancel} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground">
-        <X className="h-3.5 w-3.5" />
-      </button>
+    <form className="flex items-center gap-1" onSubmit={(event) => { event.preventDefault(); onSave(value); }}
+      onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }}>
+      <div className="min-w-0 flex-1">
+        <TextInput label="Version name" isLabelHidden size="sm" value={value} onChange={setValue} placeholder={placeholder} hasAutoFocus />
+      </div>
+      <Button label="Save name" tooltip="Save name" type="submit" size="sm" variant="ghost" isIconOnly icon={<Check className="h-3.5 w-3.5" aria-hidden />} />
+      <Button label="Cancel" tooltip="Cancel" size="sm" variant="ghost" isIconOnly icon={<X className="h-3.5 w-3.5" aria-hidden />} onClick={onCancel} />
     </form>
   );
 }
@@ -148,11 +150,11 @@ function GroupRow({ group, expanded, onToggle, onSelect }: {
   if (group.entries.length === 1) {
     return (
       <button type="button" onClick={() => onSelect(head)}
-        className="flex w-full items-center gap-1.5 px-3 py-1 text-left text-[11px] hover:bg-muted/60">
-        <span className="w-9 shrink-0 tabular-nums text-muted-foreground">{clock(head.endedAt)}</span>
+        className="flex w-full items-center gap-1.5 px-3 py-1 text-left text-xs hover:bg-sidebar-accent/60">
+        <span className="w-10 shrink-0 font-mono-ui text-[11px] tabular-nums text-muted-foreground">{clock(head.endedAt)}</span>
         <EntryIcon entry={head} />
         <span className="min-w-0 flex-1 truncate text-foreground">
-          {head.name && <Pin className="mr-1 inline h-3 w-3 text-amber-600" />}
+          {head.name && <Pin className="mr-1 inline h-3 w-3 text-amber-600" aria-hidden />}
           {head.name ? <span className="font-medium">{head.name}</span> : entryTitle(head)}
           {head.name && <span className="text-muted-foreground"> · {entryTitle(head)}</span>}
         </span>
@@ -163,13 +165,13 @@ function GroupRow({ group, expanded, onToggle, onSelect }: {
   const first = group.entries[0];
   return (
     <div>
-      <div className="flex w-full items-center gap-1.5 px-3 py-1 text-[11px] hover:bg-muted/60">
+      <div className="flex w-full items-center gap-1.5 px-3 py-1 text-xs hover:bg-sidebar-accent/60">
         <button type="button" onClick={onToggle} aria-label={expanded ? "Collapse" : "Expand"} className="text-muted-foreground">
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </button>
         <button type="button" onClick={() => onSelect(head)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          <span className="shrink-0 tabular-nums text-muted-foreground">{clock(first.startedAt)}–{clock(head.endedAt)}</span>
-          <User className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 font-mono-ui text-[11px] tabular-nums text-muted-foreground">{clock(first.startedAt)}–{clock(head.endedAt)}</span>
+          <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 flex-1 truncate text-foreground">
             Your edits <span className="text-muted-foreground">· {group.entries.length} checkpoints</span>
           </span>
@@ -178,8 +180,8 @@ function GroupRow({ group, expanded, onToggle, onSelect }: {
       </div>
       {expanded && [...group.entries].reverse().map((entry) => (
         <button key={entry.id} type="button" onClick={() => onSelect(entry)}
-          className="flex w-full items-center gap-1.5 py-0.5 pl-8 pr-3 text-left text-[11px] text-muted-foreground hover:bg-muted/60">
-          <span className="w-9 shrink-0 tabular-nums">{clock(entry.endedAt)}</span>
+          className="flex w-full items-center gap-1.5 py-0.5 pl-8 pr-3 text-left text-xs text-muted-foreground hover:bg-sidebar-accent/60">
+          <span className="w-10 shrink-0 font-mono-ui text-[11px] tabular-nums">{clock(entry.endedAt)}</span>
           <span className="min-w-0 flex-1 truncate">{entry.merged && entry.merged > 1 ? `${entry.merged} checkpoints` : "Checkpoint"}</span>
           <StatsLine stats={entry.stats} />
         </button>
@@ -290,59 +292,52 @@ function VersionDetail({ editor, docKey, entries, entry, loadVersion, onBack }: 
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="space-y-1.5 border-b border-border px-3 py-2">
-        <button type="button" onClick={onBack} className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="h-3 w-3" /> All versions
-        </button>
-        <div className="flex items-start gap-1.5 text-xs">
-          <EntryIcon entry={entry} className="mt-0.5" />
+      <div className="space-y-2 border-b border-sidebar-border px-3 py-2">
+        <Button label="All versions" size="sm" variant="ghost" icon={<ArrowLeft className="h-3.5 w-3.5" aria-hidden />} onClick={onBack} />
+        <div className="flex items-start gap-1.5">
+          <EntryIcon entry={entry} className="mt-1" />
           <div className="min-w-0 flex-1">
             {naming ? (
               <NameForm initial={entry.name ?? ""} placeholder="Version name" onSave={rename} onCancel={() => setNaming(false)} />
             ) : (
-              <p className="break-words font-medium text-foreground">
-                {entry.name && <Pin className="mr-1 inline h-3 w-3 text-amber-600" />}
-                {entry.name ?? entryTitle(entry)}
-                <button type="button" onClick={() => setNaming(true)} aria-label="Name this version"
-                  className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground">
-                  <Pencil className="h-3 w-3" />
-                </button>
-              </p>
+              <div className="flex items-start gap-1">
+                <p className="min-w-0 break-words text-sm font-semibold text-foreground">
+                  {entry.name && <Pin className="mr-1 inline h-3 w-3 text-amber-600" aria-hidden />}
+                  {entry.name ?? entryTitle(entry)}
+                </p>
+                <Button label="Name this version" tooltip="Name this version" size="sm" variant="ghost" isIconOnly
+                  icon={<Pencil className="h-3 w-3" aria-hidden />} onClick={() => setNaming(true)} />
+              </div>
             )}
-            {entry.name && <p className="break-words text-[11px] text-muted-foreground">{entryTitle(entry)}</p>}
-            <p className="text-[11px] text-muted-foreground">
+            {entry.name && <PanelNote className="break-words">{entryTitle(entry)}</PanelNote>}
+            <PanelNote>
               {moment(entry.endedAt)}{entry.merged && entry.merged > 1 ? ` · ${entry.merged} checkpoints` : ""}
-            </p>
+            </PanelNote>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <div className="flex rounded border border-border p-px text-[11px]">
-            {(["step", "since"] as const).map((value) => (
-              <button key={value} type="button" onClick={() => setMode(value)}
-                title={value === "step" ? "What this checkpoint changed" : "What changed between this version and now"}
-                className={cn("rounded-sm px-1.5 py-0.5", mode === value ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
-                {value === "step" ? "This change" : "Since then"}
-              </button>
-            ))}
+          <SegmentedControl label="Compare" size="sm" value={mode} onChange={(value) => setMode(value as Mode)}>
+            <SegmentedControlItem value="step" label="This change" />
+            <SegmentedControlItem value="since" label="Since then" />
+          </SegmentedControl>
+          <div className="ml-auto flex items-center gap-1">
+            {confirming ? (
+              <>
+                <Text type="supporting">Replace the current text?</Text>
+                <Button label="Restore" size="sm" variant="primary" onClick={restoreAll} />
+                <Button label="Cancel" size="sm" variant="ghost" onClick={() => setConfirming(false)} />
+              </>
+            ) : (
+              <Button label="Restore this version" size="sm" variant="secondary" isDisabled={!version}
+                icon={<RotateCcw className="h-3 w-3" aria-hidden />} onClick={() => setConfirming(true)} />
+            )}
           </div>
-          {confirming ? (
-            <span className="flex items-center gap-1 text-[11px]">
-              <span className="text-muted-foreground">Replace the current text?</span>
-              <button type="button" onClick={restoreAll} className="rounded bg-primary px-1.5 py-0.5 text-primary-foreground hover:bg-primary/90">Restore</button>
-              <button type="button" onClick={() => setConfirming(false)} className="rounded px-1.5 py-0.5 text-muted-foreground hover:bg-muted">Cancel</button>
-            </span>
-          ) : (
-            <button type="button" onClick={() => setConfirming(true)} disabled={!version}
-              className="ml-auto flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted disabled:opacity-40">
-              <RotateCcw className="h-3 w-3" /> Restore this version
-            </button>
-          )}
         </div>
-        {status && <p role="status" className="text-[11px] text-muted-foreground">{status}</p>}
+        {status && <PanelNote role="status">{status}</PanelNote>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2 text-xs leading-5">
-        {error && <p role="alert" className="text-red-600">{error}</p>}
-        {!error && !rows && <p className="text-muted-foreground">Loading…</p>}
+        {error && <PanelError>{error}</PanelError>}
+        {!error && !rows && <PanelNote>Loading…</PanelNote>}
         {rows && changes === 0 && (
           <p className="mb-2 text-muted-foreground">
             {mode === "step" ? "This checkpoint changed no text." : "The document still matches this version."}
@@ -353,7 +348,7 @@ function VersionDetail({ editor, docKey, entries, entry, loadVersion, onBack }: 
             if (row.kind === "gap") {
               return (
                 <button key={row.id} type="button" onClick={() => setShowSame(true)}
-                  className="block w-full rounded border border-dashed border-border px-2 py-0.5 text-center text-[11px] text-muted-foreground hover:bg-muted/50">
+                  className="block w-full rounded-md border border-dashed border-border px-2 py-1 text-center text-xs text-muted-foreground hover:bg-sidebar-accent/50">
                   {row.count} unchanged {row.count === 1 ? "paragraph" : "paragraphs"}
                 </button>
               );
@@ -364,19 +359,14 @@ function VersionDetail({ editor, docKey, entries, entry, loadVersion, onBack }: 
                 row.kind === "added" && "bg-emerald-500/5", row.kind === "removed" && "bg-red-500/5", row.kind === "changed" && "bg-muted/40")}>
                 <DiffText row={row} />
                 {olderText !== null && (
-                  <div className="mt-1 flex items-center gap-2 text-[11px]">
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
                     {restored.has(row.id) ? (
-                      <span className="flex items-center gap-1 text-emerald-700"><Check className="h-3 w-3" /> Restored</span>
+                      <span className="flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><Check className="h-3 w-3" aria-hidden /> Restored</span>
                     ) : (
-                      <button type="button" onClick={() => restoreRow(row.id)}
-                        className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
-                        <RotateCcw className="h-3 w-3" /> {row.kind === "removed" ? "Restore paragraph" : "Restore earlier text"}
-                      </button>
+                      <Button size="sm" variant="ghost" icon={<RotateCcw className="h-3 w-3" aria-hidden />}
+                        label={row.kind === "removed" ? "Restore paragraph" : "Restore earlier text"} onClick={() => restoreRow(row.id)} />
                     )}
-                    <button type="button" onClick={() => copy(olderText)}
-                      className="flex items-center gap-1 text-muted-foreground hover:text-foreground">
-                      <Copy className="h-3 w-3" /> Copy earlier text
-                    </button>
+                    <Button size="sm" variant="ghost" icon={<Copy className="h-3 w-3" aria-hidden />} label="Copy earlier text" onClick={() => copy(olderText)} />
                   </div>
                 )}
               </div>
@@ -384,9 +374,7 @@ function VersionDetail({ editor, docKey, entries, entry, loadVersion, onBack }: 
           })}
         </div>
         {showSame && rows && rows.some((row) => row.kind === "same") && (
-          <button type="button" onClick={() => setShowSame(false)} className="mt-2 text-[11px] text-muted-foreground hover:text-foreground">
-            Hide unchanged paragraphs
-          </button>
+          <div className="mt-2"><Button size="sm" variant="ghost" label="Hide unchanged paragraphs" onClick={() => setShowSame(false)} /></div>
         )}
       </div>
     </div>
@@ -431,11 +419,7 @@ export function HistoryPanel({ editor, documentName, active }: {
   const groups = useMemo(() => groupHistory(entries ?? []), [entries]);
 
   if (!editor || !collab || !docKey) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">
-        Open a document to see its history.
-      </div>
-    );
+    return <PanelEmpty>Open a document to see its history.</PanelEmpty>;
   }
 
   const selectedEntry = selected ? entries?.find((entry) => entry.id === selected) ?? null : null;
@@ -457,30 +441,17 @@ export function HistoryPanel({ editor, documentName, active }: {
   let lastDay = "";
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="space-y-1.5 border-b border-border px-3 py-2">
-        <div className="flex items-center gap-1">
-          <HistoryIcon className="h-3.5 w-3.5 text-muted-foreground" />
-          <span className="mr-auto truncate text-xs font-medium text-foreground">
-            History{documentName ? ` · ${documentName.replace(".scholarpen.json", "")}` : ""}
-          </span>
-          {!naming && (
-            <button type="button" onClick={() => setNaming(true)}
-              title="Give the current text a name you can come back to"
-              className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted">
-              <Pin className="h-3 w-3" /> Save version
-            </button>
-          )}
-        </div>
+      <PanelHeader icon={HistoryIcon} title="History" meta={documentName ? documentName.replace(".scholarpen.json", "") : undefined}
+        actions={!naming && <Button label="Save version" size="sm" variant="secondary" tooltip="Give the current text a name you can come back to"
+          icon={<Pin className="h-3 w-3" aria-hidden />} onClick={() => setNaming(true)} />}>
         {naming && <NameForm initial="" placeholder="e.g. Submitted to journal" onSave={saveVersion} onCancel={() => setNaming(false)} />}
-        <p className="text-[11px] leading-4 text-muted-foreground">
-          A checkpoint is kept when you pause writing, around every AI edit and when you accept suggestions.
-        </p>
-        {message && <p role="status" className="text-[11px] text-muted-foreground">{message}</p>}
-      </div>
+        <PanelNote>A checkpoint is kept when you pause writing, around every AI edit and when you accept suggestions.</PanelNote>
+        {message && <PanelNote role="status">{message}</PanelNote>}
+      </PanelHeader>
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
-        {error && <p role="alert" className="px-3 py-1 text-xs text-red-600">{error}</p>}
-        {!entries && !error && <p className="px-3 py-1 text-xs text-muted-foreground">Loading…</p>}
-        {entries?.length === 0 && <p className="px-3 py-1 text-xs text-muted-foreground">No checkpoints yet. Start writing.</p>}
+        {error && <div className="px-3 py-1"><PanelError>{error}</PanelError></div>}
+        {!entries && !error && <div className="px-3 py-1"><PanelNote>Loading…</PanelNote></div>}
+        {entries?.length === 0 && <div className="px-3 py-1"><PanelNote>No checkpoints yet. Start writing.</PanelNote></div>}
         {groups.map((group) => {
           const day = dayLabel(group.head.endedAt);
           const heading = day !== lastDay ? day : null;
@@ -488,7 +459,7 @@ export function HistoryPanel({ editor, documentName, active }: {
           const key = group.entries[0].id;
           return (
             <React.Fragment key={key}>
-              {heading && <p className="px-3 pb-0.5 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{heading}</p>}
+              {heading && <p className="workbench-section-label px-3 pb-1 pt-3">{heading}</p>}
               <GroupRow group={group} expanded={expanded.has(key)} onSelect={(entry) => setSelected(entry.id)}
                 onToggle={() => setExpanded((keys) => {
                   const next = new Set(keys);

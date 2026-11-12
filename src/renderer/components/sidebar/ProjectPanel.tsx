@@ -1,7 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BookCheck, BookOpen, ChevronDown, ChevronRight, FileSearch, Map as MapIcon, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { BookCheck, BookOpen, FileSearch, Map as MapIcon, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
 import { rpc } from "../../rpc";
-import { cn } from "../../lib/utils";
+import { PanelActions, PanelEmpty, PanelError, PanelNote, PanelSection } from "./panel-kit";
 import { normalizeGlossary, type Glossary, type GlossaryEntry } from "../../../shared/glossary";
 import type { ManuscriptMapView, ProjectJobStatus } from "../../../shared/manuscript-map";
 import { CONSISTENCY_KIND_LABEL, type ConsistencyView } from "../../../shared/consistency-report";
@@ -14,26 +19,9 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function Section({ title, icon, summary, children, defaultOpen = false }: {
-  title: string; icon: React.ReactNode; summary?: string; children: React.ReactNode; defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <section className="border-b border-border">
-      <button type="button" onClick={() => setOpen(value => !value)} aria-expanded={open}
-        className="flex w-full items-center gap-1 px-3 py-2 text-left text-xs font-medium text-foreground hover:bg-muted/50">
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        {icon} {title}
-        {summary && <span className="ml-1 truncate font-normal text-muted-foreground">{summary}</span>}
-      </button>
-      {open && <div className="px-3 pb-3">{children}</div>}
-    </section>
-  );
-}
-
 function JobLine({ job }: { job: ProjectJobStatus }) {
-  if (job.state === "running") return <p role="status" className="mt-1 text-[11px] text-violet-700">{job.detail ?? "Working…"}</p>;
-  if (job.state === "failed") return <p role="alert" className="mt-1 break-words text-[11px] text-red-600">{job.error}</p>;
+  if (job.state === "running") return <PanelNote role="status" className="text-primary">{job.detail ?? "Working…"}</PanelNote>;
+  if (job.state === "failed") return <PanelError>{job.error}</PanelError>;
   return null;
 }
 
@@ -85,68 +73,60 @@ function GlossaryEditor({ projectPath, suggestions }: { projectPath: string; sug
     } catch (reason) { setError(errorText(reason)); }
   };
 
-  if (!saved) return error ? <p role="alert" className="text-[11px] text-red-600">{error}</p> : <p className="text-[11px] text-muted-foreground">Loading…</p>;
+  if (!saved) return error ? <PanelError>{error}</PanelError> : <PanelNote>Loading…</PanelNote>;
   return (
-    <div>
-      <p className="mb-2 text-[11px] leading-4 text-muted-foreground">
+    <>
+      <PanelNote>
         Shared terminology for every chapter. AI edits use these terms; reviews flag variants you explicitly avoid. Abbreviations introduced in another chapter need not be expanded again.
-      </p>
+      </PanelNote>
       <ul className="space-y-2">
         {entries.map((entry, index) => (
-          <li key={index} className="rounded border border-border p-2">
-            <div className="flex gap-1">
-              <input value={entry.term} onChange={event => patch(index, { term: event.currentTarget.value })} placeholder="Preferred term"
-                aria-label="Preferred term" className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-xs" />
-              <input value={entry.abbreviation ?? ""} onChange={event => patch(index, { abbreviation: event.currentTarget.value || undefined })}
-                placeholder="Abbr." aria-label="Abbreviation" className="w-16 rounded border border-border bg-background px-1.5 py-0.5 text-xs" />
-              <button type="button" aria-label="Remove entry" onClick={() => setEntries(current => current.filter((_, at) => at !== index))}
-                className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-red-600"><Trash2 className="h-3 w-3" /></button>
+          <li key={index} className="space-y-1.5 rounded-md border border-sidebar-border bg-background p-2">
+            <div className="flex items-center gap-1">
+              <div className="min-w-0 flex-1">
+                <TextInput label="Preferred term" isLabelHidden size="sm" value={entry.term} placeholder="Preferred term"
+                  onChange={value => patch(index, { term: value })} />
+              </div>
+              <div className="w-20">
+                <TextInput label="Abbreviation" isLabelHidden size="sm" value={entry.abbreviation ?? ""} placeholder="Abbr."
+                  onChange={value => patch(index, { abbreviation: value || undefined })} />
+              </div>
+              <Button label="Remove entry" tooltip="Remove entry" size="sm" variant="ghost" isIconOnly icon={<Trash2 className="h-3 w-3" aria-hidden />}
+                onClick={() => setEntries(current => current.filter((_, at) => at !== index))} />
             </div>
-            <input value={entry.definition ?? ""} onChange={event => patch(index, { definition: event.currentTarget.value || undefined })}
-              placeholder="Definition (optional)" aria-label="Definition"
-              className="mt-1 w-full rounded border border-border bg-background px-1.5 py-0.5 text-xs" />
-            <input value={(entry.avoid ?? []).join(", ")} aria-label="Variants to avoid"
-              onChange={event => patch(index, { avoid: event.currentTarget.value.split(",").map(part => part.trimStart()).filter((part, at, all) => part || at === all.length - 1) })}
-              placeholder="Avoid, comma-separated (optional)"
-              className="mt-1 w-full rounded border border-border bg-background px-1.5 py-0.5 text-xs" />
+            <TextInput label="Definition" isLabelHidden size="sm" value={entry.definition ?? ""} placeholder="Definition (optional)"
+              onChange={value => patch(index, { definition: value || undefined })} />
+            <TextInput label="Variants to avoid" isLabelHidden size="sm" value={(entry.avoid ?? []).join(", ")} placeholder="Avoid, comma-separated (optional)"
+              onChange={value => patch(index, { avoid: value.split(",").map(part => part.trimStart()).filter((part, at, all) => part || at === all.length - 1) })} />
             {entry.abbreviation && (
-              <label className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-                <input type="checkbox" checked={!!entry.noExpansion} onChange={event => patch(index, { noExpansion: event.currentTarget.checked || undefined })} />
-                well known, never spelled out
-              </label>
+              <CheckboxInput size="sm" label="well known, never spelled out" value={!!entry.noExpansion}
+                onChange={checked => patch(index, { noExpansion: checked || undefined })} />
             )}
           </li>
         ))}
       </ul>
-      <div className="mt-2 flex items-center gap-2">
-        <button type="button" onClick={() => setEntries(current => [...current, emptyEntry()])}
-          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-muted">
-          <Plus className="h-3 w-3" /> Add term
-        </button>
-        <button type="button" onClick={() => void save()} disabled={!dirty}
-          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-40">
-          <Save className="h-3 w-3" /> Save glossary
-        </button>
-      </div>
-      {status && !dirty && <p role="status" className="mt-1 text-[11px] text-muted-foreground">{status}</p>}
-      {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
+      <PanelActions>
+        <Button label="Add term" size="sm" variant="secondary" icon={<Plus className="h-3 w-3" aria-hidden />}
+          onClick={() => setEntries(current => [...current, emptyEntry()])} />
+        <Button label="Save glossary" size="sm" variant="primary" isDisabled={!dirty} icon={<Save className="h-3 w-3" aria-hidden />}
+          onClick={() => void save()} />
+      </PanelActions>
+      {status && !dirty && <PanelNote role="status">{status}</PanelNote>}
+      {error && <PanelError>{error}</PanelError>}
       {missing.length > 0 && (
-        <div className="mt-3">
-          <p className="mb-1 text-[11px] text-muted-foreground">Terms the manuscript map found that the glossary does not have:</p>
+        <div className="space-y-1">
+          <PanelNote>Terms the manuscript map found that the glossary does not have:</PanelNote>
           <ul className="flex flex-wrap gap-1">
             {missing.map(item => (
               <li key={item.term}>
-                <button type="button" title={item.definition}
-                  onClick={() => setEntries(current => [...current, { term: item.term, definition: item.definition }])}
-                  className="flex items-center gap-0.5 rounded-full border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted">
-                  <Plus className="h-2.5 w-2.5" /> {item.term}
-                </button>
+                <Button size="sm" variant="ghost" tooltip={item.definition} icon={<Plus className="h-3 w-3" aria-hidden />} label={item.term}
+                  onClick={() => setEntries(current => [...current, { term: item.term, definition: item.definition }])} />
               </li>
             ))}
           </ul>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -156,31 +136,30 @@ function ManuscriptMapSection({ map, onUpdate, onOpenDocument }: {
   onOpenDocument?: (filename: string) => void;
 }) {
   const { view, error } = map;
-  if (!view) return error ? <p role="alert" className="text-[11px] text-red-600">{error}</p> : <p className="text-[11px] text-muted-foreground">Loading…</p>;
+  if (!view) return error ? <PanelError>{error}</PanelError> : <PanelNote>Loading…</PanelNote>;
   const stale = view.documents.filter(document => document.stale).length;
   return (
-    <div>
-      <p className="mb-2 text-[11px] leading-4 text-muted-foreground">
+    <>
+      <PanelNote>
         A digest of every document (summary, key claims, definitions, numbers) that AI work on one chapter reads to stay consistent with the others.
-      </p>
-      <button type="button" onClick={onUpdate} disabled={view.job.state === "running" || !view.documents.length}
-        className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-40">
-        <RefreshCw className={cn("h-3 w-3", view.job.state === "running" && "animate-spin")} />
-        {stale ? `Update map · ${stale} changed` : "Map is up to date"}
-      </button>
+      </PanelNote>
+      <PanelActions>
+        <Button size="sm" variant="secondary" isDisabled={view.job.state === "running" || !view.documents.length} isLoading={view.job.state === "running"}
+          icon={<RefreshCw className="h-3 w-3" aria-hidden />} label={stale ? `Update map · ${stale} changed` : "Map is up to date"} onClick={onUpdate} />
+      </PanelActions>
       <JobLine job={view.job} />
-      {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
-      <ul className="mt-2 space-y-2">
+      {error && <PanelError>{error}</PanelError>}
+      <ul className="space-y-2">
         {view.documents.map(({ filename, entry, stale: outdated }) => (
-          <li key={filename} className="rounded border border-border p-2 text-[11px] leading-4">
+          <li key={filename} className="space-y-1 rounded-md border border-sidebar-border bg-background p-2 text-xs leading-5">
             <div className="flex items-center gap-1">
               <button type="button" onClick={() => onOpenDocument?.(filename)} disabled={!onOpenDocument}
                 className="truncate text-left font-medium text-foreground hover:underline">{entry?.title ?? filename.replace(/\.scholarpen\.json$/, "")}</button>
-              {outdated && <span className="ml-auto shrink-0 rounded bg-amber-500/10 px-1 text-[10px] text-amber-700">{entry ? "changed" : "not mapped"}</span>}
+              {outdated && <span className="ml-auto shrink-0"><Badge variant="warning" label={entry ? "changed" : "not mapped"} /></span>}
             </div>
-            {entry?.summary && <p className="mt-1 text-muted-foreground">{entry.summary}</p>}
+            {entry?.summary && <p className="text-muted-foreground">{entry.summary}</p>}
             {entry && (entry.claims.length + entry.terms.length + entry.numbers.length > 0) && (
-              <details className="mt-1">
+              <details>
                 <summary className="cursor-pointer text-muted-foreground">
                   {entry.claims.length} claims · {entry.terms.length} terms · {entry.numbers.length} numbers
                 </summary>
@@ -194,7 +173,7 @@ function ManuscriptMapSection({ map, onUpdate, onOpenDocument }: {
           </li>
         ))}
       </ul>
-    </div>
+    </>
   );
 }
 
@@ -209,37 +188,39 @@ function ConsistencySection({ check, onRun, onOpenDocument }: {
     for (const issue of view?.report?.issues ?? []) groups.set(issue.filename, [...(groups.get(issue.filename) ?? []), issue]);
     return [...groups];
   }, [view]);
-  if (!view) return error ? <p role="alert" className="text-[11px] text-red-600">{error}</p> : <p className="text-[11px] text-muted-foreground">Loading…</p>;
+  if (!view) return error ? <PanelError>{error}</PanelError> : <PanelNote>Loading…</PanelNote>;
   const report = view.report;
   return (
-    <div>
-      <p className="mb-2 text-[11px] leading-4 text-muted-foreground">
+    <>
+      <PanelNote>
         Checks all documents together: references to missing figures or sections, repeated passages, glossary terms, and claims, definitions or numbers that contradict each other.
         Issues in open documents also become comments, so “Ask AI” can resolve them.
-      </p>
-      <button type="button" onClick={onRun} disabled={view.job.state === "running"}
-        className="flex items-center gap-1 rounded border border-border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-40">
-        <FileSearch className="h-3 w-3" /> Check the whole project
-      </button>
+      </PanelNote>
+      <PanelActions>
+        <Button label="Check the whole project" size="sm" variant="secondary" isDisabled={view.job.state === "running"} isLoading={view.job.state === "running"}
+          icon={<FileSearch className="h-3 w-3" aria-hidden />} onClick={onRun} />
+      </PanelActions>
       <JobLine job={view.job} />
-      {error && <p role="alert" className="mt-1 text-[11px] text-red-600">{error}</p>}
+      {error && <PanelError>{error}</PanelError>}
       {report && (
-        <div className="mt-2 text-[11px] leading-4">
-          <p className="text-muted-foreground">
+        <div className="space-y-2 text-xs leading-5">
+          <PanelNote>
             {new Date(report.createdAt).toLocaleString()} · {report.documents} documents · {report.issues.length} issues · {report.posted} new comments
-          </p>
-          {report.skipped.map(item => <p key={item} className="text-amber-700">Not checked: {item}</p>)}
-          {!report.issues.length && <p className="mt-1 text-emerald-700">No cross-document issues found.</p>}
+          </PanelNote>
+          {report.skipped.map(item => <p key={item} className="text-amber-700 dark:text-amber-400">Not checked: {item}</p>)}
+          {!report.issues.length && <p className="text-emerald-700 dark:text-emerald-400">No cross-document issues found.</p>}
           {grouped.map(([filename, issues]) => (
-            <div key={filename} className="mt-2">
+            <div key={filename} className="space-y-1">
               <button type="button" onClick={() => onOpenDocument?.(filename)} disabled={!onOpenDocument}
                 className="font-medium text-foreground hover:underline">{filename.replace(/\.scholarpen\.json$/, "")}</button>
-              <ul className="mt-1 space-y-1">
+              <ul className="space-y-1">
                 {issues.map(issue => (
-                  <li key={issue.id} className="rounded border border-border p-1.5">
-                    <span className="mr-1 rounded bg-muted px-1 text-[10px] text-muted-foreground">{CONSISTENCY_KIND_LABEL[issue.kind]}</span>
-                    <span className="text-foreground">{issue.comment}</span>
-                    <p className="mt-0.5 truncate text-muted-foreground">“{issue.quote}”</p>
+                  <li key={issue.id} className="space-y-0.5 rounded-md border border-sidebar-border bg-background p-2">
+                    <div className="flex items-start gap-1.5">
+                      <Badge label={CONSISTENCY_KIND_LABEL[issue.kind]} />
+                      <span className="text-foreground">{issue.comment}</span>
+                    </div>
+                    <p className="truncate text-muted-foreground">“{issue.quote}”</p>
                     {issue.related && (
                       <p className="truncate text-muted-foreground">↔ {issue.related.filename.replace(/\.scholarpen\.json$/, "")}: “{issue.related.quote}”</p>
                     )}
@@ -250,14 +231,14 @@ function ConsistencySection({ check, onRun, onOpenDocument }: {
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
 /** Project-wide writing tools: the glossary, the manuscript map, the consistency check and cited-source PDFs. */
 export function ProjectPanel({ projectPath, onOpenDocument }: { projectPath?: string; onOpenDocument?: (filename: string) => void }) {
   if (!projectPath) {
-    return <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground">Open a project to manage its glossary and chapters.</div>;
+    return <PanelEmpty>Open a project to manage its glossary and chapters.</PanelEmpty>;
   }
   return <ProjectTools key={projectPath} projectPath={projectPath} onOpenDocument={onOpenDocument} />;
 }
@@ -275,20 +256,20 @@ function ProjectTools({ projectPath, onOpenDocument }: { projectPath: string; on
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <ExtensionSlot name="project" projectPath={projectPath} />
-      <Section title="Glossary" icon={<BookOpen className="h-3 w-3" />} summary="terms and abbreviations" defaultOpen>
+      <PanelSection title="Glossary" icon={BookOpen} summary="terms and abbreviations" defaultOpen>
         <GlossaryEditor projectPath={projectPath} suggestions={suggestions} />
-      </Section>
-      <Section title="Manuscript map" icon={<MapIcon className="h-3 w-3" />}
+      </PanelSection>
+      <PanelSection title="Manuscript map" icon={MapIcon}
         summary={map.view ? `${mapped} of ${map.view.documents.length} documents mapped` : undefined}>
         <ManuscriptMapSection map={map} onUpdate={start(map, rpc.updateManuscriptMap)} onOpenDocument={onOpenDocument} />
-      </Section>
-      <Section title="Consistency across documents" icon={<FileSearch className="h-3 w-3" />}
+      </PanelSection>
+      <PanelSection title="Consistency across documents" icon={FileSearch}
         summary={check.view?.report ? `${check.view.report.issues.length} issues` : undefined}>
         <ConsistencySection check={check} onRun={start(check, rpc.runConsistencyCheck)} onOpenDocument={onOpenDocument} />
-      </Section>
-      <Section title="Cited sources" icon={<BookCheck className="h-3 w-3" />} summary={citationSourcesSummary(sources.status)}>
+      </PanelSection>
+      <PanelSection title="Cited sources" icon={BookCheck} summary={citationSourcesSummary(sources.status)}>
         <CitationSourcesSection projectPath={projectPath} sources={sources} />
-      </Section>
+      </PanelSection>
     </div>
   );
 }

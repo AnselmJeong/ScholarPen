@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { ChevronDown, ChevronRight, PenLine } from "lucide-react";
+import { PenLine, Shield } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { Selector } from "@astryxdesign/core/Selector";
+import { TextArea } from "@astryxdesign/core/TextArea";
 import { rpc } from "../../rpc";
+import { PanelError, PanelNote, PanelSection } from "./panel-kit";
 import { getEditorCollab } from "../../collab/editor-collab";
 import { ZONE_LABEL, ZONES_MAP, setZone, zoneOf, type Zone, type ZoneTrust } from "../../../shared/collab/zones";
 
@@ -49,7 +53,6 @@ export function ZonesSection({ editor }: { editor: BlockNoteEditor<any, any, any
   const collab = getEditorCollab(editor);
   const headings = useHeadings(editor);
   const zones = useZones(editor);
-  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!collab || !zones || headings.length === 0) return null;
   const configured = headings.filter((heading) => zoneOf(zones, heading.id).trust !== "auto").length;
@@ -67,59 +70,52 @@ export function ZonesSection({ editor }: { editor: BlockNoteEditor<any, any, any
     editor.focus();
   };
 
+  const trustOptions = (["auto", "observe", "suggest", "edit"] as ZoneTrust[]).map((trust) => ({ value: trust, label: ZONE_LABEL[trust] }));
   return (
-    <div className="border-b border-border">
-      <button type="button" onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-1 px-3 py-1.5 text-left text-[11px] font-medium text-foreground hover:bg-muted/50">
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        Work zones
-        <span className="ml-1 font-normal text-muted-foreground">
-          {configured > 0 ? `${configured} of ${headings.length} sections set` : "AI may suggest anywhere"}
-        </span>
-      </button>
-      {open && (
-        <div className="pb-2">
-          {headings.map((heading) => {
-            const zone = zoneOf(zones, heading.id);
-            return (
-              <div key={heading.id} className="px-3 py-1" style={{ paddingLeft: `${12 + (heading.level - 1) * 10}px` }}>
-                <div className="flex items-center gap-1.5">
-                  <button type="button" onClick={() => scrollTo(heading.id)}
-                    className="min-w-0 flex-1 truncate text-left text-[11px] text-foreground hover:underline">
-                    {heading.title}
-                  </button>
-                  <select value={zone.trust} aria-label={`AI trust for ${heading.title}`}
-                    onChange={(event) => update(heading.id, { trust: event.target.value as ZoneTrust })}
-                    className="rounded border border-border bg-background px-1 py-0.5 text-[11px]">
-                    {(["auto", "observe", "suggest", "edit"] as ZoneTrust[]).map((trust) => (
-                      <option key={trust} value={trust}>{ZONE_LABEL[trust]}</option>
-                    ))}
-                  </select>
-                </div>
-                {zone.trust === "edit" && (
-                  <div className="mt-1 flex items-start gap-1">
-                    <textarea
-                      defaultValue={zone.brief ?? ""}
-                      placeholder="What should this section say? (optional; the AI also uses your notes in the section)"
-                      onBlur={(event) => update(heading.id, { brief: event.target.value.trim() || undefined })}
-                      rows={2}
-                      className="min-w-0 flex-1 resize-y rounded border border-border bg-background px-1.5 py-1 text-[11px] leading-4"
-                    />
-                    <button type="button" onClick={() => draft(heading.id)} title="Draft this section from your notes"
-                      className="flex items-center gap-1 rounded border border-border px-1.5 py-1 text-[11px] text-violet-700 hover:bg-violet-500/10">
-                      <PenLine className="h-3 w-3" /> Draft
-                    </button>
-                  </div>
-                )}
+    <PanelSection title="Work zones" icon={Shield}
+      summary={configured > 0 ? `${configured} of ${headings.length} sections set` : "AI may suggest anywhere"}>
+      {headings.map((heading) => {
+        const zone = zoneOf(zones, heading.id);
+        return (
+          <div key={heading.id} className="space-y-1" style={{ paddingLeft: `${(heading.level - 1) * 10}px` }}>
+            <div className="flex items-center gap-1.5">
+              <button type="button" onClick={() => scrollTo(heading.id)}
+                className="min-w-0 flex-1 truncate text-left text-xs text-foreground hover:underline">
+                {heading.title}
+              </button>
+              <div className="w-36 shrink-0">
+                <Selector label={`AI trust for ${heading.title}`} isLabelHidden size="sm" value={zone.trust} options={trustOptions}
+                  onChange={(value) => { if (value) update(heading.id, { trust: value as ZoneTrust }); }} />
               </div>
-            );
-          })}
-          {error && <p className="px-3 pt-1 text-[11px] text-red-600">{error}</p>}
-          <p className="px-3 pt-1 text-[10px] leading-4 text-muted-foreground">
-            Observe: comments only. Suggest: every edit is a tracked suggestion. AI drafts: edits apply directly and the AI can draft from your notes. Auto: typo fixes apply, other edits are suggested.
-          </p>
-        </div>
-      )}
+            </div>
+            {zone.trust === "edit" && (
+              <div className="flex items-start gap-1">
+                <div className="min-w-0 flex-1">
+                  <ZoneBrief initial={zone.brief ?? ""} onCommit={(brief) => update(heading.id, { brief: brief.trim() || undefined })} />
+                </div>
+                <Button label="Draft" size="sm" variant="secondary" tooltip="Draft this section from your notes"
+                  icon={<PenLine className="h-3 w-3" aria-hidden />} onClick={() => draft(heading.id)} />
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {error && <PanelError>{error}</PanelError>}
+      <PanelNote>
+        Observe: comments only. Suggest: every edit is a tracked suggestion. AI drafts: edits apply directly and the AI can draft from your notes. Auto: typo fixes apply, other edits are suggested.
+      </PanelNote>
+    </PanelSection>
+  );
+}
+
+/** The section brief; saved when the field loses focus, like the notes it accompanies. */
+function ZoneBrief({ initial, onCommit }: { initial: string; onCommit: (brief: string) => void }) {
+  const [value, setValue] = useState(initial);
+  useEffect(() => { setValue(initial); }, [initial]);
+  return (
+    <div onBlur={() => { if (value !== initial) onCommit(value); }}>
+      <TextArea label="Section brief" isLabelHidden rows={2} value={value} onChange={setValue}
+        placeholder="What should this section say? (optional; the AI also uses your notes in the section)" />
     </div>
   );
 }

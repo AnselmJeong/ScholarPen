@@ -105,3 +105,17 @@ function optionsOf(trigger: HTMLElement) {
   const options = Array.from((scope ?? document).querySelectorAll<HTMLElement>('[role="option"]'));
   return listbox && !scope ? options.filter(option => option.id.startsWith(`${listbox}-`)) : options;
 }
+
+/**
+ * The form control named `label`: Astryx fields name their input with a
+ * `<label for>` (also when the label is visually hidden), plain markup may
+ * use `aria-label`.
+ */
+export function controlByLabel<T extends HTMLElement = HTMLInputElement>(root: ParentNode, label: string): T | null {
+  const byAria = root.querySelector<T>(`[aria-label="${label}"]`);
+  if (byAria && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(byAria.tagName)) return byAria;
+  const element = Array.from(root.querySelectorAll("label")).find(item => item.textContent?.trim() === label);
+  const id = element?.getAttribute("for");
+  if (id) return document.getElementById(id) as T | null;
+  return (element?.querySelector("input, textarea, select") as T | null) ?? null;
+}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import type * as Y from "yjs";
-import { cn } from "../../lib/utils";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Text } from "@astryxdesign/core/Text";
 import { EDIT_LEVELS, editLevelOf, setEditLevel, WRITING_MAP, type EditLevel } from "../../../shared/collab/writing";
 
 export function useEditLevel(ydoc: Y.Doc | null) {
@@ -24,19 +25,14 @@ export function EditLevelControl({ ydoc }: { ydoc: Y.Doc }) {
   const [level, setLevel] = useEditLevel(ydoc);
   const current = EDIT_LEVELS.find(item => item.id === level)!;
   return (
-    <div className="mt-2">
-      <div className="flex items-center gap-1.5" role="radiogroup" aria-label="AI edit level">
-        <span className="text-[11px] text-muted-foreground">AI edit level</span>
-        {EDIT_LEVELS.map(item => (
-          <button key={item.id} type="button" role="radio" aria-checked={item.id === level} title={item.description}
-            onClick={() => setLevel(item.id)}
-            className={cn("rounded px-1.5 py-0.5 text-[11px]",
-              item.id === level ? "bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted")}>
-            {item.label}
-          </button>
-        ))}
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <Text type="supporting">AI edit level</Text>
+        <SegmentedControl label="AI edit level" size="sm" value={level} onChange={(value) => setLevel(value as EditLevel)}>
+          {EDIT_LEVELS.map(item => <SegmentedControlItem key={item.id} value={item.id} label={item.label} />)}
+        </SegmentedControl>
       </div>
-      <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{current.description}</p>
+      <Text type="supporting" display="block">{current.description}</Text>
     </div>
   );
 }

@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { Link } from "@astryxdesign/core/Link";
+import { PanelActions, PanelError, PanelNote } from "./panel-kit";
 import { onProjectUpdated, rpc } from "../../rpc";
 import type { CitationSourcesStatus } from "../../../shared/rpc-types";
 
@@ -61,15 +64,15 @@ export function CitationSourcesSection({ projectPath, sources }: {
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
   };
   return (
-    <div className="space-y-2 text-xs">
-      <p className="text-muted-foreground">
-        Check Citations reads the PDFs under <code>resources/</code>. They are indexed in the background whenever one is added or changed; cited works without a PDF are judged from their OpenAlex abstract, which is less certain.
-      </p>
-      {status && <p>
+    <div className="space-y-2 text-xs leading-5">
+      <PanelNote>
+        Check Citations reads the PDFs under <code className="font-mono-ui">resources/</code>. They are indexed in the background whenever one is added or changed; cited works without a PDF are judged from their OpenAlex abstract, which is less certain.
+      </PanelNote>
+      {status && <p className="text-foreground">
         {status.indexedCount} of {status.pdfCount} PDFs indexed
         {status.indexing && status.progress ? ` · indexing ${status.progress.done}/${status.progress.total}…` : ""}
       </p>}
-      {coverage && <p>
+      {coverage && <p className="text-foreground">
         <span className="font-medium">{coverage.linkedCount} of {coverage.citedCount}</span> cited works have an indexed PDF
         {coverage.citedCount > 0 && ` (${Math.round(100 * coverage.linkedCount / coverage.citedCount)}%)`}.
       </p>}
@@ -77,8 +80,8 @@ export function CitationSourcesSection({ projectPath, sources }: {
         <summary className="cursor-pointer text-muted-foreground">Cited works without a PDF ({coverage.missing.length})</summary>
         <ul className="mt-1 max-h-60 space-y-1 overflow-y-auto">
           {coverage.missing.map(item => <li key={item.citekey} className="break-words">
-            <span className="font-mono">@{item.citekey}</span> {item.title}
-            {item.doi && <> · <button type="button" className="text-primary underline" onClick={() => rpc.openExternal(`https://doi.org/${item.doi}`).catch(() => undefined)}>DOI</button></>}
+            <span className="font-mono-ui">@{item.citekey}</span> {item.title}
+            {item.doi && <> · <Link isExternalLink onClick={() => void rpc.openExternal(`https://doi.org/${item.doi}`).catch(() => undefined)}>DOI</Link></>}
           </li>)}
         </ul>
       </details>}
@@ -88,15 +91,12 @@ export function CitationSourcesSection({ projectPath, sources }: {
           {status.unreadable.map(item => <li key={item.relpath} className="break-words">{item.relpath.replace(/^resources\//, "")} · {item.reason}</li>)}
         </ul>
       </details>}
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={rescan} disabled={status?.indexing} className="flex items-center gap-1 text-primary disabled:opacity-50">
-          <RefreshCw className="h-3 w-3" /> Rescan PDFs
-        </button>
-        <button type="button" onClick={loadCoverage} disabled={checking} className="text-primary disabled:opacity-50">
-          {checking ? "Counting…" : "Recount cited works"}
-        </button>
-      </div>
-      {(error || status?.lastError) && <p role="alert" className="break-words text-red-600">{error ?? status?.lastError}</p>}
+      <PanelActions>
+        <Button label="Rescan PDFs" size="sm" variant="secondary" isDisabled={status?.indexing} isLoading={status?.indexing}
+          icon={<RefreshCw className="h-3 w-3" aria-hidden />} onClick={rescan} />
+        <Button label={checking ? "Counting…" : "Recount cited works"} size="sm" variant="ghost" isLoading={checking} onClick={loadCoverage} />
+      </PanelActions>
+      {(error || status?.lastError) && <PanelError>{error ?? status?.lastError}</PanelError>}
     </div>
   );
 }
