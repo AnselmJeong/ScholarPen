@@ -1,13 +1,10 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { CodexStatus } from "../../../shared/codex";
 
-const dom = new Window();
-const keys = ["window", "document", "navigator", "HTMLElement", "Event", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { buttonByText, chooseOption, installDom, optionTexts } from "../../test-support/dom";
+const env = installDom();
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
 const { CodexConnection } = await import("./CodexConnection");
@@ -25,15 +22,14 @@ async function render() {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => root!.render(<CodexConnection model="" onModelChange={changed} />));
 }
-function button(label: string) { return Array.from(container.querySelectorAll("button")).find(b => b.textContent === label)!; }
+function button(label: string) { return buttonByText(container, label)!; }
 afterEach(async () => {
   await act(async () => root?.unmount()); root = undefined; container?.remove();
   for (const spy of [status, models, login, logout, cancel, changed]) spy.mockReset();
 });
 afterAll(() => {
   for (const spy of [status, models, login, logout, cancel]) spy.mockRestore();
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  dom.happyDOM.abort();
+  env.restore();
 });
 
 test("starts and cancels ChatGPT login without showing any API-key field", async () => {
@@ -56,8 +52,7 @@ test("shows account, model selection, remaining quota, reset time, and logout", 
   expect(container.textContent).toContain("75% 남음");
   expect(container.textContent).toContain("초기화");
   expect(container.textContent).toContain("test@example.com");
-  const select = container.querySelector("select")!;
-  await act(async () => { select.value = "available-model"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+  await chooseOption(container, "Sidebar Agent Model", "available-model", act);
   expect(changed).toHaveBeenCalledWith("available-model");
   status.mockResolvedValue(signedOut);
   await act(async () => button("로그아웃").click());
@@ -75,7 +70,7 @@ test("reports quota exhaustion and never initiates login or changes provider aut
 test("shows actionable missing-CLI and connection failures", async () => {
   status.mockResolvedValue({ ...signedOut, state: "unavailable", error: "CLI missing" });
   await render();
-  expect(button("ChatGPT로 로그인").disabled).toBeTrue();
+  expect(button("ChatGPT로 로그인").getAttribute("aria-disabled")).toBe("true");
   expect(button("CLI 설치 안내")).toBeDefined();
   status.mockRejectedValue(new Error("connection lost"));
   await act(async () => button("새로고침").click());
@@ -91,7 +86,7 @@ test("manual refresh reconnects and loads new models, showing the running CLI ve
   await act(async () => button("새로고침").click());
   expect(status).toHaveBeenLastCalledWith(true);
   expect(container.textContent).toContain("Codex CLI 0.160.0");
-  expect(container.querySelector('option[value="gpt-6.1-sol"]')).not.toBeNull();
+  expect(await optionTexts(container, "Sidebar Agent Model", act)).toContain("gpt-6.1-sol");
   expect(changed).not.toHaveBeenCalled();
   expect(logout).not.toHaveBeenCalled();
 });

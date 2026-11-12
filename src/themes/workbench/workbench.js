@@ -426,6 +426,10 @@ export const workbenchTheme = {
     "card": {
       "base": {
         "padding": "var(--spacing-3)"
+      },
+      "variant:muted": {
+        "backgroundColor": "light-dark(#f4f4f4, #232323)",
+        "boxShadow": "inset 0 0 0 1px var(--color-border)"
       }
     },
     "section": {

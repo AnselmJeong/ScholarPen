@@ -531,6 +531,11 @@
     --astryx-card-padding: var(--spacing-3);
   }
 
+  .astryx-card[data-variant="muted"] {
+    background-color: light-dark(#f4f4f4, #232323);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+  }
+
   .astryx-section {
     --astryx-section-padding: var(--spacing-3);
   }

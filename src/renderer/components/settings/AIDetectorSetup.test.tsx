@@ -1,12 +1,9 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { AIDetectorStatus } from "../../../shared/ai-detector-setup";
-const dom = new Window();
-const keys = ["window", "document", "navigator", "HTMLElement", "Event", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { buttonByText, installDom } from "../../test-support/dom";
+const env = installDom();
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
 const { AIDetectorSetup } = await import("../../../plugins/ai-writing-score/ui/AIDetectorSetup");
@@ -19,7 +16,7 @@ async function render(compact = false) {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => root!.render(<AIDetectorSetup compact={compact} />));
 }
-const button = (label: string) => [...container.querySelectorAll("button")].find(button => button.textContent === label)!;
+const button = (label: string) => buttonByText(container, label)!;
 const downloading: AIDetectorStatus = { state: "installing", phase: "models", detail: "Downloading", progress: { kind: "files", completed: 12, total: 56 } };
 afterEach(async () => {
   await act(async () => root?.unmount()); root = undefined; container?.remove();
@@ -27,8 +24,7 @@ afterEach(async () => {
 });
 afterAll(() => {
   for (const spy of [status, install, cancel]) spy.mockRestore();
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  dom.happyDOM.abort();
+  env.restore();
 });
 
 test("missing model offers an explicit download with size, progress and cancellation", async () => {

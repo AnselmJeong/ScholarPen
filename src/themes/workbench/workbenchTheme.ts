@@ -26,6 +26,17 @@ export const workbenchTheme = defineTheme({
     '--radius-element': '0.375rem',
     '--radius-inner': '0.25rem',
   },
+  components: {
+    // Muted cards group related controls (e.g. a subscription connection).
+    // In dark mode Neutral's muted card matches the page, so lift it one step
+    // and give it a hairline edge in both modes.
+    card: {
+      'variant:muted': {
+        backgroundColor: 'light-dark(#f4f4f4, #232323)',
+        boxShadow: 'inset 0 0 0 1px var(--color-border)',
+      },
+    },
+  },
 });
 
 export default workbenchTheme;

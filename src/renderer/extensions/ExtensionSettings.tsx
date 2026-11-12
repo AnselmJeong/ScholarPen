@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Switch } from "../components/ui/switch";
+import { Switch } from "@astryxdesign/core/Switch";
+import { SettingsError, SettingsSection } from "../components/settings/settings-kit";
 import { initializeExtensionsUI, prepareExtensionDisable, setExtensionEnabled, useExtensions } from "./state";
 export function ExtensionSettings() {
   const extensions = useExtensions();
@@ -14,16 +15,13 @@ export function ExtensionSettings() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save extension state."); }
     finally { setBusy(null); }
   }
-  return <section aria-label="Extensions" className="space-y-3">
-    <h3 className="text-sm font-semibold">Extensions</h3>
-    <p className="text-xs text-muted-foreground">변경은 즉시 저장됩니다. 기능을 꺼도 문서와 기존 결과는 보존됩니다.</p>
-    {extensions.map(info => <div key={info.manifest.id} className="flex items-center gap-3 rounded-lg border border-border p-3">
-      <div className="min-w-0 flex-1"><label htmlFor={info.manifest.id} className="text-sm font-medium">{info.manifest.name}</label>
-        <p className="text-xs text-muted-foreground break-words">{info.manifest.description}</p>
-        {info.error && <p className="text-xs text-amber-700">{info.error}</p>}
-      </div>
-      <Switch id={info.manifest.id} checked={info.enabled} disabled={busy !== null} onCheckedChange={enabled => void toggle(info.manifest.id, enabled)} />
+  return <SettingsSection title="Plugins" label="Extensions" description="변경은 즉시 저장됩니다. 기능을 꺼도 문서와 기존 결과는 보존됩니다.">
+    {extensions.map(info => <div key={info.manifest.id}>
+      <Switch label={info.manifest.name} description={info.manifest.description} value={info.enabled} isDisabled={busy !== null}
+        isLoading={busy === info.manifest.id} labelPosition="start" labelSpacing="spread" width="100%"
+        status={info.error ? { type: "warning", message: info.error } : undefined}
+        onChange={enabled => void toggle(info.manifest.id, enabled)} />
     </div>)}
-    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-  </section>;
+    {error && <SettingsError>{error}</SettingsError>}
+  </SettingsSection>;
 }
