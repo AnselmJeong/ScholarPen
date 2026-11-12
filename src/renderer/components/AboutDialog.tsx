@@ -1,12 +1,9 @@
 import React from "react";
 import { PenLine } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "./ui/dialog";
-import { Button } from "./ui/button";
+import { Button } from "@astryxdesign/core/Button";
+import { Text } from "@astryxdesign/core/Text";
+import { VStack } from "@astryxdesign/core/VStack";
+import { AppDialog } from "./ui/app-dialog";
 
 interface AboutDialogProps {
   open: boolean;
@@ -16,25 +13,21 @@ interface AboutDialogProps {
 
 export function AboutDialog({ open, onOpenChange, version }: AboutDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm px-7 pb-6 pt-8 text-center">
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600 to-violet-800 shadow-lg shadow-violet-950/25">
-          <PenLine className="h-9 w-9 text-white" strokeWidth={1.8} />
+    <AppDialog isOpen={open} onOpenChange={onOpenChange} title="About ScholarPen" width={360}
+      footer={<Button label="OK" variant="primary" onClick={() => onOpenChange(false)} />}>
+      <VStack gap={3} hAlign="center" paddingBlock={2}>
+        <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <PenLine className="h-8 w-8" strokeWidth={1.8} aria-hidden="true" />
         </div>
-        <DialogTitle className="mt-5 text-center text-xl">ScholarPen</DialogTitle>
-        <DialogDescription className="mt-1 text-center">
-          Academic writing workspace
-        </DialogDescription>
-
-        <div className="mt-5 space-y-1.5 text-sm">
-          <p className="font-medium text-foreground">Version {version}</p>
-          <p className="text-muted-foreground">Developed by Anselm Jeong</p>
-        </div>
-
-        <Button className="mt-6 w-full" onClick={() => onOpenChange(false)} autoFocus>
-          OK
-        </Button>
-      </DialogContent>
-    </Dialog>
+        <VStack gap={0.5} hAlign="center">
+          <Text type="large" display="block">ScholarPen</Text>
+          <Text type="supporting" display="block">Academic writing workspace</Text>
+        </VStack>
+        <VStack gap={0.5} hAlign="center">
+          <Text type="label" display="block" hasTabularNumbers>Version {version}</Text>
+          <Text type="supporting" display="block">Developed by Anselm Jeong</Text>
+        </VStack>
+      </VStack>
+    </AppDialog>
   );
 }

@@ -1,12 +1,8 @@
 import React, { useEffect, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Button } from "@astryxdesign/core/Button";
+import { Text } from "@astryxdesign/core/Text";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import { AppDialog } from "@/components/ui/app-dialog";
 import type { ExportFormat } from "../../blocks/markdown-serializer";
 
 export interface ExportProgress { current: number; total: number; filename: string; stage: "reading" | "converting" | "saving" }
@@ -48,94 +44,50 @@ export function ExportDialog({ open, onOpenChange, onExport, documentNames, dest
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle>{isBulkExport ? "Export Selected Sections" : "Export Document"}</DialogTitle>
-        </DialogHeader>
+    <AppDialog isOpen={open} onOpenChange={(next) => { if (!exporting) onOpenChange(next); }}
+      title={isBulkExport ? "Export Selected Sections" : "Export Document"} width={460} purpose={exporting ? "required" : "info"}
+      subtitle={destination ? `저장 위치: ${destination}` : undefined}
+      footer={<>
+        <Button label="Cancel" variant="secondary" isDisabled={exporting} onClick={() => onOpenChange(false)} />
+        <Button variant="primary" isLoading={exporting} onClick={handleExport}
+          label={exporting
+            ? `Exporting ${progress?.current ?? 0}/${documentCount}\u2026`
+            : isBulkExport
+              ? `Export ${documentCount} files`
+              : "Export"} />
+      </>}>
+      <Text type="body" display="block" as="p">
+        {isBulkExport ? (
+          <>
+            Export <Text type="inherit" weight="semibold">{documentCount} selected sections</Text> as separate files:
+          </>
+        ) : (
+          <>
+            Export <Text type="inherit" weight="semibold">{documentNames[0] || "document"}</Text> as:
+          </>
+        )}
+      </Text>
 
-        <div className="py-4 space-y-3">
-          <p className="text-sm text-muted-foreground">
-            {isBulkExport ? (
-              <>
-                Export <span className="font-medium text-foreground">{documentCount} selected sections</span> as separate files:
-              </>
-            ) : (
-              <>
-                Export <span className="font-medium text-foreground">{documentNames[0] || "document"}</span> as:
-              </>
-            )}
-          </p>
+      {isBulkExport && (
+        <ul className="max-h-28 overflow-y-auto rounded-md border border-border bg-muted/40 px-3 py-2 font-mono-ui text-xs">
+          {documentNames.map((name) => <li key={name} className="truncate py-0.5">{name}</li>)}
+        </ul>
+      )}
 
-          {destination && <p className="break-all text-xs text-muted-foreground">저장 위치: {destination}</p>}
+      <RadioList label="Format" isLabelHidden value={format} onChange={(value) => setFormat(value as ExportFormat)} isDisabled={exporting}>
+        <RadioListItem value="qmd" label="Quarto (.qmd)"
+          description="YAML frontmatter, fenced divs, cross-references. Best for academic publishing." />
+        <RadioListItem value="md" label="Markdown (.md)"
+          description="Standard Markdown. Abstracts use blockquote fallback, no cross-references." />
+      </RadioList>
 
-          {isBulkExport && (
-            <div className="max-h-28 overflow-y-auto rounded-lg border bg-muted/30 px-3 py-2">
-              {documentNames.map((name) => (
-                <div key={name} className="truncate py-0.5 text-xs text-foreground">
-                  {name}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors hover:bg-accent/50 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
-              <input
-                type="radio"
-                name="export-format"
-                value="qmd"
-                checked={format === "qmd"}
-                onChange={() => setFormat("qmd")} disabled={exporting}
-                className="mt-0.5"
-              />
-              <div>
-                <div className="text-sm font-medium">Quarto (.qmd)</div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  YAML frontmatter, fenced divs, cross-references. Best for academic publishing.
-                </div>
-              </div>
-            </label>
-
-            <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors hover:bg-accent/50 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
-              <input
-                type="radio"
-                name="export-format"
-                value="md"
-                checked={format === "md"}
-                onChange={() => setFormat("md")} disabled={exporting}
-                className="mt-0.5"
-              />
-              <div>
-                <div className="text-sm font-medium">Markdown (.md)</div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  Standard Markdown. Abstracts use blockquote fallback, no cross-references.
-                </div>
-              </div>
-            </label>
-          </div>
-        </div>
-
-        {error && <p role="alert" className="text-sm text-destructive break-words">{error}</p>}
-        {exporting && progress && <div role="status" className="space-y-2 text-xs text-muted-foreground">
-          <p className="break-all">{progress.current}/{progress.total} · {progress.filename}</p>
-          <p>{progress.stage === "reading" ? "Reading manuscript" : progress.stage === "converting" ? "Converting manuscript" : "Saving manuscript and copying figures"} · {elapsed}s</p>
-          <progress className="w-full" value={progress.current - 1} max={progress.total} />
-          {elapsed >= 15 && <p>Cloud folders may need time to download or sync figures. Make the project available offline in Google Drive if this step keeps waiting.</p>}
-        </div>}
-        <DialogFooter>
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={exporting}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleExport} disabled={exporting}>
-            {exporting
-              ? `Exporting ${progress?.current ?? 0}/${documentCount}\u2026`
-              : isBulkExport
-                ? `Export ${documentCount} files`
-                : "Export"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {error && <p role="alert" className="break-words text-xs text-destructive">{error}</p>}
+      {exporting && progress && <div role="status" className="space-y-2">
+        <Text type="supporting" display="block" hasTabularNumbers>{progress.current}/{progress.total} · {progress.filename}</Text>
+        <Text type="supporting" display="block">{progress.stage === "reading" ? "Reading manuscript" : progress.stage === "converting" ? "Converting manuscript" : "Saving manuscript and copying figures"} · {elapsed}s</Text>
+        <progress className="h-1.5 w-full accent-primary" value={progress.current - 1} max={progress.total} />
+        {elapsed >= 15 && <Text type="supporting" display="block">Cloud folders may need time to download or sync figures. Make the project available offline in Google Drive if this step keeps waiting.</Text>}
+      </div>}
+    </AppDialog>
   );
 }

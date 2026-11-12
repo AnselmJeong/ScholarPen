@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  BookMarked,
   FileText,
   FileCode2,
   Globe2,
@@ -11,15 +10,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { AppDialog } from "@/components/ui/app-dialog";
+import { Button as AstryxButton } from "@astryxdesign/core/Button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -326,21 +318,15 @@ export function QuartoBookDialog({
     : PAPER_SIZES;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl overflow-hidden p-0">
-        <div className="border-b border-border bg-muted/35 px-6 pb-5 pt-6">
-          <DialogHeader>
-            <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <BookMarked className="h-[18px] w-[18px]" />
-            </div>
-            <DialogTitle>Configure Quarto Book</DialogTitle>
-            <DialogDescription>
-              {editingExistingConfig ? "Edit" : "Create"} <span className="font-mono text-xs">exports/_quarto.yml</span>. Settings not shown here are preserved.
-            </DialogDescription>
-          </DialogHeader>
-        </div>
-
-        <div className="max-h-[68vh] space-y-5 overflow-y-auto px-6 py-5">
+    <AppDialog isOpen={open} onOpenChange={(next) => { if (!generating) onOpenChange(next); }} width={680} purpose="form"
+      title="Configure Quarto Book"
+      subtitle={<>{editingExistingConfig ? "Edit" : "Create"} <span className="font-mono-ui">exports/_quarto.yml</span>. Settings not shown here are preserved.</>}
+      footer={<>
+        <AstryxButton label="Cancel" variant="secondary" isDisabled={generating} onClick={() => onOpenChange(false)} />
+        <AstryxButton variant="primary" isLoading={generating} isDisabled={!canGenerate || generating} onClick={handleGenerate}
+          label={generating ? "Saving…" : editingExistingConfig ? "Save _quarto.yml" : "Create _quarto.yml"} />
+      </>}>
+        <div className="space-y-5">
           {loading ? (
             <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -879,15 +865,6 @@ export function QuartoBookDialog({
           )}
         </div>
 
-        <DialogFooter className="border-t border-border bg-muted/20 px-6 py-4">
-          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={generating}>
-            Cancel
-          </Button>
-          <Button size="sm" onClick={handleGenerate} disabled={!canGenerate || generating}>
-            {generating ? "Saving…" : editingExistingConfig ? "Save _quarto.yml" : "Create _quarto.yml"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </AppDialog>
   );
 }

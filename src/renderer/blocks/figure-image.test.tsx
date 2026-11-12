@@ -1,15 +1,12 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const dom = new Window();
+import { installDom } from "../test-support/dom";
+const env = installDom();
+const dom = env.dom;
 // Happy DOM does not implement compatMode; KaTeX requires standards mode.
 Object.defineProperty(dom.document, "compatMode", { value: "CSS1Compat" });
-const globals = ["window", "document", "navigator", "Node", "Element", "HTMLElement", "MutationObserver", "CustomEvent", "Event", "HTMLInputElement", "HTMLSelectElement", "HTMLTextAreaElement", "MouseEvent", "KeyboardEvent", "DocumentFragment", "DOMParser", "Text", "NodeFilter", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true,
-  value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
 let sendUpdate: (payload: { projectPath: string; filePath: string }) => void = () => {};
 mock.module("electrobun/view", () => ({ Electroview: class {
   static defineRPC(options: { handlers: { messages: { projectUpdated: typeof sendUpdate } } }) {
@@ -54,11 +51,7 @@ afterEach(async () => {
 });
 afterAll(() => {
   read.mockRestore(); select.mockRestore(); subscribe.mockRestore();
-  for (const [key, descriptor] of previous) {
-    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-    else Reflect.deleteProperty(globalThis, key);
-  }
-  dom.happyDOM.abort();
+  env.restore();
 });
 
 test("figure content has no file controls, path or URL field", async () => {
@@ -139,8 +132,8 @@ test("a mounted BlockNote figure receives its project context and retains its ca
   expect(container.querySelector("img")?.src).toBe(first);
   expect([...container.querySelectorAll("button")].map((node) => node.textContent)).toEqual(["#fig-keep · Properties"]);
   await click("#fig-keep · Properties");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("그림 파일");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("figures/plot.png");
+  expect(document.querySelector("dialog[open]")?.textContent).toContain("그림 파일");
+  expect(document.querySelector("dialog[open]")?.textContent).toContain("figures/plot.png");
   expect(document.querySelector('input[aria-label="이미지 URL"]')).toBeNull();
   await click("다시 연결");
   expect(editor.document[0].props).toMatchObject({ sourcePath: "figures/plot.png" });
@@ -158,7 +151,7 @@ test("a mounted BlockNote figure receives its project context and retains its ca
   await click("#fig-keep · Properties");
   select.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("Import failed"));
   await click("다시 연결"); await click("다시 연결");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Import failed");
+  expect(document.querySelector("dialog[open]")?.textContent).toContain("Import failed");
   await click("Cancel"); expect(JSON.stringify(editor.document)).toBe(snapshot);
   let finishSelect!: (value: { sourcePath: string; copied: boolean }) => void;
   select.mockImplementationOnce(() => new Promise((resolve) => { finishSelect = resolve; }));

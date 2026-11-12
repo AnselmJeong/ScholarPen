@@ -16,7 +16,7 @@ const GLOBAL_KEYS = [
   "Event", "CustomEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "FocusEvent", "InputEvent",
   "getComputedStyle", "matchMedia", "requestAnimationFrame", "cancelAnimationFrame",
   "ResizeObserver", "MutationObserver", "IntersectionObserver",
-  "DOMRect", "CSS", "CSSStyleSheet",
+  "DOMRect", "DOMParser", "CSS", "CSSStyleSheet",
 ] as const;
 
 export function installDom(options?: ConstructorParameters<typeof Window>[0]) {

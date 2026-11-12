@@ -8,3 +8,10 @@ import { tmpdir } from "node:os";
 const profiles = mkdtempSync(join(tmpdir(), "scholarpen-test-profiles-"));
 process.env.SCHOLARPEN_PROFILE_HOME = profiles;
 process.on("exit", () => rmSync(profiles, { recursive: true, force: true }));
+// Astryx modules schedule an animation frame when they are first imported in a
+// window-like environment; give the test process one so import order between
+// component tests never matters.
+if (typeof globalThis.requestAnimationFrame !== "function") {
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0) as unknown as number);
+  globalThis.cancelAnimationFrame = ((id: number) => clearTimeout(id));
+}

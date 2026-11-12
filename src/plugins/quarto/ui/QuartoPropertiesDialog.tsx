@@ -1,13 +1,22 @@
 import React, { useContext, useEffect, useRef, useState } from "react";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Button } from "@astryxdesign/core/Button";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { TextArea } from "@astryxdesign/core/TextArea";
+import { Selector } from "@astryxdesign/core/Selector";
+import { HStack } from "@astryxdesign/core/HStack";
+import { VStack } from "@astryxdesign/core/VStack";
+import { StackItem } from "@astryxdesign/core/Layout";
+import { Card } from "@astryxdesign/core/Card";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Text } from "@astryxdesign/core/Text";
+import { AppDialog } from "@/components/ui/app-dialog";
 import { blockLabel, collectReferenceTargets, LABEL_PREFIXES, validFigureDimension, validQuartoLabel } from "@shared/quarto-references";
 import { FigureDocumentContext, FigureImage } from "../../../renderer/blocks/figure-image";
 import { reloadFigure } from "../../../renderer/blocks/figure-reload";
 import { rpc } from "../../../renderer/rpc";
 
-const field = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
+const ALIGNMENTS = ["left", "center", "right"].map((value) => ({ value, label: value }));
 const names: Record<string, string> = { heading: "Section", table: "Table", figure: "Figure", image: "Figure", math: "Equation" };
 
 export function QuartoPropertiesDialog({ editor, blockId, onClose }: {
@@ -61,6 +70,8 @@ export function QuartoPropertiesDialog({ editor, blockId, onClose }: {
   const [columnAlignments, setColumnAlignments] = useState<string[]>(content?.rows[0]?.cells.map((cell: any) => cell.props?.textAlignment ?? "left") ?? []);
   const [error, setError] = useState("");
   const prefix = LABEL_PREFIXES[initial.type];
+  // Return the caret to the manuscript once the dialog is gone.
+  const close = () => { onClose(); setTimeout(() => editor.focus(), 0); };
 
   const apply = () => {
     const block = editor.getBlock(blockId);
@@ -98,81 +109,73 @@ export function QuartoPropertiesDialog({ editor, blockId, onClose }: {
     }
     editor.updateBlock(block, { ...(block.type === "image" ? { type: "figure" } : {}), props, ...(nextContent ? { content: nextContent } : {}) });
     if (isFigure) reloadFigure(editor, blockId);
-    onClose();
+    close();
   };
 
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto"
-      onCloseAutoFocus={(event) => { event.preventDefault(); editor.focus(); }}>
-      <DialogHeader>
-        <DialogTitle>{names[initial.type]} properties</DialogTitle>
-        <DialogDescription>{isFigure ? "그림 파일의 연결, 캡션과 표시 방식을 설정합니다." : "Set the reference identifier and how this block appears in Quarto output."}</DialogDescription>
-      </DialogHeader>
-      <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); apply(); }}>
-        {isFigure && <fieldset className="space-y-2 rounded-md border border-border p-3">
-          <legend className="px-1 text-sm font-medium">그림 파일</legend>
-          <FigureImage sourcePath={sourcePath} url={sourceChanged ? "" : String(initial.props.url ?? "")}
-            alt={caption || "그림 미리보기"} inProperties reloadToken={previewRevision}
-            style={{ maxHeight: 150, maxWidth: "100%", margin: "0 auto" }} />
-          <p className="break-all text-xs text-muted-foreground">{sourcePath ||
-            (initial.props.url ? "문서에 저장된 그림입니다. 로컬 파일을 선택해 연결할 수 있습니다." : "연결된 파일이 없습니다.")}</p>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" disabled={!projectPath || selecting} onClick={chooseFile}>
-              {selecting ? "파일 선택 중…" : sourcePath || initial.props.url ? "다시 연결" : "파일 선택"}
-            </Button>
-            <Button type="button" variant="outline" disabled={!sourcePath && !initial.props.url} onClick={() => {
-              setPreviewRevision((value) => value + 1);
-              if (!sourceChanged) reloadFigure(editor, blockId);
-            }}>Reload</Button>
-          </div>
-          {sourcePath && <p className="text-xs text-muted-foreground">프로젝트 안의 이 파일을 수정하면 자동 반영됩니다.</p>}
-          {sourceNotice && <p role="status" className="text-xs text-muted-foreground">{sourceNotice}</p>}
-        </fieldset>}
-        <label className="block space-y-1 text-sm font-medium">Identifier
-          <div className="flex gap-2">
-            <input aria-label="Identifier" className={field} value={label} placeholder={`${prefix}-steady-state`}
-              autoCapitalize="none" autoCorrect="off" autoComplete="off" spellCheck={false}
-              onChange={(event) => setLabel(event.target.value)} />
-            <Button type="button" variant="outline" onClick={() => setLabel(`${prefix}-${blockId.replace(/[^\w-]/g, "")}`)}>Generate</Button>
-          </div>
-          <span className="block text-xs font-normal text-muted-foreground">Use @{label.trim().replace(/^#/, "") || `${prefix}-steady-state`} to refer to this block. Final numbering is assigned by Quarto.</span>
-        </label>
-        {(isFigure || initial.type === "table") && <label className="block space-y-1 text-sm font-medium">Caption
-          <textarea aria-label="Caption" rows={2} className={field} value={caption} onChange={(event) => setCaption(event.target.value)} />
-        </label>}
-        {isFigure && <>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="space-y-1 text-sm font-medium">Width<input aria-label="Width" className={field} value={width} placeholder="Auto · e.g. 70%" onChange={(event) => setWidth(event.target.value)} /></label>
-            <label className="space-y-1 text-sm font-medium">Height<input aria-label="Height" className={field} value={height} placeholder="Auto · e.g. 5cm" onChange={(event) => setHeight(event.target.value)} /></label>
-          </div>
-          <p className="text-xs text-muted-foreground">Set only width to preserve the image's proportions. Units: %, px, cm, mm, in, pt.</p>
-          <label className="block space-y-1 text-sm font-medium">Figure alignment
-            <select aria-label="Figure alignment" className={field} value={alignment} onChange={(event) => setAlignment(event.target.value)}>
-              {['left', 'center', 'right'].map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </label>
-          <label className="block space-y-1 text-sm font-medium">Alternative text
-            <input aria-label="Alternative text" className={field} value={altText} onChange={(event) => setAltText(event.target.value)} />
-          </label>
-        </>}
-        {initial.type === "table" && <fieldset className="space-y-2">
-          <legend className="mb-2 text-sm font-medium">Columns</legend>
-          <p className="text-xs text-muted-foreground">Widths are relative shares. For example, 30 and 70 give 30% and 70%. Alignment applies to every cell in the column.</p>
-          {widths.map((value, index) => <div key={index} className="grid grid-cols-[5rem_1fr_1fr] items-center gap-2">
-            <span className="text-sm">Column {index + 1}</span>
-            <input type="number" min="0.01" step="any" aria-label={`Column ${index + 1} width`} className={field} value={value}
-              onChange={(event) => setWidths((old) => old.map((item, i) => i === index ? event.target.value : item))} />
-            <select aria-label={`Column ${index + 1} alignment`} className={field} value={columnAlignments[index]}
-              onChange={(event) => setColumnAlignments((old) => old.map((item, i) => i === index ? event.target.value : item))}>
-              {['left', 'center', 'right'].map((align) => <option key={align} value={align}>{align}</option>)}
-            </select>
-          </div>)}
-        </fieldset>}
-        {blockLabel(initial) && label.trim().replace(/^#/, "") !== blockLabel(initial) &&
-          <p className="text-xs text-muted-foreground">Existing references use @{blockLabel(initial)}. Update those references if you change this identifier.</p>}
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit" disabled={selecting}>Apply</Button></DialogFooter>
-      </form>
-    </DialogContent>
-  </Dialog>;
+  const currentLabel = label.trim().replace(/^#/, "");
+  return <AppDialog isOpen onOpenChange={(open) => { if (!open) close(); }} purpose="form" width={560}
+    title={`${names[initial.type]} properties`}
+    subtitle={isFigure ? "그림 파일의 연결, 캡션과 표시 방식을 설정합니다." : "Set the reference identifier and how this block appears in Quarto output."}
+    footerStart={error ? <p role="alert" className="text-xs text-destructive">{error}</p> : undefined}
+    footer={<>
+      <Button label="Cancel" variant="secondary" onClick={close} />
+      <Button label="Apply" variant="primary" isDisabled={selecting} onClick={apply} />
+    </>}>
+    {isFigure && <Card variant="muted" padding={3}>
+      <VStack gap={2}>
+        <Heading level={4}>그림 파일</Heading>
+        <FigureImage sourcePath={sourcePath} url={sourceChanged ? "" : String(initial.props.url ?? "")}
+          alt={caption || "그림 미리보기"} inProperties reloadToken={previewRevision}
+          style={{ maxHeight: 150, maxWidth: "100%", margin: "0 auto" }} />
+        <Text type="supporting" display="block" wordBreak="break-all">{sourcePath ||
+          (initial.props.url ? "문서에 저장된 그림입니다. 로컬 파일을 선택해 연결할 수 있습니다." : "연결된 파일이 없습니다.")}</Text>
+        <HStack gap={2}>
+          <Button variant="secondary" size="sm" isDisabled={!projectPath || selecting} isLoading={selecting} onClick={chooseFile}
+            label={selecting ? "파일 선택 중…" : sourcePath || initial.props.url ? "다시 연결" : "파일 선택"} />
+          <Button label="Reload" variant="secondary" size="sm" isDisabled={!sourcePath && !initial.props.url} onClick={() => {
+            setPreviewRevision((value) => value + 1);
+            if (!sourceChanged) reloadFigure(editor, blockId);
+          }} />
+        </HStack>
+        {sourcePath && <Text type="supporting" display="block">프로젝트 안의 이 파일을 수정하면 자동 반영됩니다.</Text>}
+        {sourceNotice && <Text type="supporting" display="block" role="status">{sourceNotice}</Text>}
+      </VStack>
+    </Card>}
+    <HStack gap={2} vAlign="end">
+      <StackItem size="fill">
+        <TextInput label="Identifier" value={label} placeholder={`${prefix}-steady-state`} onEnter={apply}
+          description={`Use @${currentLabel || `${prefix}-steady-state`} to refer to this block. Final numbering is assigned by Quarto.`}
+          autoCapitalize="none" hasAutoCorrect={false} autoComplete="off" hasSpellCheck={false}
+          onChange={setLabel} />
+      </StackItem>
+      <Button label="Generate" variant="secondary" onClick={() => setLabel(`${prefix}-${blockId.replace(/[^\w-]/g, "")}`)} />
+    </HStack>
+    {(isFigure || initial.type === "table") && <TextArea label="Caption" rows={2} value={caption} onChange={setCaption} />}
+    {isFigure && <>
+      <HStack gap={3}>
+        <StackItem size="fill"><TextInput label="Width" value={width} placeholder="Auto · e.g. 70%" onChange={setWidth} onEnter={apply} /></StackItem>
+        <StackItem size="fill"><TextInput label="Height" value={height} placeholder="Auto · e.g. 5cm" onChange={setHeight} onEnter={apply} /></StackItem>
+      </HStack>
+      <Text type="supporting" display="block">Set only width to preserve the image's proportions. Units: %, px, cm, mm, in, pt.</Text>
+      <Selector label="Figure alignment" value={alignment} options={ALIGNMENTS} onChange={(value) => { if (value) setAlignment(value); }} />
+      <TextInput label="Alternative text" value={altText} onChange={setAltText} onEnter={apply} />
+    </>}
+    {initial.type === "table" && <VStack gap={2}>
+      <Heading level={4}>Columns</Heading>
+      <Text type="supporting" display="block">Widths are relative shares. For example, 30 and 70 give 30% and 70%. Alignment applies to every cell in the column.</Text>
+      {widths.map((value, index) => <HStack key={index} gap={2} vAlign="center">
+        <Text type="label" display="block">Column {index + 1}</Text>
+        <StackItem size="fill">
+          <TextInput label={`Column ${index + 1} width`} isLabelHidden inputMode="decimal" value={value} onEnter={apply}
+            onChange={(next) => setWidths((old) => old.map((item, i) => i === index ? next : item))} />
+        </StackItem>
+        <StackItem size="fill">
+          <Selector label={`Column ${index + 1} alignment`} isLabelHidden value={columnAlignments[index]} options={ALIGNMENTS}
+            onChange={(next) => { if (next) setColumnAlignments((old) => old.map((item, i) => i === index ? next : item)); }} />
+        </StackItem>
+      </HStack>)}
+    </VStack>}
+    {blockLabel(initial) && currentLabel !== blockLabel(initial) &&
+      <Text type="supporting" display="block">Existing references use @{blockLabel(initial)}. Update those references if you change this identifier.</Text>}
+  </AppDialog>;
 }

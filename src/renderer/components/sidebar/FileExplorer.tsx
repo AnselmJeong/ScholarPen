@@ -39,13 +39,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { AppDialog } from "@/components/ui/app-dialog";
+import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Text } from "@astryxdesign/core/Text";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { rpc } from "../../rpc";
@@ -372,20 +369,10 @@ export function FileExplorer({
   const [refreshing, setRefreshing] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set());
-  const newProjectInputRef = useRef<HTMLInputElement>(null);
-  const newDocInputRef = useRef<HTMLInputElement>(null);
   const selectableFiles = useMemo(() => collectSelectableFiles(fileTree), [fileTree]);
   const selectedFiles = useMemo(() => selectableFiles.filter(file => selectedPaths.has(file.path)), [selectableFiles, selectedPaths]);
   const selectedDocuments = selectedFiles.filter(file => file.kind === "document");
   const selectedImports = selectedFiles.filter(isImportableFile);
-
-  // Focus inputs when dialogs open
-  useEffect(() => {
-    if (newProjectDialogOpen) setTimeout(() => newProjectInputRef.current?.focus(), 50);
-  }, [newProjectDialogOpen]);
-  useEffect(() => {
-    if (newDocDialogOpen) setTimeout(() => newDocInputRef.current?.focus(), 50);
-  }, [newDocDialogOpen]);
 
   // Close context menu on click outside
   useEffect(() => {
@@ -855,96 +842,41 @@ export function FileExplorer({
       )}
 
       {/* New Project Dialog */}
-      <Dialog open={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>New Project</DialogTitle>
-          </DialogHeader>
-          <div className="py-2">
-            <Input
-              ref={newProjectInputRef}
-              placeholder="Project name..."
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreateProject();
-                if (e.key === "Escape") setNewProjectDialogOpen(false);
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setNewProjectDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleCreateProject}
-              disabled={!newProjectName.trim() || creating}
-            >
-              {creating ? "Creating..." : "Create"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AppDialog isOpen={newProjectDialogOpen} onOpenChange={setNewProjectDialogOpen} title="New Project" width={400} purpose="form"
+        footer={<>
+          <AstryxButton label="Cancel" variant="secondary" onClick={() => setNewProjectDialogOpen(false)} />
+          <AstryxButton label={creating ? "Creating..." : "Create"} variant="primary" isLoading={creating}
+            isDisabled={!newProjectName.trim() || creating} onClick={handleCreateProject} />
+        </>}>
+        <TextInput label="Project name" isLabelHidden placeholder="Project name..." value={newProjectName}
+          onChange={setNewProjectName} onEnter={handleCreateProject} hasAutoFocus />
+      </AppDialog>
 
       {/* New Document Dialog */}
-      <Dialog open={newDocDialogOpen} onOpenChange={setNewDocDialogOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>New Document</DialogTitle>
-          </DialogHeader>
-          <div className="py-2">
-            <Input
-              ref={newDocInputRef}
-              placeholder="Document name..."
-              value={newDocName}
-              onChange={(e) => setNewDocName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreateDocument();
-                if (e.key === "Escape") setNewDocDialogOpen(false);
-              }}
-            />
-            <p className="text-xs text-muted-foreground mt-2">
-              Will be saved as <span className="font-mono">{newDocName.trim() || "untitled"}.scholarpen.json</span>
-            </p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setNewDocDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleCreateDocument}
-              disabled={!newDocName.trim() || creating}
-            >
-              {creating ? "Creating..." : "Create"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AppDialog isOpen={newDocDialogOpen} onOpenChange={setNewDocDialogOpen} title="New Document" width={400} purpose="form"
+        footer={<>
+          <AstryxButton label="Cancel" variant="secondary" onClick={() => setNewDocDialogOpen(false)} />
+          <AstryxButton label={creating ? "Creating..." : "Create"} variant="primary" isLoading={creating}
+            isDisabled={!newDocName.trim() || creating} onClick={handleCreateDocument} />
+        </>}>
+        <TextInput label="Document name" isLabelHidden placeholder="Document name..." value={newDocName}
+          onChange={setNewDocName} onEnter={handleCreateDocument} hasAutoFocus />
+        <Text type="supporting" display="block">
+          Will be saved as <span className="font-mono-ui">{newDocName.trim() || "untitled"}.scholarpen.json</span>
+        </Text>
+      </AppDialog>
 
       {/* Delete Confirm Dialog */}
-      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Delete {deleteTargets.length} file(s)</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground py-2">
-            Delete these files? This cannot be undone.
-          </p>
-          <ul className="max-h-48 overflow-y-auto text-xs break-all space-y-1">
-            {deleteTargets.map(file => <li key={file.path}>{file.path.replace(`${activeProject?.path}/`, "")}</li>)}
-          </ul>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeleteConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" size="sm" onClick={confirmDelete}>
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AppDialog isOpen={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen} title={`Delete ${deleteTargets.length} file(s)`} width={420}
+        subtitle="Delete these files? This cannot be undone."
+        footer={<>
+          <AstryxButton label="Cancel" variant="secondary" onClick={() => setDeleteConfirmOpen(false)} />
+          <AstryxButton label="Delete" variant="destructive" onClick={confirmDelete} />
+        </>}>
+        <ul className="max-h-48 space-y-1 overflow-y-auto break-all font-mono-ui text-xs text-muted-foreground">
+          {deleteTargets.map(file => <li key={file.path}>{file.path.replace(`${activeProject?.path}/`, "")}</li>)}
+        </ul>
+      </AppDialog>
     </TooltipProvider>
   );
 }

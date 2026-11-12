@@ -1,12 +1,9 @@
 import { afterAll, afterEach, expect, mock, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FileNode } from "@shared/rpc-types";
-const dom = new Window();
-const keys = ["window", "document", "navigator", "Node", "Element", "HTMLElement", "HTMLInputElement", "HTMLButtonElement", "MutationObserver", "ResizeObserver", "CustomEvent", "Event", "MouseEvent", "KeyboardEvent", "DocumentFragment", "NodeFilter", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { installDom } from "../../test-support/dom";
+const env = installDom();
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { FileExplorer } = await import("./FileExplorer");
 let root: Root | undefined;
@@ -35,8 +32,7 @@ afterEach(async () => {
   imported.mockClear(); deleted.mockReset(); refresh.mockClear(); exported.mockClear();
 });
 afterAll(() => {
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  dom.happyDOM.abort();
+  env.restore();
 });
 test("mixed selection imports only MD/QMD and leaves the native document selected for export", async () => {
   await mount();
@@ -53,7 +49,7 @@ test("delete confirmation can be cancelled and partial failures remain selected"
   await click("Select documents or Markdown files");
   await click("Select all");
   await click("Delete 3 files");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("exports/chapter.qmd");
+  expect(document.querySelector("dialog[open]")?.textContent).toContain("exports/chapter.qmd");
   await click("Cancel");
   expect(deleted).not.toHaveBeenCalled();
   deleted.mockImplementation(async path => { if (path === md.path) throw new Error("Permission denied"); });

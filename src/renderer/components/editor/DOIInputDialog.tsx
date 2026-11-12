@@ -1,4 +1,7 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useEffect } from "react";
+import { Button } from "@astryxdesign/core/Button";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { AppDialog } from "../ui/app-dialog";
 
 interface DOIInputDialogProps {
   isOpen: boolean;
@@ -16,92 +19,27 @@ export function DOIInputDialog({
   onSubmit,
 }: DOIInputDialogProps) {
   const [doi, setDoi] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus the input whenever the dialog opens; clear state on close.
+  // Start empty each time the dialog opens.
   useEffect(() => {
-    if (isOpen) {
-      setDoi("");
-      // Defer so the element is visible before focus
-      setTimeout(() => inputRef.current?.focus(), 50);
-    }
+    if (isOpen) setDoi("");
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = () => {
     const trimmed = doi.trim();
-    if (trimmed) onSubmit(trimmed);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") onClose();
+    if (trimmed && !isLoading) onSubmit(trimmed);
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      onKeyDown={handleKeyDown}
-    >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/30"
-        onClick={onClose}
-      />
-
-      {/* Dialog */}
-      <div className="relative bg-popover text-popover-foreground rounded-lg shadow-xl w-[440px] p-6 space-y-4 border border-border">
-        <h2 className="text-sm font-semibold">Insert Citation via DOI</h2>
-
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">
-              DOI
-            </label>
-            <input
-              ref={inputRef}
-              type="text"
-              value={doi}
-              onChange={(e) => setDoi(e.target.value)}
-              placeholder="10.1038/s41586-021-03819-2"
-              disabled={isLoading}
-              className="w-full px-3 py-2 text-sm font-mono border border-input bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent disabled:opacity-50"
-            />
-          </div>
-
-          {error && (
-            <p className="rounded border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {error}
-            </p>
-          )}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isLoading}
-              className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-md hover:bg-accent disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading || !doi.trim()}
-              className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isLoading ? (
-                <>
-                  <span className="inline-block w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  Resolving…
-                </>
-              ) : (
-                "Add & Insert"
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <AppDialog isOpen={isOpen} onOpenChange={(open) => { if (!open) onClose(); }} title="Insert Citation via DOI" width={440} purpose="form"
+      footer={<>
+        <Button label="Cancel" variant="secondary" isDisabled={isLoading} onClick={onClose} />
+        <Button label={isLoading ? "Resolving…" : "Add & Insert"} variant="primary" isLoading={isLoading}
+          isDisabled={isLoading || !doi.trim()} onClick={submit} />
+      </>}>
+      <TextInput label="DOI" value={doi} onChange={setDoi} onEnter={submit} placeholder="10.1038/s41586-021-03819-2"
+        isDisabled={isLoading} hasAutoFocus hasSpellCheck={false} autoCapitalize="off"
+        status={error ? { type: "error", message: error } : undefined} statusVariant="detached" />
+    </AppDialog>
   );
 }
