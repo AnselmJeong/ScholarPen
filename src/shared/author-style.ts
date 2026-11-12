@@ -63,6 +63,14 @@ export const DEFAULT_STYLE_CONFIG: StyleConfig = {
   observe: false, autoAnalyze: false, localOnly: true, remoteConsent: false,
   autoApprove: false, applyToChat: false, strength: "normal", skipNext: false, genre: "academic",
 };
+/** Maps UI/review labels ("English", "한국어") to profile language codes; unknown labels give undefined. */
+export function normalizeStyleLanguage(value: string | undefined): string | undefined {
+  const label = value?.trim().toLowerCase();
+  if (!label) return undefined;
+  if (["en", "eng", "english", "영어"].includes(label)) return "en";
+  if (["ko", "kr", "kor", "korean", "한국어", "국문"].includes(label)) return "ko";
+  return undefined;
+}
 export function detectStyleLanguage(text: string): string {
   return /[가-힣]/u.test(text) ? "ko" : /[a-zA-Z]/.test(text) ? "en" : "und";
 }

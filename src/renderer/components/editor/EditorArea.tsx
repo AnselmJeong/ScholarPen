@@ -1,5 +1,5 @@
 import { punctuationSnapshot } from "../../extensions/writing-preferences";
-import { useExtensionEnabled } from "../../extensions/state";
+import { useExtensionEnabled, useExtensions } from "../../extensions/state";
 import type { DocumentFindRequest } from "../../utils/editor-text-find";
 import { NoteToolbarButton } from "../../blocks/note-toolbar-button";
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -276,6 +276,8 @@ function CollabEditorArea({
   const [documentReady, setDocumentReady] = useState(false);
   const authorStyleEnabled = useExtensionEnabled("scholarpen.author-style");
   const quartoEnabled = useExtensionEnabled("scholarpen.quarto");
+  // Slash items owned by plugins must follow Settings toggles while this editor stays mounted.
+  const extensionStates = useExtensions();
   const [propertiesBlockId, setPropertiesBlockId] = useState<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
@@ -373,7 +375,7 @@ function CollabEditorArea({
       setCitationHoverMetadata(new Map());
       return;
     }
-    rpc.loadBibtex(project.path)
+    rpc.readBibliography(project.path)
       .then((bibtex) => applyBibtexState(bibtex ?? ""))
       .catch(() => {
         setCitekeys([]);
@@ -715,7 +717,7 @@ function CollabEditorArea({
     };
   }, [onScrollPositionChange]);
 
-  // Build slash menu items once; only rebuild when editor, AI, or citekeys change.
+  // Build slash menu items once; only rebuild when editor, AI, or plugin states change.
   // Kept out of getItems to avoid reconstructing all block-type arrays on every keystroke.
   const slashMenuItems = useMemo(() => {
     const scholar = getScholarSlashMenuItems(
@@ -732,7 +734,7 @@ function CollabEditorArea({
     const defaults = filterDefaultSlashMenuItems(getDefaultReactSlashMenuItems(editor));
     const aiItems = ollamaStatus.connected ? getAISlashMenuItemsFixed(editor) : [];
     return [...scholar, ...headings, ...defaults, ...aiItems];
-  }, [editor, ollamaStatus.connected, onReviewChanges]);
+  }, [editor, ollamaStatus.connected, onReviewChanges, extensionStates]);
 
   return (
     <FigureDocumentContext.Provider value={{ projectPath: project.path,

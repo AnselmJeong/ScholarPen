@@ -108,8 +108,18 @@ export class ExtensionHost {
     finally { this.requests.delete(requestId); }
   }
 
+  /** The first part runs synchronously: app quit blocks the event loop right after before-quit, so disposers
+   * (for example killing an installer's child processes) must start before the first await. */
   async dispose(): Promise<void> {
     for (const request of this.requests.values()) request.abort.abort();
+    const pending: unknown[] = [];
+    for (const instance of this.instances.values()) {
+      instance.handlers.clear();
+      for (const dispose of instance.disposers.splice(0).reverse()) {
+        try { pending.push(dispose()); } catch { /* One failing disposer must not skip the others. */ }
+      }
+    }
+    await Promise.allSettled(pending);
     await Promise.allSettled([...this.instances.values()].map(async instance => {
       await instance.activation?.catch(() => {});
       await this.cleanup(instance);

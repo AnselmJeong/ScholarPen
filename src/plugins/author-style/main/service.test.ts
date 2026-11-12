@@ -103,6 +103,15 @@ test("migration backs up legacy preferences once and scopes approved rules by la
   expect(await readFile(file, "utf8")).toBe(raw); expect(await repo.read(legacyProject)).toEqual(state);
   expect((await readdir(f.privateRoot)).filter(n => n.endsWith("legacy-backup"))).toHaveLength(1);
 });
+test("migration skips legacy observations of deleted paragraphs instead of failing every load", async () => {
+  const f = await fixture(); const legacyProject = join(f.root, "legacy-deleted"); await mkdir(join(legacyProject, ".scholarpen"), { recursive: true });
+  const observations = [1, 2, 3, 4].map(n => ({ id: `edit-${n}`, filename: "paper", blockId: `p${n}`, kind: "direct-edit" as const, before: "It is important to note a result.", after: n === 4 ? "" : "A result supports the hypothesis.", direction: "", observedAt: 1 }));
+  await writeFile(join(legacyProject, ".scholarpen/author-preferences.json"), JSON.stringify({ version: 1, hash: "x", excludedEvidence: [],
+    preferences: [{ id: "old", rule: "Avoid filler", scope: "English", evidenceIds: observations.map(o => o.id) }] }));
+  const state = await new ProfileRepository(f.privateRoot, async () => observations).read(legacyProject);
+  expect(state.evidence.map(e => e.id)).toEqual(["edit-1", "edit-2", "edit-3"]);
+  expect(state.profiles[0]?.rules[0]?.evidenceIds).toEqual(["edit-1", "edit-2", "edit-3"]);
+});
 test("private observations are opt-in, paragraph keystrokes coalesce and forgotten paragraphs stay excluded", async () => {
   const f = await fixture(); await f.create();
   const obs = { filename: "paper", blockId: "p1", before: "The original sentence.", after: "The revised sentence." };
@@ -111,6 +120,25 @@ test("private observations are opt-in, paragraph keystrokes coalesce and forgott
   await f.run("observe", obs); await f.run("observe", { ...obs, before: obs.after, after: "A precise sentence." });
   expect(f.view.evidence).toHaveLength(1); expect(f.view.evidence[0]?.observation?.before).toBe(obs.before);
   await f.run("forgetEvidence", { id: f.view.evidence[0]!.id }); await f.run("observe", obs); expect(f.view.evidence).toHaveLength(0);
+});
+test("background observation keeps the view revision, and an undo withdraws evidence without deleting approved rules", async () => {
+  const f = await fixture(); await f.create(); await f.run("configure", { ...f.view.config, observe: true });
+  const stale = f.view.revision, signal = new AbortController().signal;
+  const obs = { filename: "paper", blockId: "p1", before: "The original sentence.", after: "The revised sentence." };
+  await f.service.execute(f.path, { projectPath: f.path, operation: "observe", payload: obs }, signal);
+  const observed = await f.service.view(f.path); expect(observed.revision).toBe(stale); expect(observed.evidence).toHaveLength(1);
+  const evidenceId = observed.evidence[0]!.id;
+  // Seed rules the way the analyzer leaves them: one approved without edits, one still a candidate.
+  await f.repo.change(f.path, undefined, s => { const p = s.profiles[0]!; p.rules = [
+    { id: "learned-active", instruction: "Prefer precise verbs.", language: p.language, genre: p.genre, source: "learned", status: "active", support: "author-confirmed", evidenceIds: [evidenceId] },
+    { id: "learned-candidate", instruction: "Shorten sentences.", language: p.language, genre: p.genre, source: "learned", status: "candidate", support: "insufficient", evidenceIds: [evidenceId] }]; });
+  const before = (await f.service.view(f.path)).revision;
+  await f.service.execute(f.path, { projectPath: f.path, operation: "observe", payload: { filename: "paper", blockId: "p1", remove: true } }, signal);
+  const after = await f.service.view(f.path);
+  expect(after.revision).toBe(before); expect(after.evidence).toHaveLength(0); expect(after.exclusions).toHaveLength(0);
+  expect(after.profiles[0]!.rules.map(r => r.id)).toEqual(["learned-active"]);
+  await f.service.execute(f.path, { projectPath: f.path, operation: "observe", payload: obs }, signal);
+  expect((await f.service.view(f.path)).evidence).toHaveLength(1);
 });
 test("sample exclusions strip protected and third-party blocks, comparison does not mutate manuscripts", async () => {
   expect(sampleProse("Own prose\n> Quoted text\n```js\ncode\n```\nReferences\nOther author")).toBe("Own prose");

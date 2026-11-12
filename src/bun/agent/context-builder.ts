@@ -2,6 +2,7 @@ import { validateAgentImages } from "../../shared/agent-images";
 import { AI_WRITING_STYLE } from "../../shared/ai-writing-style";
 import { projectMemoryPrompt, type ProjectMemoryHit } from "../../shared/project-memory";
 import { legacyWritingPurpose, styleContext } from "../ai/context-composer";
+import { detectStyleLanguage } from "../../shared/author-style";
 import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
@@ -382,7 +383,7 @@ export async function buildAgentMessages(
     ),
     buildProjectSourcePrompt(projectSources),
     projectMemoryPrompt(memories),
-    (await styleContext(params.projectPath ?? undefined, { purpose: params.analysisMode === "deepen" || isValidate ? "rewrite" : isFindCitation || params.analysisMode === "check-citations" ? "extract" : legacyWritingPurpose(params.message), language: params.lang, model: params.model, punctuation: params.deepenContext?.punctuation })).text,
+    (await styleContext(params.projectPath ?? undefined, { purpose: params.analysisMode === "deepen" || isValidate ? "rewrite" : isFindCitation || params.analysisMode === "check-citations" ? "extract" : legacyWritingPurpose(params.message), language: detectStyleLanguage(params.deepenContext?.selectedText || params.citationCheckContext?.selectedText || params.message), model: params.model, punctuation: params.deepenContext?.punctuation })).text,
     memoryUnavailable ? "Project memory retrieval was unavailable for this request. Do not claim to have consulted stored project memories." : "",
     webContext(webResults),
   ].filter(Boolean);

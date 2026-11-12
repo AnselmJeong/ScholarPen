@@ -16,7 +16,7 @@ export function legacyWritingPurpose(message: string): StyleRequest["purpose"] {
 export async function styleContext(projectPath: string | undefined, request: StyleRequest): Promise<StyleContext> {
   const context = await authorStyle.context(projectPath, request).catch(error => ({ text: "", reason: String(error) }));
   if (["style-learn", "extract", "review-evaluate"].includes(request.purpose)) return context;
-  const punctuation = request.punctuation ? parsePunctuationPolicy(request.punctuation) : (await writingPreferences.read()).punctuation;
+  const punctuation = request.punctuation ? parsePunctuationPolicy(request.punctuation) : await writingPreferences.policyForRequest();
   return { ...context, text: [punctuationGuidance(punctuation), context.text].filter(Boolean).join("\n\n") };
 }
 export async function composeWritingContext(messages: OllamaMessage[], projectPath: string | undefined, request: StyleRequest): Promise<OllamaMessage[]> {

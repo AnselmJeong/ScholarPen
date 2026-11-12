@@ -132,6 +132,8 @@ type BunRequests = RPCSchema<{
     // Citations
     resolveDOI: { params: { doi: string }; response: CitationMetadata };
     searchCitations: { params: { query: string }; response: CitationMetadata[] };
+    /** Core read of the canonical references.bib; available while the Bibliography plugin is disabled. */
+    readBibliography: { params: { projectPath: string }; response: string };
     getWritingPreferences: { params: void; response: WritingPreferences };
     saveWritingPreferences: { params: { expectedRevision: number; punctuation: PunctuationPolicy }; response: WritingPreferences };
     generateTextStream: {

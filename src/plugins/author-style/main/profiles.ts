@@ -92,12 +92,16 @@ export class ProfileRepository {
         !legacy.excludedEvidence.every(x => typeof x === "string")) throw new Error("기존 편집 취향 파일을 이전할 수 없습니다. 원본을 보존했습니다.");
     const observations = (await this.legacyObservations(path)).filter(o => !(legacy.excludedEvidence as string[]).includes(o.id));
     const learned = parsePreferences(JSON.stringify(legacy), observations);
-    for (const language of new Set(observations.map(o => detectStyleLanguage(o.after)))) {
-      const entries = observations.filter(o => detectStyleLanguage(o.after) === language);
+    // A legacy observation of a deleted paragraph has no text to keep as evidence, and stored evidence must validate.
+    const usable = observations.filter(o => o.after.trim() && o.filename.trim());
+    const usableIds = new Set(usable.map(o => o.id));
+    for (const language of new Set(usable.map(o => detectStyleLanguage(o.after)))) {
+      const entries = usable.filter(o => detectStyleLanguage(o.after) === language);
       const p = this.newProfile(state, `이전한 문체 (${language})`, language, "academic");
       for (const o of entries) state.evidence.push({ id: o.id, profileId: p.id, authorId: this.authorId, kind: o.kind,
-        label: o.filename, language, genre: p.genre, text: o.after, hash: fingerprint(o.id), observedAt: o.observedAt, observation: o });
-      p.rules = learned.filter(r => r.evidenceIds.every(id => entries.some(o => o.id === id))).map(r => ({ id: r.id,
+        label: o.filename.slice(0, 500), language, genre: p.genre, text: o.after.slice(0, 60_000), hash: fingerprint(o.id), observedAt: o.observedAt, observation: o });
+      p.rules = learned.map(r => ({ ...r, evidenceIds: r.evidenceIds.filter(id => usableIds.has(id)) }))
+        .filter(r => r.evidenceIds.length > 0 && r.evidenceIds.every(id => entries.some(o => o.id === id))).map(r => ({ id: r.id,
         instruction: `${r.rule} (${r.scope})`, language, genre: p.genre, evidenceIds: r.evidenceIds, source: "learned", status: "active", support: "repeated" }));
     }
     state.config.observe = true; // Preserve project-local observation, never infer remote consent.

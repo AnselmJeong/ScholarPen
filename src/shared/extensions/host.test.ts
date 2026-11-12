@@ -91,3 +91,12 @@ test("host-only legacy task leases also protect disable and honor cancellation",
   finish(); await work; await host.setEnabled(manifest.id, false);
   await expect(host.runTask(manifest.id, async () => 1)).rejects.toThrow("disabled");
 });
+
+test("dispose runs disposers before its first await, so app quit cannot skip them", async () => {
+  let disposed = 0;
+  const host = new ExtensionHost([entry(async () => ({ activate(ctx) { ctx.register("example.counter.count", () => 3); ctx.onDispose(() => { disposed++; }); } }))]);
+  await host.invoke(request("quit-1"));
+  const done = host.dispose();
+  expect(disposed).toBe(1);
+  await done; expect(disposed).toBe(1);
+});

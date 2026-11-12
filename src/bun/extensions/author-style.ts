@@ -19,7 +19,7 @@ export function getAuthorStyle() {
       };
       return new AuthorStyleService(new ProfileRepository(process.env.SCHOLARPEN_PROFILE_HOME ||
         (process.env.SCHOLARPEN_HOME ? join(process.env.SCHOLARPEN_HOME, ".plugins/author-style") : join(homedir(), "Library/Application Support/dev.scholarpen.app/author-style")), collectAuthorObservations), {
-        punctuation: async () => (await writingPreferences.read()).punctuation,
+        punctuation: () => writingPreferences.policyForRequest(),
         info: async () => { const p = await provider(); return { label: p.label, local: p.local }; },
         complete: async (messages, signal, localOnly) => {
           const { settings, local } = await provider();

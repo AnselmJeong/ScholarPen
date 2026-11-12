@@ -22,6 +22,7 @@ test("invalid or corrupt settings preserve the stored bytes", async () => {
   await expect(f.store.save(1, { emDash: "unknown", semicolon: "avoid" })).rejects.toThrow();
   await writeFile(join(f.root, "writing-preferences.json"), "{broken");
   await expect(f.store.read()).rejects.toThrow(); await expect(f.store.save(1, DEFAULT_PUNCTUATION)).rejects.toThrow();
+  expect(await f.store.policyForRequest()).toEqual(DEFAULT_PUNCTUATION);
   expect(await readFile(join(f.root, "writing-preferences.json"), "utf8")).toBe("{broken");
 });
 test("prompt policy is injected once, a captured request policy survives later settings changes", () => {

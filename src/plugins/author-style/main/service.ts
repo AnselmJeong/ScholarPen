@@ -60,7 +60,8 @@ export class AuthorStyleService {
   }
   async context(path: string | undefined, request: StyleRequest): Promise<StyleContext> {
     let context: StyleContext = { text: "" };
-    const personal = await this.personal.read();
+    // An unreadable personal library must not hide project profiles; Settings reports it through view().
+    const personal = await this.personal.read().catch(() => ({ schemaVersion: 1 as const, revision: 0, authorId: "", profiles: [], defaultProfileId: null, defaults: [], history: [] }));
     if (!path) return resolveStyle({ schemaVersion: 1, revision: 0, authorId: this.repository.authorId, profiles: [], evidence: [], activeProfileId: null,
       config: DEFAULT_STYLE_CONFIG, exclusions: [], history: [], applications: [], migration: null, lastAnalysisHash: "" }, request, personal);
     await this.repository.change(path, undefined, state => {
@@ -131,7 +132,9 @@ export class AuthorStyleService {
         const filename = string(data.filename, "문서", 300), blockId = string(data.blockId, "문단", 100);
         const hash = fingerprint(`${filename}:${blockId}`), id = fingerprint(`${p.id}:${hash}`);
         const before = typeof data.before === "string" ? data.before.slice(0, 8000) : "", after = typeof data.after === "string" ? data.after.slice(0, 8000) : "";
-        if (data.remove === true) { this.forget(state, id); return; }
+        // An undo or a paragraph typed back to its original withdraws this observation only. It is not an author
+        // exclusion: the paragraph may be observed again and confirmed rules keep their place.
+        if (data.remove === true) { this.withdraw(state, id); return; }
         if (!before.trim() || !after.trim() || before === after || state.exclusions.includes(hash) || (p.language !== "any" && detectStyleLanguage(after) !== p.language)) return;
         const previous = state.evidence.find(e => e.id === id);
         const observation: AuthorObservation = { id, filename, blockId, kind: "direct-edit", direction: "", before: previous?.observation?.after === before ? previous.observation.before : before, after, observedAt: Date.now() };
@@ -169,7 +172,7 @@ export class AuthorStyleService {
         }); return;
       }
       throw new Error("지원하지 않는 문체 작업입니다.");
-    });
+    }, op !== "observe"); // Background observation must not invalidate the revision an open view edits against.
     return this.view(path);
   }
   private async executePersonal(command: StyleCommand, signal: AbortSignal): Promise<PersonalStyleLibrary> {
@@ -219,6 +222,13 @@ export class AuthorStyleService {
     state.exclusions = state.exclusions.filter(value => value !== hash);
     state.evidence.push({ id: randomUUID(), profileId: p.id, authorId: state.authorId, kind: "author-sample", label: string(data.label, "샘플 이름", 200),
       text, hash, language: p.language, genre: p.genre, observedAt: Date.now() }); this.limit(state);
+  }
+  private withdraw(state: StyleState, id: string) {
+    if (!state.evidence.some(e => e.id === id)) return;
+    state.evidence = state.evidence.filter(e => e.id !== id);
+    for (const p of state.profiles) p.rules = p.rules
+      .map(r => ({ ...r, evidenceIds: r.evidenceIds.filter(e => e !== id) }))
+      .filter(r => r.source === "explicit" || r.status !== "candidate" || r.evidenceIds.length > 0);
   }
   private forget(state: StyleState, id: string) {
     const e = state.evidence.find(item => item.id === id); if (!e) return;

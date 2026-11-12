@@ -19,6 +19,16 @@ export class WritingPreferencesStore {
       return { version: 1, revision: 0, punctuation: { ...DEFAULT_PUNCTUATION } };
     }
   }
+  /** AI requests must not fail because the settings file is unreadable: fall back to the historical defaults.
+   * Settings still uses read(), which reports the problem and leaves the stored bytes untouched. */
+  async policyForRequest(): Promise<WritingPreferences["punctuation"]> {
+    try { return (await this.read()).punctuation; }
+    catch (error) {
+      if (!this.warned) { this.warned = true; console.warn("[WritingPreferences] Using default punctuation policy:", error instanceof Error ? error.message : error); }
+      return { ...DEFAULT_PUNCTUATION };
+    }
+  }
+  private warned = false;
   async save(expectedRevision: number, punctuation: unknown): Promise<WritingPreferences> {
     const policy = parsePunctuationPolicy(punctuation);
     const next = this.queue.catch(() => {}).then(async () => {
@@ -35,5 +45,5 @@ export const writingPreferences = new WritingPreferencesStore(process.env.SCHOLA
 export async function preparePunctuationMessages(messages: OllamaMessage[]) {
   if (!messages.some(m => m.role === "system" && m.content.includes(PUNCTUATION_PLACEHOLDER))) return messages;
   const captured = messages.filter(m => m.role === "system").map(m => punctuationFromPrompt(m.content)).find(Boolean);
-  return applyPunctuationPolicy(messages, captured ?? (await writingPreferences.read()).punctuation);
+  return applyPunctuationPolicy(messages, captured ?? await writingPreferences.policyForRequest());
 }

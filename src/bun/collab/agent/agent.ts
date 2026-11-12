@@ -394,7 +394,8 @@ export class CollabAgent {
 
   private async runCommentJob(job: Job, attachment: Attachment, threadId: string, signal: AbortSignal) {
     const thread = readThreads(attachment.session.ydoc.getMap(COLLAB_THREADS_MAP)).find(item => item.id === threadId);
-    if (!thread) return;
+    // A thread resolved or taken over ("I'll handle") while the job was queued is left alone, plugin on or off.
+    if (!thread || !threadWantsAI(thread)) return;
     const latest = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId))?.text ?? "";
     const plugin = thread.meta.documentAction === "ai-score" || asksForAIScore(latest) ? "scholarpen.ai-writing-score"
       : thread.meta.documentAction === "remove-watermark" || thread.meta.documentAction === "humanize" || asksForHumanize(conversationOf(thread)) ? "scholarpen.text-cleanup" : null;

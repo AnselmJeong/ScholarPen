@@ -282,6 +282,7 @@ function mockRpc(method: string, _args: unknown[]): unknown {
     getManuscriptMap: { documents: [], job: { state: "idle" } },
     getConsistencyReport: { report: null, job: { state: "idle" } },
     loadBibtex: "",
+    readBibliography: "",
     mergeBibtex: {
       bibtex: "",
       addedEntries: 0,
@@ -471,6 +472,8 @@ export const rpc = {
   saveBibtexValidated: (projectPath: string, bibtex: string, expectedCurrentBibtex: string) =>
     call<void>("saveBibtexValidated", { projectPath, bibtex, expectedCurrentBibtex }),
   loadBibtex: (projectPath: string) => call<string>("loadBibtex", { projectPath }),
+  /** Citation autocomplete and hover read the canonical file even when the Bibliography plugin is off. */
+  readBibliography: (projectPath: string) => call<string>("readBibliography", { projectPath }),
   mergeBibtex: (projectPath: string, importedBibtex: string) =>
     call<BibliographyMergeResult>("mergeBibtex", { projectPath, importedBibtex }),
   proposeBibliographyRepair: (

@@ -584,6 +584,7 @@ async function main() {
         // Proxy Ollama chat to the renderer via aiChunk messages.
         // Fire-and-forget: return immediately so Electrobun can flush outbound
         // aiChunk messages while the stream runs in the background.
+        readBibliography: ({ projectPath }) => fileSystem.loadBibtex(projectPath),
         getWritingPreferences: () => writingPreferences.read(),
         saveWritingPreferences: ({ expectedRevision, punctuation }) => writingPreferences.save(expectedRevision, punctuation),
         generateTextStream: async ({ model, messages, think, projectPath, punctuation }) => {

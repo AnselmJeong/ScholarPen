@@ -1,3 +1,4 @@
+import { extensionEnabled } from "../../extensions/runtime";
 import { relative, sep } from "path";
 import type { CitationMetadata, FileNode } from "../../../shared/rpc-types";
 import { normalizeDoi, parseBibtexEntries, type BibtexEntry } from "../../../shared/bibtex-utils";
@@ -186,7 +187,10 @@ export async function projectBulkSources(session: CollabSession): Promise<BulkSo
     async saveBibtex(bibtex, expected) {
       await fileSystem.saveBibliographyMaintenance(projectPath, bibtex, "ai-citations", expected);
     },
-    resolveDOI: (doi, signal) => abortable(citationClient.resolveDOI(doi), signal),
+    // With Bibliography off references.bib is read-only: a new work cannot be added, so it is dropped and
+    // reported like any unverifiable citation instead of failing the whole revision at write time.
+    resolveDOI: (doi, signal) => extensionEnabled("scholarpen.bibliography") ? abortable(citationClient.resolveDOI(doi), signal)
+      : Promise.reject(new Error("the Bibliography plugin is disabled, so references.bib cannot be extended")),
     async findCitations(passage, signal) {
       const settings = await fileSystem.getSettings();
       const [own, external] = await Promise.allSettled([
