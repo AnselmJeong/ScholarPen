@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Brain, ChevronDown, ChevronRight } from "lucide-react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
+import { Brain, Search } from "lucide-react";
+import { Button } from "@astryxdesign/core/Button";
+import { TextArea } from "@astryxdesign/core/TextArea";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { PanelActions, PanelError, PanelNote, PanelSection } from "./panel-kit";
 import { MEMORY_CONTENT_LIMIT, type ProjectMemoryStatus, type ProjectMemoryHit, type ProjectMemoryReceipt } from "@shared/project-memory";
 import { rpc } from "../../rpc";
 
@@ -21,7 +23,6 @@ export function ProjectMemoryPanel({ projectPath, sourceName, getSelection }: {
   sourceName?: string | null;
   getSelection: () => string;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [status, setStatus] = useState<ProjectMemoryStatus | null>(null);
   const [draft] = useState(() => readDraft(projectPath));
   const [content, setContent] = useState(draft.content);
@@ -92,42 +93,43 @@ export function ProjectMemoryPanel({ projectPath, sourceName, getSelection }: {
     finally { if (alive.current) setBusy(false); }
   }
 
-  return <section className="shrink-0 border-b border-border text-xs" aria-label="프로젝트 기억">
-    <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-      {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-      <Brain className="h-3.5 w-3.5 text-muted-foreground" />
-      <span className="font-medium">프로젝트 기억</span>
-      <span className="ml-auto text-muted-foreground">{status?.state === "ready" ? `기억 ${status.memories ?? 0}건` : status?.state === "unavailable" || error ? "연결 확인 필요" : "연결 중…"}</span>
-    </button>
-    {expanded && <div className="max-h-[45vh] space-y-3 overflow-y-auto px-3 pb-3">
-      <p className="text-muted-foreground">직접 수정에서 배우는 편집 취향은 Project 탭에서 자동 관리됩니다. 여기에는 별도로 기억시키고 싶은 연구 결정이나 참고 사항을 남길 수 있습니다.</p>
-      {status?.state === "unavailable" && <p role="alert" className="text-amber-700 dark:text-amber-300">{status.error}</p>}
-      <div className="flex items-center gap-2">
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => void refresh()}>연결 재시도</Button>
-        {status && <Button variant="ghost" size="sm" onClick={() => { void rpc.openExternal(`${status.url}/banks/${encodeURIComponent(status.bankId || "")}`).catch(err => setError(String(err))); }}>Hindsight 열기</Button>}
+  const summary = status?.state === "ready" ? `기억 ${status.memories ?? 0}건` : status?.state === "unavailable" || error ? "연결 확인 필요" : "연결 중…";
+  return <div className="shrink-0">
+    <PanelSection title="프로젝트 기억" label="프로젝트 기억" icon={Brain} summary={summary}>
+      <div className="max-h-[45vh] space-y-3 overflow-y-auto">
+        <PanelNote>직접 수정에서 배우는 편집 취향은 Project 탭에서 자동 관리됩니다. 여기에는 별도로 기억시키고 싶은 연구 결정이나 참고 사항을 남길 수 있습니다.</PanelNote>
+        {status?.state === "unavailable" && <PanelError>{status.error}</PanelError>}
+        <PanelActions>
+          <Button label="연결 재시도" size="sm" variant="secondary" isDisabled={busy} onClick={() => void refresh()} />
+          {status && <Button label="Hindsight 열기" size="sm" variant="ghost" onClick={() => { void rpc.openExternal(`${status.url}/banks/${encodeURIComponent(status.bankId || "")}`).catch(err => setError(String(err))); }} />}
+        </PanelActions>
+        {status?.bankId && <p className="break-all font-mono-ui text-[11px] text-muted-foreground">Bank: {status.bankId}</p>}
+        <TextArea label="기억할 내용" rows={4} value={content} isDisabled={busy || Boolean(receipt)} onChange={value => setContent(value.slice(0, MEMORY_CONTENT_LIMIT))}
+          placeholder="예: 이 원고에서는 state와 phase를 구분하여 사용한다. 근거와 출처도 함께 남겨 주세요." />
+        <TextInput label="기억 출처" isLabelHidden size="sm" placeholder="출처 또는 맥락 (선택)" value={source} isDisabled={busy || Boolean(receipt)}
+          onChange={value => setSource(value.slice(0, 500))} />
+        <PanelActions>
+          <Button label="선택문 가져오기" size="sm" variant="secondary" isDisabled={busy || Boolean(receipt)} onMouseDown={(e: React.MouseEvent) => e.preventDefault()} onClick={() => {
+            const selection = getSelection();
+            if (!selection.trim()) { setError("문서에서 기억할 부분을 먼저 선택해 주세요."); return; }
+            if (selection.length > MEMORY_CONTENT_LIMIT) { setError("선택한 내용이 너무 깁니다. 더 짧은 부분을 선택해 주세요."); return; }
+            setContent(selection); setSource(sourceName || "문서 선택문"); setError("");
+          }} />
+          <Button label="기억 저장" size="sm" variant="primary" isDisabled={busy || Boolean(receipt) || !content.trim()} onClick={() => void save()} />
+        </PanelActions>
+        {notice && <PanelNote role="status">{notice}</PanelNote>}
+        {error && <PanelError>{error}</PanelError>}
+        <form className="flex items-center gap-2 border-t border-sidebar-border pt-3" onSubmit={e => { e.preventDefault(); if (query.trim() && !busy) void search(); }}>
+          <div className="min-w-0 flex-1">
+            <TextInput label="기억 검색어" isLabelHidden size="sm" type="search" startIcon={Search} value={query} onChange={setQuery} placeholder="저장한 기억 검색" />
+          </div>
+          <Button label="검색" type="submit" size="sm" variant="secondary" isDisabled={busy || !query.trim()} />
+        </form>
+        {hits?.length === 0 && <PanelNote>관련 기억이 없습니다. 저장 처리 중인 내용은 완료 후 검색됩니다.</PanelNote>}
+        {hits && hits.length > 0 && <ul className="space-y-2">{hits.map(hit => <li key={hit.id} className="rounded-md border border-sidebar-border bg-background p-2 text-xs leading-5">
+          <p className="whitespace-pre-wrap">{hit.text}</p>{hit.context && <p className="mt-1 text-muted-foreground">{hit.context}</p>}
+        </li>)}</ul>}
       </div>
-      {status?.bankId && <p className="break-all text-[10px] text-muted-foreground">Bank: {status.bankId}</p>}
-      <label className="block space-y-1"><span>기억할 내용</span>
-        <textarea aria-label="기억할 내용" className="min-h-24 w-full resize-y rounded-md border border-input bg-background p-2 text-xs" maxLength={MEMORY_CONTENT_LIMIT} value={content} disabled={busy || Boolean(receipt)} onChange={e => setContent(e.target.value)} placeholder="예: 이 원고에서는 state와 phase를 구분하여 사용한다. 근거와 출처도 함께 남겨 주세요." />
-      </label>
-      <Input aria-label="기억 출처" className="h-8 text-xs" placeholder="출처 또는 맥락 (선택)" value={source} maxLength={500} disabled={busy || Boolean(receipt)} onChange={e => setSource(e.target.value)} />
-      <div className="flex gap-2">
-        <Button variant="outline" size="sm" disabled={busy || Boolean(receipt)} onMouseDown={e => e.preventDefault()} onClick={() => {
-          const selection = getSelection();
-          if (!selection.trim()) { setError("문서에서 기억할 부분을 먼저 선택해 주세요."); return; }
-          if (selection.length > MEMORY_CONTENT_LIMIT) { setError("선택한 내용이 너무 깁니다. 더 짧은 부분을 선택해 주세요."); return; }
-          setContent(selection); setSource(sourceName || "문서 선택문"); setError("");
-        }}>선택문 가져오기</Button>
-        <Button size="sm" disabled={busy || Boolean(receipt) || !content.trim()} onClick={() => void save()}>기억 저장</Button>
-      </div>
-      {notice && <p role="status" className="text-muted-foreground">{notice}</p>}
-      {error && <p role="alert" className="text-amber-700 dark:text-amber-300">{error}</p>}
-      <form className="flex gap-2 border-t border-border pt-3" onSubmit={e => { e.preventDefault(); if (query.trim() && !busy) void search(); }}>
-        <Input aria-label="기억 검색어" className="h-8 text-xs" value={query} onChange={e => setQuery(e.target.value)} placeholder="저장한 기억 검색" />
-        <Button size="sm" variant="outline" disabled={busy || !query.trim()}>검색</Button>
-      </form>
-      {hits?.length === 0 && <p className="text-muted-foreground">관련 기억이 없습니다. 저장 처리 중인 내용은 완료 후 검색됩니다.</p>}
-      {hits && hits.length > 0 && <ul className="space-y-2">{hits.map(hit => <li key={hit.id} className="rounded border border-border p-2"><p className="whitespace-pre-wrap">{hit.text}</p>{hit.context && <p className="mt-1 text-muted-foreground">{hit.context}</p>}</li>)}</ul>}
-    </div>}
-  </section>;
+    </PanelSection>
+  </div>;
 }

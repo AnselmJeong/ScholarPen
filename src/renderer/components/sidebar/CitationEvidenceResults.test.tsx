@@ -1,13 +1,11 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { CitationSearchResult } from "../../../shared/citation-evidence";
 
-const dom = new Window({ url: "http://localhost" });
-const keys = ["window", "document", "navigator", "HTMLElement", "Event", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { controlByLabel, installDom, isDisabled } from "../../test-support/dom";
+const env = installDom();
+const dom = env.dom;
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
 const { CitationEvidenceResults } = await import("./CitationEvidenceResults");
@@ -30,8 +28,7 @@ afterEach(async () => {
 });
 afterAll(() => {
   [resolve, merge, load].forEach(spy => spy.mockRestore());
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  void dom.happyDOM.abort();
+  env.restore();
 });
 
 test("shows exact passages, surrounding context, partial authors and separate judgments; retries explicit claims", async () => {
@@ -40,7 +37,7 @@ test("shows exact passages, surrounding context, partial authors and separate ju
   expect(container.querySelector('[aria-label="반박 근거"]')?.textContent).toContain("There was no difference.");
   expect(container.textContent).toContain("First Author et al.");
   expect(container.textContent).toContain("Participants were adults.");
-  expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="검색 주장 1"]')?.value).toBe(result.claims[0]);
+  expect(controlByLabel<HTMLTextAreaElement>(container, "검색 주장 1")?.value).toBe(result.claims[0]);
   await act(async () => button("수정한 주장으로 재검색").click());
   expect(retry).toHaveBeenCalledWith(result.claims, result.selectedText);
 });
@@ -49,7 +46,7 @@ test("does not allow a retracted paper to be added as a recommended citation", a
   await render({ ...result, evidence: [{ ...result.evidence[0], paper: { ...result.evidence[0].paper, retracted: true } }] });
   expect(container.querySelector('[aria-label="지지 근거"]')?.textContent).not.toContain("Memory evidence");
   expect(container.textContent).toContain("철회된 논문");
-  expect(button("참고문헌에 추가").disabled).toBeTrue();
+  expect(isDisabled(button("참고문헌에 추가"))).toBeTrue();
 });
 
 test("resolves full metadata, safely merges bibliography and returns an existing DOI's citekey", async () => {
@@ -83,5 +80,5 @@ test("invalid edited claim length is actionable and does not dispatch a search",
 
 test("retry is disabled while a search is already running", async () => {
   await render(result, true);
-  expect(button("수정한 주장으로 재검색").disabled).toBeTrue();
+  expect(isDisabled(button("수정한 주장으로 재검색"))).toBeTrue();
 });

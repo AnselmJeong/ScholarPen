@@ -1,12 +1,10 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from "bun:test";
-import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const dom = new Window({ url: "http://localhost" });
-const keys = ["window", "document", "navigator", "HTMLElement", "Event", "localStorage", "IS_REACT_ACT_ENVIRONMENT"] as const;
-const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
-for (const key of keys) Object.defineProperty(globalThis, key, { configurable: true, value: key === "IS_REACT_ACT_ENVIRONMENT" ? true : key === "window" ? dom : Reflect.get(dom, key) });
+import { installDom, isDisabled } from "../../test-support/dom";
+const env = installDom();
+const dom = env.dom;
 mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(options: unknown) { return options; } } }));
 const { rpc } = await import("../../rpc");
 const { ProjectMemoryPanel } = await import("./ProjectMemoryPanel");
@@ -30,8 +28,7 @@ afterEach(async () => {
 });
 afterAll(() => {
   spies.forEach(spy => spy.mockRestore());
-  for (const [key, descriptor] of previous) descriptor ? Object.defineProperty(globalThis, key, descriptor) : Reflect.deleteProperty(globalThis, key);
-  void dom.happyDOM.abort();
+  env.restore();
 });
 
 test("selection saves only to current project and reports asynchronous processing honestly", async () => {
@@ -42,7 +39,7 @@ test("selection saves only to current project and reports asynchronous processin
   expect(retain).toHaveBeenCalledWith("/project-a", "Confirmed terminology decision", "paper.qmd");
   expect(container.textContent).toContain("처리하는 중");
   expect(container.textContent).not.toContain("저장이 완료");
-  expect(button("기억 저장").disabled).toBeTrue();
+  expect(isDisabled(button("기억 저장"))).toBeTrue();
   expect(localStorage.getItem("scholarpen-memory:/project-a")).toContain("operation-1");
 });
 
@@ -62,7 +59,7 @@ test("restored pending save is cleared only after confirmed processing completio
   localStorage.setItem("scholarpen-memory:/project-a", JSON.stringify({ content: "note", source: "source", receipt: { state: "processing", operationId: "operation-1" } }));
   operation.mockResolvedValue({ state: "completed" });
   await render();
-  expect(button("기억 저장").disabled).toBeTrue();
+  expect(isDisabled(button("기억 저장"))).toBeTrue();
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 2_100)); });
   expect(operation).toHaveBeenCalledWith("/project-a", "operation-1");
   expect(container.textContent).toContain("기억 저장이 완료");

@@ -16,7 +16,7 @@ const GLOBAL_KEYS = [
   "Event", "CustomEvent", "KeyboardEvent", "MouseEvent", "PointerEvent", "FocusEvent", "InputEvent",
   "getComputedStyle", "matchMedia", "requestAnimationFrame", "cancelAnimationFrame",
   "ResizeObserver", "MutationObserver", "IntersectionObserver",
-  "DOMRect", "DOMParser", "CSS", "CSSStyleSheet",
+  "DOMRect", "DOMParser", "CSS", "CSSStyleSheet", "localStorage", "sessionStorage",
 ] as const;
 
 export function installDom(options?: ConstructorParameters<typeof Window>[0]) {
@@ -118,4 +118,9 @@ export function controlByLabel<T extends HTMLElement = HTMLInputElement>(root: P
   const id = element?.getAttribute("for");
   if (id) return document.getElementById(id) as T | null;
   return (element?.querySelector("input, textarea, select") as T | null) ?? null;
+}
+
+/** Whether a control is disabled, natively or the Astryx way (`aria-disabled`). */
+export function isDisabled(element: Element | null | undefined) {
+  return Boolean(element && ((element as HTMLButtonElement).disabled || element.getAttribute("aria-disabled") === "true"));
 }

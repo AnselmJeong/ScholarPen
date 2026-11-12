@@ -1,6 +1,6 @@
 import { AIDetectorSetup } from "../../../plugins/ai-writing-score/ui/AIDetectorSetup";
 import { imageAttachmentAdapter, imagesFromMessage, restoredImageAttachments } from "../../ai/image-attachments";
-import { MAX_MESSAGE_IMAGES } from "@shared/agent-images";
+import { IMAGE_ACCEPT, MAX_MESSAGE_IMAGES } from "@shared/agent-images";
 import React, { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   AssistantRuntimeProvider,
@@ -15,9 +15,16 @@ import {
 } from "@assistant-ui/react";
 import { BookOpen, Bot, Check, ChevronDown, ChevronRight, Clipboard, Copy, Globe2, MessageSquare, Paperclip, Plus, RotateCcw, Send, StopCircle, Trash2, X } from "lucide-react";
 import type { BlockNoteEditor } from "@blocknote/core";
-import { Button } from "@/components/ui/button";
 import { DropdownMenu as AstryxDropdownMenu } from "@astryxdesign/core/DropdownMenu";
 import { Button as AstryxButton } from "@astryxdesign/core/Button";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Kbd } from "@astryxdesign/core/Kbd";
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Text } from "@astryxdesign/core/Text";
+import { ToggleButton } from "@astryxdesign/core/ToggleButton";
+import { Token } from "@astryxdesign/core/Token";
 import { cn } from "@/lib/utils";
 import type {
   ActiveDocumentContext,
@@ -169,7 +176,7 @@ function AssistantMessage({
     const images = imagesFromMessage(message);
     return (
       <div className="flex justify-end w-full overflow-hidden">
-        <div className="max-w-[84%] min-w-0 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground shadow-sm whitespace-pre-wrap break-words overflow-hidden">
+        <div className="max-w-[84%] min-w-0 overflow-hidden whitespace-pre-wrap break-words rounded-lg rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground">
           {images.length > 0 && <div className="mb-2 flex flex-wrap gap-2">
             {images.map((image, index) => <img key={index} src={image.dataUrl} alt={image.name} title={image.name} className="max-h-48 max-w-full rounded border border-primary-foreground/20 object-contain" />)}
           </div>}
@@ -184,8 +191,8 @@ function AssistantMessage({
       <div
         role={isError && !isStreaming ? "alert" : undefined}
         className={cn(
-          "w-full min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground overflow-hidden leading-relaxed prose prose-sm prose-neutral dark:prose-invert max-w-none",
-          isError ? "border-destructive/60 bg-destructive/5" : "border-border",
+          "w-full min-w-0 overflow-hidden rounded-lg rounded-bl-sm border px-3 py-2 text-sm leading-relaxed text-foreground prose prose-sm prose-neutral dark:prose-invert max-w-none",
+          isError ? "border-destructive/60 bg-destructive/5" : "border-sidebar-border bg-card",
           `
         [&_p]:my-1 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm
         [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5
@@ -222,7 +229,7 @@ function AssistantMessage({
                         }
                         rpc.openExternal(href).catch(console.error);
                       }}
-                      className="cursor-pointer text-blue-400 underline hover:text-blue-300"
+                      className="cursor-pointer text-primary underline underline-offset-2 hover:opacity-80"
                     >
                       {children}
                     </a>
@@ -239,13 +246,8 @@ function AssistantMessage({
         )}
       </div>
       {text && !isStreaming && (
-        <button
-          onClick={() => navigator.clipboard.writeText(citationResult ? citationResultText(citationResult) : citationCheck ? citationCheckResultText(citationCheck) : text)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-1"
-        >
-          <Copy className="h-2.5 w-2.5" />
-          복사
-        </button>
+        <AstryxButton label="복사" size="sm" variant="ghost" icon={<Copy className="h-3 w-3" aria-hidden />}
+          onClick={() => void navigator.clipboard.writeText(citationResult ? citationResultText(citationResult) : citationCheck ? citationCheckResultText(citationCheck) : text)} />
       )}
     </div>
   );
@@ -283,55 +285,25 @@ function AssistantHeader({
   const aui = useAui();
 
   return (
-    <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
-      <div className="flex items-center gap-2">
-        <Bot className="h-4 w-4 text-primary" />
-        <div>
-          <p className="text-sm font-semibold text-foreground">Scholar Assistant</p>
-          <p className="text-xs text-muted-foreground">
-            {assistantLabel(provider)} · {model || "기본 모델"}
-          </p>
-        </div>
+    <div className="flex items-center gap-2 border-b border-sidebar-border px-3 py-2">
+      <Bot className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <Text type="label" weight="semibold" display="block">Scholar Assistant</Text>
+        <Text type="supporting" display="block" maxLines={1}>{assistantLabel(provider)} · {model || "기본 모델"}</Text>
       </div>
-      <div className="flex items-center gap-1.5">
-        <span
-          className="hidden sm:inline-flex rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-          title="Scholar Assistant is read-only by default. No Claude wrapper is used."
-        >
-          Assistant
-        </span>
-        <div className="flex items-center rounded-md border border-border overflow-hidden text-[11px] font-semibold">
-          {(["ko", "en"] as const).map((value) => (
-            <button
-              key={value}
-              onClick={() => setLang(value)}
-              className={cn(
-                "px-2 py-0.5 transition-colors",
-                lang === value
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent",
-              )}
-            >
-              {value.toUpperCase()}
-            </button>
-          ))}
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={() => {
-            aui.thread().reset();
-            onResetContext();
-          }}
-          title="대화 초기화"
-        >
-          <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onClose}>
-          <X className="h-3.5 w-3.5 text-muted-foreground" />
-        </Button>
-      </div>
+      <span title="Scholar Assistant is read-only by default. No Claude wrapper is used.">
+        <Badge label="Assistant" />
+      </span>
+      <SegmentedControl label="Response language" size="sm" value={lang} onChange={(value) => setLang(value as "ko" | "en")}>
+        <SegmentedControlItem value="ko" label="KO" />
+        <SegmentedControlItem value="en" label="EN" />
+      </SegmentedControl>
+      <AstryxButton label="대화 초기화" tooltip="대화 초기화" variant="ghost" size="sm" isIconOnly
+        icon={<RotateCcw className="h-3.5 w-3.5" aria-hidden />}
+        onClick={() => {
+          aui.thread().reset();
+          onResetContext();
+        }} />
     </div>
   );
 }
@@ -351,28 +323,28 @@ function AssistantThread({
 }) {
   return (
     <ThreadPrimitive.Root className="flex-1 min-h-0 overflow-hidden">
-      <ThreadPrimitive.Viewport className="h-full overflow-y-auto bg-background p-3">
+      <ThreadPrimitive.Viewport className="h-full overflow-y-auto p-3">
         <ThreadPrimitive.Empty>
-          <div className="mt-6 px-2 space-y-3">
-            <div className="text-center">
-              <Bot className="h-7 w-7 mx-auto text-muted-foreground/30 mb-2" />
-              <p className="text-xs text-muted-foreground leading-relaxed">Scholar Assistant가 연결되어 있습니다.</p>
+          <div className="mt-6 space-y-4 px-2">
+            <div className="space-y-2 text-center">
+              <Bot className="mx-auto h-7 w-7 text-muted-foreground/40" aria-hidden />
+              <Text type="supporting" display="block">Scholar Assistant가 연결되어 있습니다.</Text>
             </div>
             <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide px-1">사용법</p>
+              <p className="workbench-section-label px-1">사용법</p>
               {[
-                { prefix: "/", label: "instruction 적용  (/ + Tab으로 선택)" },
-                { prefix: "@", label: "파일 지정  (@ + 파일명)" },
-                { prefix: "↵", label: "전송 · Shift+↵ 줄바꿈" },
-              ].map(({ prefix, label }) => (
-                <div key={prefix} className="flex items-center gap-2 px-1 py-0.5">
-                  <span className="text-xs font-mono bg-muted rounded px-1 text-primary w-5 text-center">{prefix}</span>
-                  <span className="text-xs text-muted-foreground">{label}</span>
+                { keys: "/", label: "instruction 적용  (/ + Tab으로 선택)" },
+                { keys: "@", label: "파일 지정  (@ + 파일명)" },
+                { keys: "enter", label: "전송 · Shift+↵ 줄바꿈" },
+              ].map(({ keys, label }) => (
+                <div key={keys} className="flex items-center gap-2 px-1 py-0.5">
+                  <span className="w-12 shrink-0"><Kbd keys={keys} /></span>
+                  <Text type="supporting">{label}</Text>
                 </div>
               ))}
             </div>
             {slashCommands.length > 0 && (
-              <p className="text-xs text-muted-foreground/60 text-center">{slashCommands.length}개 instruction 로드됨</p>
+              <Text type="supporting" display="block" justify="center">{slashCommands.length}개 instruction 로드됨</Text>
             )}
           </div>
         </ThreadPrimitive.Empty>
@@ -398,32 +370,23 @@ function ProjectContextBar({
   onRebuildSources: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
-      <p className="text-xs text-muted-foreground truncate">
+    <div className="flex items-center justify-between gap-2 border-b border-sidebar-border px-3 py-1.5">
+      <Text type="supporting" maxLines={1}>
         <span className="font-medium text-foreground/80">{project.name}</span>
-      </p>
+      </Text>
       <div className="flex items-center gap-1.5">
         {sourceStatus && (sourceStatus.digestCount > 0 || sourceStatus.lastError) && (
-          <button
-            type="button"
-            onClick={onRebuildSources}
-            disabled={sourceStatus.indexing}
-            title={sourceStatus.lastError
+          <AstryxButton size="sm" variant="ghost" isDisabled={sourceStatus.indexing} isLoading={sourceStatus.indexing}
+            tooltip={sourceStatus.lastError
               ? `색인 오류: ${sourceStatus.lastError} · 클릭하여 다시 색인`
               : `${sourceStatus.chunkCount}개 section 색인 · 원문 PDF ${sourceStatus.linkedPdfCount}개 연결 · 클릭하여 다시 색인`}
-            className="flex items-center gap-1 flex-shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
-          >
-            <BookOpen className="h-2.5 w-2.5" />
-            {sourceStatus.lastError ? "Sources error" : `Sources ${sourceStatus.digestCount}`}
-          </button>
+            icon={<BookOpen className="h-3 w-3" aria-hidden />}
+            label={sourceStatus.lastError ? "Sources error" : `Sources ${sourceStatus.digestCount}`}
+            onClick={onRebuildSources} />
         )}
         {webSearchReady && (
-          <span
-            title="OpenAlex semantic search와 PubMed를 결합하고, 부족할 때 TinyFish로 보완합니다"
-            className="flex items-center gap-1 flex-shrink-0 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
-          >
-            <Globe2 className="h-2.5 w-2.5" />
-            Search available
+          <span title="OpenAlex semantic search와 PubMed를 결합하고, 부족할 때 TinyFish로 보완합니다">
+            <Badge variant="success" icon={<Globe2 className="h-3 w-3" aria-hidden />} label="Search available" />
           </span>
         )}
       </div>
@@ -502,7 +465,7 @@ function ThreadHistoryPanel({
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
 
   return (
-    <div className="border-b border-border bg-background px-3 py-2">
+    <div className="border-b border-sidebar-border px-3 py-1.5">
       <div className="flex min-w-0 items-center gap-2">
         <div className="min-w-0 flex-1">
           <AstryxDropdownMenu
@@ -560,12 +523,12 @@ function ComposerImageAttachment() {
   const image = attachment.content?.find((part) => part.type === "image");
   const failed = attachment.status.type === "incomplete";
   return (
-    <AttachmentPrimitive.Root className="relative flex w-28 flex-col gap-1 rounded-md border bg-muted/30 p-2">
+    <AttachmentPrimitive.Root className="relative flex w-28 flex-col gap-1 rounded-md border border-sidebar-border bg-background p-2">
       {image?.type === "image" && <img src={image.image} alt={attachment.name} className="h-16 w-full rounded object-contain" />}
       <span className="truncate text-[11px]" title={attachment.name}>{attachment.name}</span>
       {failed && <span role="alert" className="text-[10px] text-destructive">이미지 읽기 실패 · 지원 형식과 5 MB 제한을 확인하세요.</span>}
       {attachment.status.type === "running" && <span className="text-[10px]">이미지 준비 중…</span>}
-      <AttachmentPrimitive.Remove aria-label="첨부 이미지 제거" className="absolute right-0 top-0 rounded-full border bg-background p-0.5"><X className="h-3 w-3" /></AttachmentPrimitive.Remove>
+      <AttachmentPrimitive.Remove aria-label="첨부 이미지 제거" className="absolute -right-1.5 -top-1.5 rounded-full border border-sidebar-border bg-background p-0.5 text-muted-foreground hover:text-foreground"><X className="h-3 w-3" aria-hidden /></AttachmentPrimitive.Remove>
     </AttachmentPrimitive.Root>
   );
 }
@@ -720,71 +683,73 @@ function AssistantComposer({
     .map((path) => files.find((file) => file.path === path))
     .filter((file): file is AgentMentionableFile => Boolean(file));
 
+  const fileInput = useRef<HTMLInputElement>(null);
+  const addFiles = (list: FileList | null) => {
+    for (const file of Array.from(list ?? [])) void aui.composer().addAttachment(file).catch(console.error);
+    if (fileInput.current) fileInput.current.value = "";
+  };
+
   return (
-    <div className="relative space-y-2 border-t border-border bg-background p-3">
+    <div className="relative space-y-2 border-t border-sidebar-border p-3">
       {(selectedSkills.length > 0 || selectedFiles.length > 0) && (
         <div className="flex flex-wrap gap-1">
           {selectedSkills.map((skill) => (
-            <button
-              key={skill.id}
-              onClick={() => setSelectedSkillIds((prev) => prev.filter((id) => id !== skill.id))}
-              className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] text-primary hover:bg-primary/20"
-            >
-              /{skill.name} ×
-            </button>
+            <Token key={skill.id} size="sm" color="blue" label={`/${skill.name}`}
+              onRemove={() => setSelectedSkillIds((prev) => prev.filter((id) => id !== skill.id))} />
           ))}
           {selectedFiles.map((file) => (
-            <button
-              key={file.path}
-              onClick={() => setSelectedFilePaths((prev) => prev.filter((path) => path !== file.path))}
-              className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/80"
-            >
-              @{file.name} ×
-            </button>
+            <Token key={file.path} size="sm" label={`@${file.name}`}
+              onRemove={() => setSelectedFilePaths((prev) => prev.filter((path) => path !== file.path))} />
           ))}
         </div>
       )}
 
       {dropdownMode && dropdownItems.length > 0 && (
-        <div className="absolute bottom-full left-3 right-3 z-50 mb-1 max-h-64 overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+        <div role="listbox" aria-label={dropdownMode === "slash" ? "Instructions" : "Project files"}
+          className="absolute bottom-full left-3 right-3 z-50 mb-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-lg">
           {dropdownMode === "slash" &&
             (dropdownItems as AgentSkill[]).map((cmd, idx) => (
               <button
                 key={cmd.id}
+                role="option"
+                aria-selected={idx === dropdownIndex}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   selectDropdownItem(cmd);
                 }}
                 className={cn(
-                  "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent transition-colors",
+                  "mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent",
                   idx === dropdownIndex && "bg-accent",
                 )}
               >
-                <ChevronRight className="h-3 w-3 text-primary flex-shrink-0" />
-                <span className="text-sm font-mono text-primary font-medium">/{cmd.name}</span>
-                <span className="text-[11px] text-muted-foreground truncate">{cmd.source}</span>
+                <ChevronRight className="h-3 w-3 shrink-0 text-primary" aria-hidden />
+                <span className="font-mono-ui text-xs font-medium text-primary">/{cmd.name}</span>
+                <span className="truncate text-[11px] text-muted-foreground">{cmd.source}</span>
               </button>
             ))}
           {dropdownMode === "file" &&
             (dropdownItems as AgentMentionableFile[]).map((file, idx) => (
               <button
                 key={file.path}
+                role="option"
+                aria-selected={idx === dropdownIndex}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   selectDropdownItem(file);
                 }}
                 className={cn(
-                  "w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-accent transition-colors",
+                  "mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent",
                   idx === dropdownIndex && "bg-accent",
                 )}
               >
-                <span className="text-sm font-mono text-muted-foreground flex-shrink-0">@</span>
-                <span className="text-sm text-foreground truncate">{file.name}</span>
-                <span className="text-[11px] text-muted-foreground truncate">{file.displayPath}</span>
+                <span className="shrink-0 font-mono-ui text-xs text-muted-foreground">@</span>
+                <span className="truncate text-xs text-foreground">{file.name}</span>
+                <span className="truncate text-[11px] text-muted-foreground">{file.displayPath}</span>
               </button>
             ))}
-          <div className="border-t border-border bg-muted/40 px-3 py-1.5">
-            <p className="text-[11px] text-muted-foreground">↑↓ 탐색 · Enter/Tab 선택</p>
+          <div className="mt-1 flex items-center gap-2 border-t border-border px-3 pt-1.5">
+            <Kbd keys="up" /><Kbd keys="down" /><Text type="supporting">탐색</Text>
+            <Kbd keys="enter" /><Kbd keys="tab" /><Text type="supporting">선택</Text>
           </div>
         </div>
       )}
@@ -797,100 +762,59 @@ function AssistantComposer({
         <ComposerPrimitive.Input
           rows={3}
           submitMode="enter"
+          aria-label="Assistant message"
           onKeyDown={(event) => {
             if (attachmentsBlocked && event.key === "Enter" && !event.shiftKey) { event.preventDefault(); return; }
             handleKeyDown(event);
           }}
           placeholder={loading ? "응답 수신 중..." : "질문 또는 이미지 붙여넣기 · / instruction · @ 파일"}
           disabled={loading}
-          className="w-full resize-none rounded-md border border-input bg-muted/30 px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          className="composer-input w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50"
         />
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            aria-label="웹 검색 사용"
-            aria-pressed={searchEnabled && searchAvailable}
-            disabled={loading || !searchAvailable}
-            onClick={() => setSearchEnabled(!searchEnabled)}
-            title={searchAvailable ? "다시 변경할 때까지 새 대화에도 이 검색 설정을 사용합니다" : "Settings에서 Web search를 먼저 켜세요"}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs disabled:opacity-50",
-              searchEnabled && searchAvailable ? "border-primary/30 bg-primary/10 text-primary" : "border-border text-muted-foreground",
-            )}
-          >
-            <Globe2 className="h-3 w-3" />
+          <ToggleButton size="sm" label={`Search ${searchEnabled && searchAvailable ? "on" : "off"}`} aria-label="웹 검색 사용"
+            isPressed={searchEnabled && searchAvailable} isDisabled={loading || !searchAvailable}
+            tooltip={searchAvailable ? "다시 변경할 때까지 새 대화에도 이 검색 설정을 사용합니다" : "Settings에서 Web search를 먼저 켜세요"}
+            icon={<Globe2 className="h-3 w-3" aria-hidden />} onPressedChange={() => setSearchEnabled(!searchEnabled)}>
             Search {searchEnabled && searchAvailable ? "on" : "off"}
-          </button>
-          <label className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-            Thinking
-            <select
-              aria-label="Thinking 수준"
-              value={thinkingLevel}
-              onChange={(event) => setThinkingLevel(event.target.value as AgentThinkingLevel)}
-              disabled={loading || thinkingConfig.supported === false}
-              className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground disabled:opacity-50"
-            >
-              {AGENT_THINKING_LEVELS.map((level) => <option key={level} value={level}>{level === "none" ? "None" : level[0].toUpperCase() + level.slice(1)}</option>)}
-            </select>
-          </label>
-          <span className="text-[10px] text-muted-foreground">변경 전까지 새 대화에도 유지</span>
+          </ToggleButton>
+          <div className="flex items-center gap-1.5">
+            <Text type="supporting">Thinking</Text>
+            <div className="w-28">
+              <Selector label="Thinking 수준" isLabelHidden size="sm" value={thinkingLevel}
+                isDisabled={loading || thinkingConfig.supported === false}
+                options={AGENT_THINKING_LEVELS.map((level) => ({ value: level, label: level === "none" ? "None" : level[0].toUpperCase() + level.slice(1) }))}
+                onChange={(value) => { if (value) setThinkingLevel(value as AgentThinkingLevel); }} />
+            </div>
+          </div>
+          <Text type="supporting">변경 전까지 새 대화에도 유지</Text>
         </div>
-        {thinkingConfig.notice && <p className="text-[10px] leading-relaxed text-muted-foreground">{thinkingConfig.notice}</p>}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <ComposerPrimitive.AddAttachment multiple asChild>
-              <Button size="icon" variant="ghost" className="h-6 w-6" type="button" aria-label="이미지 파일 첨부" title="이미지 첨부 · PNG, JPEG, WebP, GIF · 각각 5 MB 이하" disabled={loading || attachments.length >= MAX_MESSAGE_IMAGES}>
-                <Paperclip className="h-3 w-3 text-muted-foreground" />
-              </Button>
-            </ComposerPrimitive.AddAttachment>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-6 w-6"
-              onClick={handlePasteSelection}
-              title={editor ? "선택한 텍스트 붙여넣기" : "선택한 텍스트 붙여넣기"}
-              disabled={loading}
-              type="button"
-            >
-              <Clipboard className="h-3 w-3 text-muted-foreground" />
-            </Button>
-            {project && <span className="text-xs text-muted-foreground">{project.name}</span>}
+        {thinkingConfig.notice && <Text type="supporting" display="block">{thinkingConfig.notice}</Text>}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1">
+            <input ref={fileInput} type="file" multiple hidden accept={IMAGE_ACCEPT}
+              onChange={(event) => addFiles(event.currentTarget.files)} />
+            <AstryxButton label="이미지 파일 첨부" tooltip="이미지 첨부 · PNG, JPEG, WebP, GIF · 각각 5 MB 이하" size="sm" variant="ghost" isIconOnly
+              isDisabled={loading || attachments.length >= MAX_MESSAGE_IMAGES} icon={<Paperclip className="h-3.5 w-3.5" aria-hidden />}
+              onClick={() => fileInput.current?.click()} />
+            <AstryxButton label="선택한 텍스트 붙여넣기" tooltip="선택한 텍스트 붙여넣기" size="sm" variant="ghost" isIconOnly isDisabled={loading}
+              icon={<Clipboard className="h-3.5 w-3.5" aria-hidden />} onClick={handlePasteSelection} />
+            {project && <Text type="supporting" maxLines={1}>{project.name}</Text>}
             {project && (sourceStatus?.digestCount ?? 0) > 0 && (
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => setProjectSourcesEnabled(!projectSourcesEnabled)}
-                title="summary digest 자동 검색을 켜거나 끕니다. 원문 PDF는 필요한 질문에서만 확인합니다."
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors disabled:opacity-50",
-                  projectSourcesEnabled
-                    ? "border-primary/30 bg-primary/10 text-primary"
-                    : "border-border text-muted-foreground",
-                )}
-              >
-                <BookOpen className="h-2.5 w-2.5" />
+              <ToggleButton size="sm" label={`Sources ${projectSourcesEnabled ? "on" : "off"}`} isPressed={projectSourcesEnabled} isDisabled={loading}
+                tooltip="summary digest 자동 검색을 켜거나 끕니다. 원문 PDF는 필요한 질문에서만 확인합니다."
+                icon={<BookOpen className="h-3 w-3" aria-hidden />} onPressedChange={() => setProjectSourcesEnabled(!projectSourcesEnabled)}>
                 Sources {projectSourcesEnabled ? "on" : "off"}
-              </button>
+              </ToggleButton>
             )}
           </div>
           {loading ? (
-            <ComposerPrimitive.Cancel asChild>
-              <Button
-                size="icon"
-                variant="destructive"
-              className="h-8 w-8"
-                onClick={() => rpc.abortAgentStream().catch(console.error)}
-                type="button"
-              >
-                <StopCircle className="h-3.5 w-3.5" />
-              </Button>
-            </ComposerPrimitive.Cancel>
+            <AstryxButton label="응답 중지" tooltip="응답 중지" variant="destructive" size="sm" isIconOnly
+              icon={<StopCircle className="h-4 w-4" aria-hidden />}
+              onClick={() => { aui.composer().cancel(); rpc.abortAgentStream().catch(console.error); }} />
           ) : (
-            <ComposerPrimitive.Send asChild>
-              <Button size="icon" className="h-8 w-8" disabled={isEmpty || attachmentsBlocked} type="submit">
-                <Send className="h-3.5 w-3.5" />
-              </Button>
-            </ComposerPrimitive.Send>
+            <AstryxButton label="전송" tooltip="전송" variant="primary" size="sm" isIconOnly isDisabled={isEmpty || attachmentsBlocked}
+              icon={<Send className="h-4 w-4" aria-hidden />} onClick={() => aui.composer().send()} />
           )}
         </div>
       </ComposerPrimitive.Root>
@@ -1332,7 +1256,7 @@ export function AISidebar({
         onConsumed={consumeFindCitationRequest}
       />
       <div
-        className="relative flex h-full flex-shrink-0 flex-col border-l border-border bg-background"
+        className="relative flex h-full flex-shrink-0 flex-col bg-sidebar"
         style={{
           width: width ?? 576,
         }}
@@ -1368,27 +1292,17 @@ export function AISidebar({
         {project && <ProjectMemoryPanel key={project.path} projectPath={project.path} sourceName={activeDocumentName} getSelection={() => editor?.getSelectedText() ?? ""} />}
 
         {!activeThreadUsesCurrentModel && (
-          <div className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            현재 선택된 model이 이 thread와 달라 다음 질문은 새 thread로 저장됩니다.
-          </div>
+          <Banner status="warning" container="section" title="현재 선택된 model이 이 thread와 달라 다음 질문은 새 thread로 저장됩니다." />
         )}
 
         {deepenApplyNotice && (
-          <div
-            role={deepenApplyNotice.kind === "error" ? "alert" : "status"}
-            className={cn(
-              "border-b px-3 py-2 text-xs",
-              deepenApplyNotice.kind === "error"
-                ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-            )}
-          >
-            {deepenApplyNotice.message}
+          <div role={deepenApplyNotice.kind === "error" ? "alert" : "status"}>
+            <Banner status={deepenApplyNotice.kind === "error" ? "warning" : "success"} container="section" title={deepenApplyNotice.message} />
           </div>
         )}
 
-        {activeDocumentName && <div className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground" title="전송할 때 현재 편집 내용과 저장 전 수정 사항을 자동으로 참조합니다. 긴 문서는 일부가 생략됩니다.">
-          문서 자동 참조: <span className="text-foreground">{activeDocumentName}</span>
+        {activeDocumentName && <div className="border-b border-sidebar-border px-3 py-1.5" title="전송할 때 현재 편집 내용과 저장 전 수정 사항을 자동으로 참조합니다. 긴 문서는 일부가 생략됩니다.">
+          <Text type="supporting" maxLines={1}>문서 자동 참조: <span className="text-foreground">{activeDocumentName}</span></Text>
         </div>}
 
         <AssistantThread
@@ -1400,7 +1314,7 @@ export function AISidebar({
         />
 
         {/^(Validate|Deepen):/.test(activeThread?.title ?? "") && (
-          <p className="px-3 pt-2 text-xs text-muted-foreground">
+          <p className="px-3 pt-2 text-xs leading-5 text-muted-foreground">
             후속 채팅의 개선문은 자동 적용되지 않습니다. 자동 교체하려면 원문을 선택하고 Validate 또는 Deepen을 실행하세요.
           </p>
         )}
