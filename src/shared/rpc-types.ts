@@ -144,6 +144,24 @@ export interface JournalAbbreviationValidation {
   verified: boolean;
 }
 
+/** An editorial notice Crossref links to the cited work (Retraction Watch data included). */
+export interface BibliographyIntegrityNotice {
+  kind: "retracted" | "expression_of_concern";
+  source: "crossref";
+  /** DOI of the retraction or expression-of-concern notice, when Crossref gives one. */
+  noticeDoi?: string;
+  /** ISO date (YYYY-MM-DD or shorter) of the notice, when known. */
+  date?: string;
+}
+
+/** A sentence that attributes a claim to unnamed research without citing it. */
+export interface VagueAttribution {
+  /** Document path relative to documents/. */
+  filename: string;
+  phrase: string;
+  excerpt: string;
+}
+
 export interface BibliographyEntryValidation {
   citekey: string;
   entryType: string;
@@ -154,6 +172,9 @@ export interface BibliographyEntryValidation {
   fields: BibliographyFieldValidation[];
   journalAbbreviation?: JournalAbbreviationValidation;
   suggestedFields?: Record<string, string>;
+  integrityNotices?: BibliographyIntegrityNotice[];
+  /** The DOI resolves to a retraction/correction notice rather than the article itself. */
+  isEditorialNotice?: boolean;
   message?: string;
 }
 
@@ -172,6 +193,7 @@ export interface BibliographyMaintenanceResult {
   missingCitekeys: string[];
   backupPath: string | null;
   validations: BibliographyEntryValidation[];
+  vagueAttributions?: VagueAttribution[];
 }
 
 export interface BibliographyRepairProposal {

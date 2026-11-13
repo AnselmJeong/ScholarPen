@@ -85,3 +85,36 @@ describe("bibliography validation suggestions", () => {
     expect(validation.message).toContain("does not match");
   });
 });
+
+describe("Crossref integrity notices", () => {
+  test("marks a retracted work without blocking metadata checks", () => {
+    const validation = buildEntryValidation({
+      entry,
+      work: { ...work, "updated-by": [{ DOI: "10.1038/notice", type: "retraction", updated: { "date-parts": [[2024, 5, 2]] } }] },
+      matchMethod: "doi",
+      confidence: 1,
+    });
+    expect(validation.integrityNotices).toEqual([
+      { kind: "retracted", source: "crossref", noticeDoi: "10.1038/notice", date: "2024-05-02" },
+    ]);
+    expect(validation.fields.length).toBeGreaterThan(0);
+  });
+
+  test("leaves clean works without notices", () => {
+    const validation = buildEntryValidation({ entry, work, matchMethod: "doi", confidence: 1 });
+    expect(validation.integrityNotices).toBeUndefined();
+    expect(validation.isEditorialNotice).toBeUndefined();
+  });
+
+  test("warns when the DOI is the retraction notice itself", () => {
+    const validation = buildEntryValidation({
+      entry,
+      work: { ...work, "update-to": [{ DOI: "10.1038/original", type: "retraction" }] },
+      matchMethod: "doi",
+      confidence: 1,
+    });
+    expect(validation.isEditorialNotice).toBe(true);
+    expect(validation.integrityNotices).toBeUndefined();
+    expect(validation.message).toContain("notice");
+  });
+});

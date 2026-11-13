@@ -1,6 +1,7 @@
 import type {
   BibliographyMaintenanceResult,
   BibliographyValidationProgress,
+  VagueAttribution,
 } from "../../../shared/rpc-types";
 import {
   parseBibtexEntries,
@@ -12,6 +13,7 @@ interface BibliographyMaintenanceFileSystem {
   scanBibliographyUsage(projectPath: string): Promise<{
     usedCitekeys: string[];
     scannedDocuments: number;
+    vagueAttributions?: VagueAttribution[];
   }>;
   saveBibliographyMaintenance(
     projectPath: string,
@@ -78,5 +80,6 @@ export async function cleanValidateAndApplyBibliography({
     missingCitekeys,
     backupPath,
     validations: validation.validations,
+    vagueAttributions: usage.vagueAttributions ?? [],
   };
 }

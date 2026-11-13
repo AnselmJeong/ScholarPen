@@ -964,7 +964,10 @@ export function BibtexEditor({
               </div>
             )}
             {validationResult && (
-              <BibliographyValidationReview result={validationResult} />
+              <BibliographyValidationReview
+                result={validationResult}
+                onExportReport={(filename, csv) => rpc.exportFile(projectPath, filename, csv)}
+              />
             )}
             {parsed.issues.length > 0 && (
               <section className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">

@@ -1,7 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname, relative } from "node:path";
 import { buildBibtexDeduplicationPlan, buildBibtexAppendPlan, collectDocumentCitationKeys, deduplicateBibtex, parseBibtexEntries, partitionBibtexAdditions, remapDocumentCitationKeys } from "../../../shared/bibtex-utils";
-import type { BibliographyDeduplicationResult, BibliographyMergeResult } from "../../../shared/rpc-types";
+import type { BibliographyDeduplicationResult, BibliographyMergeResult, VagueAttribution } from "../../../shared/rpc-types";
+import { documentParagraphTexts, findVagueAttributions } from "../../../shared/citation-integrity";
 import { BIBLIOGRAPHY_RELATIVE_PATH } from "../../../shared/bibliography-path";
 export interface BibliographyStorage {
   resolveProjectPath(path: string): Promise<string>;
@@ -114,6 +115,7 @@ export class BibliographyRepository {
   async scanBibliographyUsage(projectPath: string): Promise<{
     usedCitekeys: string[];
     scannedDocuments: number;
+    vagueAttributions: VagueAttribution[];
   }> {
     projectPath = await this.storage.resolveProjectPath(projectPath);
     const documentsDir = join(projectPath, "documents");
@@ -133,17 +135,22 @@ export class BibliographyRepository {
     }
 
     const usedCitekeys = new Set<string>();
+    const vagueAttributions: VagueAttribution[] = [];
     for (const filePath of documentPaths) {
       try {
         const content = JSON.parse(await readFile(filePath, "utf-8")) as unknown;
         collectDocumentCitationKeys(content, usedCitekeys);
+        const filename = relative(documentsDir, filePath);
+        for (const text of documentParagraphTexts(content)) {
+          for (const found of findVagueAttributions(text)) vagueAttributions.push({ filename, ...found });
+        }
       } catch (error) {
         throw new Error(
           `인용 스캔 실패: ${relative(projectPath, filePath)} (${error instanceof Error ? error.message : "invalid document"})`,
         );
       }
     }
-    return { usedCitekeys: Array.from(usedCitekeys), scannedDocuments: documentPaths.length };
+    return { usedCitekeys: Array.from(usedCitekeys), scannedDocuments: documentPaths.length, vagueAttributions };
   }
 
   async saveBibliographyMaintenance(
