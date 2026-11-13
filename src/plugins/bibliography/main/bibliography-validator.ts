@@ -10,6 +10,11 @@ import type {
   BibliographyValidationProgress,
   JournalAbbreviationValidation,
 } from "../../../shared/rpc-types";
+import {
+  integrityNoticesFromCrossref,
+  isEditorialNoticeRecord,
+  type CrossrefUpdateRelation,
+} from "../../../shared/citation-integrity";
 
 type ProgressReporter = (progress: BibliographyValidationProgress) => void;
 
@@ -33,6 +38,10 @@ export interface CrossrefValidationWork {
   page?: string;
   "article-number"?: string;
   ISSN?: string[];
+  /** Notices (retraction, expression of concern, correction) that update this work. */
+  "updated-by"?: CrossrefUpdateRelation[];
+  /** Present when this record is itself a notice updating another work. */
+  "update-to"?: CrossrefUpdateRelation[];
 }
 
 export interface ResolvedEntry {
@@ -73,6 +82,8 @@ const CROSSREF_LIST_SELECT = [
   "page",
   "article-number",
   "ISSN",
+  "updated-by",
+  "update-to",
 ].join(",");
 
 function decodeLatex(value: string | undefined): string {
@@ -428,6 +439,8 @@ export function buildEntryValidation(
     }
   }
   const hasIssue = fields.some((field) => field.status === "missing" || field.status === "mismatch");
+  const integrityNotices = integrityNoticesFromCrossref(work["updated-by"]);
+  const isEditorialNotice = isEditorialNoticeRecord(work["update-to"]);
   return {
     citekey: entry.citekey,
     entryType: entry.entryType,
@@ -438,9 +451,13 @@ export function buildEntryValidation(
     fields,
     journalAbbreviation: abbreviation,
     suggestedFields: Object.keys(suggestedFields).length > 0 ? suggestedFields : undefined,
-    message: identityMismatch
-      ? "The DOI record does not match the current title or authors closely enough for automatic correction."
-      : undefined,
+    integrityNotices: integrityNotices.length > 0 ? integrityNotices : undefined,
+    isEditorialNotice: isEditorialNotice || undefined,
+    message: isEditorialNotice
+      ? "This DOI belongs to a retraction or concern notice, not to the cited article."
+      : identityMismatch
+        ? "The DOI record does not match the current title or authors closely enough for automatic correction."
+        : undefined,
   };
 }
 
