@@ -549,3 +549,35 @@ test('corrupt or missing working answers never fall back to the old AI letter', 
   expect((await reviewView(address)).responseError).toContain('찾을 수 없습니다');
   await expect(exportReviewResponses(address)).rejects.toThrow('찾을 수 없습니다');
 });
+
+test("a session made by mistake goes to the Trash with its copy, never the manuscript or exports", async () => {
+  const fixtureResult = await fixture(); const root = await realpath(fixtureResult.root); const input = { ...fixtureResult.input, projectPath: root };
+  const { fileSystem } = await import("../fs/manager"); await fileSystem.openProjectByPath(root);
+  const { exportReview, exportReviewResponses } = await import("./service");
+  const { deleteReviewSession } = await import("./delete-session");
+  const engine = new ReviewEngine(new SessionStore(root), fakeProvider());
+  const kept = await engine.create(input); await engine.start(kept.id); await engine.wait(kept.id);
+  const s = await engine.create(input); await engine.start(s.id);
+  const address = { projectPath: root, sessionId: s.id };
+  await expect(deleteReviewSession(address, { trash: async () => { throw new Error("must not trash"); } })).rejects.toThrow("진행 중");
+  await engine.wait(s.id);
+  const copy = await exportReview({ ...address, editable: true });
+  const letter = await exportReviewResponses(address);
+  await mkdir(join(root, ".scholarpen/review-proposals"), { recursive: true });
+  await writeFile(join(root, `.scholarpen/review-proposals/${s.id}.json`), "{}");
+  const manuscript = await readFile(join(root, "documents/paper.scholarpen.json"), "utf8");
+
+  const trashed: string[] = [];
+  const trash = async (path: string) => { trashed.push(path); await rm(path, { recursive: true }); };
+  // Proposals still undecided in the manuscript, or a copy open in an editor, keep the session.
+  await expect(deleteReviewSession(address, { trash, openProposals: async () => 2 })).rejects.toThrow("수정안 2개");
+  await expect(deleteReviewSession(address, { trash, openProposals: async () => 0, openProjects: () => [copy] })).rejects.toThrow("열려 있습니다");
+  expect(trashed).toEqual([]);
+
+  const result = await deleteReviewSession(address, { trash, openProposals: async () => 0, openProjects: () => [root] });
+  expect(result.trashed).toEqual([copy, join(root, `.scholarpen/review-proposals/${s.id}.json`), await engine.store.root(s.id)]);
+  expect(trashed).toEqual(result.trashed);
+  expect((await engine.store.list()).map(item => item.id)).toEqual([kept.id]);
+  expect(await readFile(join(root, "documents/paper.scholarpen.json"), "utf8")).toBe(manuscript);
+  expect(await Bun.file(join(letter, "response-to-reviewers.md")).exists()).toBe(true);
+});

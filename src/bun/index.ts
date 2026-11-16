@@ -7,6 +7,7 @@ import { exportReviewManuscripts } from "./review/manuscript-export";
 import { editReviewResponse, placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
 import { linkReviewRegistry } from "./review/decision-sources";
 import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, exportReview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
+import { deleteReviewSession } from "./review/delete-session";
 import { claudeClient } from "./claude/client";
 import * as Y from "yjs";
 import { toBase64 } from "lib0/buffer";
@@ -290,6 +291,7 @@ async function main() {
           return engine.create({ ...input, projectPath: engine.store.project });
         },
         reviewFollowup: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).followup(sessionId),
+        reviewDelete: ({ projectPath, sessionId }) => deleteReviewSession({ projectPath, sessionId }),
         reviewStart: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).start(sessionId),
         reviewGet: async (address) => {
           const view = await reviewView(address);

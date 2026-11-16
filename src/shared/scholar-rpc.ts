@@ -58,6 +58,8 @@ type BunRequests = RPCSchema<{
     reviewList: { params: { projectPath: string }; response: ReviewSession[] };
     reviewCreate: { params: ReviewInput; response: ReviewSession };
     reviewFollowup: { params: ReviewAddress; response: ReviewSession };
+    /** Moves a session's review record, revision copy and staged proposals to the Trash. */
+    reviewDelete: { params: ReviewAddress; response: { trashed: string[] } };
     reviewStart: { params: ReviewAddress; response: ReviewSession };
     reviewGet: { params: ReviewAddress; response: ReviewView };
     /** Shows the session's text revisions in the manuscript as tracked changes (open documents now, others when opened). */

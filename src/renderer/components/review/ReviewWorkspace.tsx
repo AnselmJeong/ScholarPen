@@ -3,7 +3,7 @@ import { reviewStageLabel } from "../../../shared/review-session/progress-labels
 import React, { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowLeft, CheckCircle2, ClipboardCheck, Download, FilePlus2, Loader2, Pause, Play, Plus, X } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, Download, FilePlus2, Loader2, Pause, Play, Plus, Trash2, X } from "lucide-react";
 import { rpc } from "../../rpc";
 import { DEFAULT_REVIEWERS, type ReviewExportFormat, type ReviewInput, type ReviewSession, type ReviewView, type ReviewAddress, type FigureApproval } from "../../../shared/review-session/types";
 import type { FileNode, ProjectInfo } from "../../../shared/rpc-types";
@@ -49,6 +49,15 @@ export function ReviewWorkspace({ project, files, activeDocument, prepare, saveR
     timer = setTimeout(poll, 2500); return () => { cancelled = true; clearTimeout(timer); };
   }, [project.path, view?.session.id, view?.session.status]);
   const action = async (fn: () => Promise<unknown>) => { setBusy(true); setError(""); try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
+  /** Moves a session the author made by mistake to the Trash; the manuscript and exported files stay. */
+  const removeSession = (item: ReviewSession) => action(async () => {
+    const what = item.editablePath ? "심사 기록, 수정 사본과 답신서를" : "심사 기록을";
+    if (!await rpc.confirmAction({ title: "이 심사 세션을 삭제할까요?", confirmLabel: "휴지통으로 이동",
+      message: `${new Date(item.createdAt).toLocaleString()}에 만든 ${item.input.parentSessionId ? "후속 " : ""}세션의 ${what} 휴지통으로 옮깁니다.`,
+      detail: "원본 원고(documents)와 exports에 이미 내보낸 파일은 그대로 남습니다. 필요하면 휴지통에서 되살릴 수 있습니다." })) return;
+    await rpc.reviewDelete({ projectPath: project.path, sessionId: item.id });
+    await refresh(); setNotice("세션을 휴지통으로 옮겼습니다.");
+  });
   useEffect(() => { if (view?.session.status === "completed") void onExported(); }, [view?.session.id, view?.session.status, onExported]);
   const s = view?.session; const address = s ? { projectPath: project.path, sessionId: s.id } : null;
   const result = s?.rounds.find(r => r.round === s.selectedFinalRound) ?? s?.rounds.at(-1);
@@ -114,7 +123,7 @@ export function ReviewWorkspace({ project, files, activeDocument, prepare, saveR
     })} /> : !view ? <div className="flex-1 overflow-auto p-6">
       <div className="mx-auto max-w-3xl"><h2 className="mb-2 text-xl font-semibold">논문 전체를 함께 검토합니다</h2><p className="mb-6 text-sm leading-6 text-muted-foreground">GPT의 심사와 Claude의 통합 수정·답변을 연결합니다. 최대 두 회차 뒤에 원고, 답변서, 변경표와 미해결 사항을 함께 검토할 수 있습니다.</p>
         {!sessions.length && <div className="rounded-xl border border-dashed border-border px-8 py-10 text-center"><ClipboardCheck className="mx-auto mb-3 text-primary" size={30} /><p className="mb-4 text-sm">아직 저장된 심사 세션이 없습니다.</p><button className={primary} onClick={() => setCreating(true)}>첫 심사 세션 만들기</button></div>}
-        <div className="space-y-3">{sessions.map(item => <button key={item.id} onClick={() => action(() => refresh(item.id))} className="block w-full rounded-xl border border-border p-4 text-left hover:bg-accent"><div className="flex justify-between gap-3"><strong className="text-sm">{item.input.mode === "virtual" ? "가상 심사" : "실제 심사 대응"}</strong><span className="text-xs text-muted-foreground">{item.status} · {item.completedCycles}/{item.input.maxCycles}회</span></div><p className="mt-2 text-sm">{item.input.documents.join(", ")}</p><p className="mt-2 text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString()} · {qualityLabels[item.quality]}</p></button>)}</div>
+        <div className="space-y-3">{sessions.map(item => <div key={item.id} className="relative"><button onClick={() => action(() => refresh(item.id))} className="block w-full rounded-xl border border-border p-4 pr-12 text-left hover:bg-accent"><div className="flex justify-between gap-3"><strong className="text-sm">{item.input.mode === "virtual" ? "가상 심사" : "실제 심사 대응"}{item.input.parentSessionId && <span className="font-normal text-muted-foreground"> · 후속 세션</span>}</strong><span className="text-xs text-muted-foreground">{item.status} · {item.completedCycles}/{item.input.maxCycles}회</span></div><p className="mt-2 text-sm">{item.input.documents.join(", ")}</p><p className="mt-2 text-xs text-muted-foreground">{new Date(item.createdAt).toLocaleString()} · {qualityLabels[item.quality]}</p></button><button type="button" aria-label="세션 삭제" title="세션 삭제 (휴지통으로 이동)" disabled={busy || item.status === "running"} onClick={() => removeSession(item)} className="absolute bottom-3 right-3 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-40"><Trash2 size={14} /></button></div>)}</div>
       </div>
     </div> : <>
       <div className="shrink-0 border-b border-border px-5 py-3">
