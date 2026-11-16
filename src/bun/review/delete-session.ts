@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, realpath, rename } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
+import { homedir } from "node:os";
 import type { ReviewAddress, ReviewSession } from "../../shared/review-session/types";
 import { OPEN_PROPOSAL_STATES, type ProposalState } from "../../shared/collab/review-proposals";
 import { reviewEngine } from "./service";
@@ -12,17 +13,26 @@ import type { SessionStore } from "./session-store";
 
 export interface ReviewDeletion { trashed: string[] }
 
-/** Moves a file or folder to the macOS Trash, or (without `/usr/bin/trash`) to the project's `.scholarpen/trash/`. */
-export async function moveToTrash(path: string, project: string): Promise<void> {
-  if (existsSync("/usr/bin/trash")) {
-    const child = Bun.spawn(["/usr/bin/trash", path], { stdout: "ignore", stderr: "pipe" });
-    const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-    if (code === 0) return;
-    throw new Error(`휴지통으로 옮기지 못했습니다: ${stderr.trim() || `exit ${code}`}`);
+/**
+ * Moves a file or folder to the macOS Trash. On the home volume (which includes
+ * Google Drive and other cloud folders, where `/usr/bin/trash` can wait forever
+ * on the file provider) it is renamed into `~/.Trash`; elsewhere `/usr/bin/trash`
+ * gets 30 s. Failing both, it goes to the project's `.scholarpen/trash/`.
+ */
+export async function moveToTrash(path: string, project: string, options: { trashDir?: string; command?: string | null } = {}): Promise<void> {
+  const { trashDir = join(homedir(), ".Trash"), command = "/usr/bin/trash" } = options;
+  const name = `${basename(path)}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  try { await rename(path, join(trashDir, name)); return; }
+  catch (error) { if (!["EXDEV", "ENOENT", "EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error; }
+  if (command && existsSync(command)) {
+    const child = Bun.spawn([command, path], { stdout: "ignore", stderr: "ignore" });
+    const timer = setTimeout(() => child.kill(), 30_000);
+    const code = await child.exited.finally(() => clearTimeout(timer));
+    if (code === 0 && !existsSync(path)) return;
   }
   const folder = join(project, ".scholarpen", "trash");
   await mkdir(folder, { recursive: true });
-  await rename(path, join(folder, `${basename(path)}-${Date.now()}`));
+  await rename(path, join(folder, name));
 }
 
 /** Proposals of a session still shown in the manuscript (undecided, being rewritten, or unplaced cards). */

@@ -529,3 +529,18 @@ test("a session made by mistake goes to the Trash with its copy, never the manus
   expect(await readFile(join(root, "documents/paper.scholarpen.json"), "utf8")).toBe(manuscript);
   expect(await Bun.file(join(letter, "response-to-reviewers.md")).exists()).toBe(true);
 });
+
+test("trashing renames into the Trash folder, so cloud folders never wait on their file provider", async () => {
+  const { moveToTrash } = await import("./delete-session");
+  const base = await realpath(await mkdtemp(join(tmpdir(), "scholar-trash-"))); roots.push(base);
+  const trash = join(base, "Trash"); await mkdir(trash);
+  const project = join(base, "project"); await mkdir(join(project, "revisions/x"), { recursive: true }); await writeFile(join(project, "revisions/x/a.txt"), "x");
+  await moveToTrash(join(project, "revisions/x"), project, { trashDir: trash, command: null });
+  expect(existsSync(join(project, "revisions/x"))).toBe(false);
+  const [moved] = await readdir(trash); expect(moved).toStartWith("x-");
+  expect(await readFile(join(trash, moved!, "a.txt"), "utf8")).toBe("x");
+  // A Trash that cannot take it: the project's own trash folder does.
+  await mkdir(join(project, "revisions/y")); await moveToTrash(join(project, "revisions/y"), project, { trashDir: join(base, "missing"), command: null });
+  expect(existsSync(join(project, "revisions/y"))).toBe(false);
+  expect((await readdir(join(project, ".scholarpen/trash")))[0]).toStartWith("y-");
+});
