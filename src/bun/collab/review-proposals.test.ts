@@ -40,7 +40,7 @@ const FILE = "04 Crisis.scholarpen.json";
 const BLOCKS = [
   { id: "b1", type: "paragraph", content: [
     { type: "text", text: "이 메타분석의 소규모 연구들은 대부분 유의한 효과를 확인하지 못하였다. ", styles: {} },
-    { type: "citation", props: { citekey: "brunoni2016", locator: "" } },
+    { type: "citation", props: { citekey: "brunoni2016", locator: "p. 3" } },
     { type: "text", text: " ELECT-TDCS 임상시험에서는 오히려 tDCS가 escitalopram에 비해 열등한 것으로 나타났다.", styles: {} },
   ] },
   { id: "b2", type: "paragraph", content: "3) 불활성이 아닌 sham 자극: sham 자극에서도 실제로 전류가 흐른다." },
@@ -309,4 +309,18 @@ test("a hand-edited older placement keeps its wording", async () => {
   const before = readDoc(target).toJSON();
   expect(placeReviewProposals(target, [proposal])).toEqual({ placed: 0, unplaced: 0, waiting: 0 });
   expect(readDoc(target).toJSON()).toEqual(before);
+});
+
+test("an open and a closed document give the same paragraph, so letters are not rewritten for nothing", async () => {
+  const target = await open();
+  const proposals = proposalsFromSession(session, result);
+  placeReviewProposals(target, proposals);
+  const staged = { schemaVersion: 1 as const, sessionId: session.id, round: 1, stagedAt: "", proposals };
+  const live = await sync.proposalDecisions({ openSession: async () => target, storedState: async () => null, documentJSON: async () => null }, "/p", staged);
+  const closed = await sync.proposalDecisions({ openSession: async () => null, storedState: async () => Y.encodeStateAsUpdate(target.ydoc),
+    documentJSON: async () => BLOCKS }, "/p", staged);
+  expect(live[0].final).toContain("[@brunoni2016, p. 3]");
+  expect(closed.map((d) => d.final)).toEqual(live.map((d) => d.final));
+  expect(sync.commentSyncStates(session.comments, closed).map((s) => s.fingerprint))
+    .toEqual(sync.commentSyncStates(session.comments, live).map((s) => s.fingerprint));
 });

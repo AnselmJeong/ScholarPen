@@ -4,7 +4,7 @@ import { readDoc } from "./collab/agent/doc-model";
 import { initializeExtensions, shutdownExtensions } from "./extensions/runtime";
 import { createLegacyExtensionHandlers } from "./extensions/catalog.generated";
 import { exportReviewManuscripts } from "./review/manuscript-export";
-import { placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
+import { editReviewResponse, placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
 import { linkReviewRegistry } from "./review/decision-sources";
 import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, exportReview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
 import { claudeClient } from "./claude/client";
@@ -301,6 +301,7 @@ async function main() {
           return view;
         },
         reviewSyncResponses: ({ projectPath, sessionId, force }) => syncReviewResponses({ projectPath, sessionId }, { force }),
+        reviewEditResponse: editReviewResponse,
         reviewStageProposals: (address) => stageManuscriptProposals(collabRegistry, address),
         reviewPlaceProposals: ({ projectPath, filename }) => placeManuscriptProposals(collabRegistry, collabDocKey(projectPath, filename), projectPath, filename),
         reviewStop: async ({ projectPath, sessionId, cancel }) => (await reviewEngine(projectPath)).stop(sessionId, cancel),

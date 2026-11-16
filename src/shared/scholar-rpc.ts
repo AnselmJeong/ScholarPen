@@ -64,6 +64,8 @@ type BunRequests = RPCSchema<{
     reviewStageProposals: { params: ReviewAddress; response: StagedProposals };
     /** Rewrites responses from the author's decisions on the proposals (all ready ones with `force`). */
     reviewSyncResponses: { params: ReviewAddress & { force?: boolean }; response: ResponseSyncStatus | undefined };
+    /** Saves the author's own wording for one response in the session's letter. */
+    reviewEditResponse: { params: ReviewAddress & { commentId: string; response: string; expectedResponse: string }; response: void };
     /** Places staged proposals in an open document; called once its editor has loaded. */
     reviewPlaceProposals: { params: { projectPath: string; filename: string }; response: { placed: number; unplaced: number; waiting: number } };
     reviewStop: { params: ReviewAddress & { cancel: boolean }; response: ReviewSession };
