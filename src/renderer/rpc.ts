@@ -63,7 +63,7 @@ const strictRpcMethods = new Set([
   ...Object.keys(legacyExtensionCommands),
   "getAIDetectorStatus", "installAIDetector", "cancelAIDetectorInstall",
   "reviewConfirmSnapshot",
-  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStageProposals", "reviewPlaceProposals", "reviewSyncResponses", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
+  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStageProposals", "reviewPlaceProposals", "reviewSyncResponses", "reviewEditResponse", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
   "getAuthorLearning", "dismissAuthorPreference",
   "getClaudeStatus", "loginClaude", "cancelClaudeLogin", "logoutClaude",
@@ -481,6 +481,8 @@ export const rpc = {
   reviewGet: (address: ReviewAddress) => call<ReviewView>("reviewGet", address),
   reviewStageProposals: (address: ReviewAddress) => call<StagedProposals>("reviewStageProposals", address),
   reviewSyncResponses: (address: ReviewAddress, force = false) => call<ResponseSyncStatus | undefined>("reviewSyncResponses", { ...address, force }),
+  reviewEditResponse: (address: ReviewAddress, commentId: string, response: string, expectedResponse: string) =>
+    call<void>("reviewEditResponse", { ...address, commentId, response, expectedResponse }),
   reviewPlaceProposals: (projectPath: string, filename: string) => call<{ placed: number; unplaced: number; waiting: number }>("reviewPlaceProposals", { projectPath, filename }),
   reviewStop: (address: ReviewAddress, cancel = false) => call<ReviewSession>("reviewStop", { ...address, cancel }),
   reviewDecideFigure: (address: ReviewAddress, approvalId: string, decision: "approved" | "kept" | "deferred") => call<ReviewSession>("reviewDecideFigure", { ...address, approvalId, decision }),

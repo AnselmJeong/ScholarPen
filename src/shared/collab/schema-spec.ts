@@ -64,8 +64,8 @@ export function schemaToSpecJSON(schema: Schema): SchemaSpecJSON {
   return { topNode: schema.spec.topNode, nodes, marks };
 }
 
-/** Leaf text for atoms so textContent/textBetween stay readable in prompts. */
-function leafText(node: { type: { name: string }; attrs: Record<string, unknown> }) {
+/** Leaf text for atoms so textContent/textBetween stay readable in prompts (also used for BlockNote JSON inline content). */
+export function leafText(node: { type: { name: string }; attrs: Record<string, unknown> }) {
   const attrs = node.attrs;
   switch (node.type.name) {
     case "citation": return `[@${attrs.citekey ?? ""}${attrs.locator ? `, ${attrs.locator}` : ""}]`;

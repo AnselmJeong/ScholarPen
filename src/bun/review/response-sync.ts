@@ -4,6 +4,7 @@ import { revertSuggestions } from "@handlewithcare/prosemirror-suggest-changes";
 import type { CollabSession } from "../collab/registry";
 import { blockContent, findBlock, readDoc, readableText } from "../collab/agent/doc-model";
 import { COLLAB_FRAGMENT } from "../../shared/collab/protocol";
+import { leafText } from "../../shared/collab/schema-spec";
 import { readProposalEntries, REVIEW_PROPOSALS_MAP, type ProposalEntry, type ProposalState } from "../../shared/collab/review-proposals";
 import type { ReviewProposal, StagedProposals } from "../../shared/review-session/proposals";
 import type { Disposition, ResponseItem, ReviewComment, ReviewSession } from "../../shared/review-session/types";
@@ -42,8 +43,8 @@ function inlineText(content: unknown): string {
     const item = part as { type?: string; text?: string; content?: unknown; props?: Record<string, unknown> };
     if (item?.type === "text") return item.text ?? "";
     if (item?.type === "link") return inlineText(item.content);
-    if (item?.type === "citation") return `[@${String(item.props?.citekey ?? "")}]`;
-    return "";
+    // Atoms read exactly as in the live document, so a closed and an open document give the same paragraph.
+    return item?.type ? leafText({ type: { name: item.type }, attrs: item.props ?? {} }) : "";
   }).join("");
   const table = content as { rows?: Array<{ cells?: unknown[] }> } | null;
   if (table?.rows) return table.rows.map((row) => (row.cells ?? []).map((cell) =>

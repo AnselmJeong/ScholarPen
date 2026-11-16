@@ -76,6 +76,34 @@ export async function responseSyncStatus(project: string, session: ReviewSession
   return statusOf(decisions, session, await readSyncRecord(revision));
 }
 
+type Engine = Awaited<ReturnType<typeof reviewEngine>>;
+
+/** The session's revision folder, which holds the editable response letter; created on first use. */
+async function revisionFolder(engine: Engine, session: ReviewSession) {
+  const relative = `revisions/${session.id}`;
+  if (!await exists(engine.store.project, relative)) {
+    const release = await engine.store.lock(session.id);
+    try { await ensureEditableRevision(await engine.store.root(session.id), session); await engine.store.save(session); }
+    finally { await release(); }
+  }
+  return scopedPath(engine.store.project, relative);
+}
+
+/** The author's own wording for one response (e.g. filling a [저자: …] note); rewrites keep it until the manuscript changes. */
+export async function editReviewResponse(a: ReviewAddress & { commentId: string; response: string; expectedResponse: string }) {
+  if (typeof a.response !== "string" || typeof a.expectedResponse !== "string" || a.response.length > 500_000) throw new Error("답변은 500,000자 이내의 텍스트여야 합니다.");
+  const engine = await reviewEngine(a.projectPath);
+  const session = await engine.store.load(a.sessionId);
+  const result = session.rounds.find(round => round.round === session.selectedFinalRound);
+  if (session.status !== "completed" || !result) throw new Error("완료된 세션의 답변만 고칠 수 있습니다.");
+  await updateRevisionResponses(await revisionFolder(engine, session), session, result, items => {
+    const item = items.find(value => value.commentId === a.commentId);
+    if (!item) throw new Error("고칠 답변을 찾을 수 없습니다.");
+    if (item.response !== a.expectedResponse && item.response !== a.response) throw new Error("이 답변이 그사이 다시 쓰였습니다. 입력한 내용은 그대로 두었습니다. 최신 답변을 확인한 뒤 다시 저장해 주세요.");
+    item.response = a.response;
+  });
+}
+
 const running = new Map<string, Promise<unknown>>();
 
 /**
@@ -95,14 +123,7 @@ export async function syncReviewResponses(address: ReviewAddress, options: { for
     const staged = await readStagedProposals(project, session.id);
     if (session.status !== "completed" || !result || !staged?.proposals.length) return undefined;
     const decisions = await proposalDecisions(decisionSources(), project, staged);
-    const relative = `revisions/${session.id}`;
-    if (!await exists(project, relative)) {
-      // The editable response letter lives in the session's revision folder.
-      const release = await engine.store.lock(session.id);
-      try { await ensureEditableRevision(await engine.store.root(session.id), session); await engine.store.save(session); }
-      finally { await release(); }
-    }
-    const revision = await scopedPath(project, relative);
+    const revision = await revisionFolder(engine, session);
     const record = await readSyncRecord(revision);
     const targets = commentSyncStates(session.comments, decisions)
       .filter(state => state.ready && (options.force || record.comments[state.commentId]?.fingerprint !== state.fingerprint));
