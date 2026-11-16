@@ -370,13 +370,18 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
           ) : (
             <button type="button" className="sp-margin-pin" data-kind={item.kind} data-active={selected}
               style={{ top: position?.top ?? 0, visibility: position ? "visible" : "hidden" }}
-              aria-label={`${label}: show details`} aria-pressed={selected} onClick={() => select(item, true)}>{item.number}</button>
+              aria-label={`${label}: show details`} aria-pressed={selected}
+              onClick={() => item.kind === "proposal" && selected ? setSelectedProposal(null) : select(item, true)}>{item.number}</button>
           )}
           {/* A narrow margin has only pins; the selected reviewer revision opens beside its pin. */}
           {!wide && item.kind === "proposal" && selected && position && (
             <section className="sp-margin-card sp-margin-card-floating" data-kind="proposal" data-active="true"
               style={{ top: position.top }} aria-label={label}>
               <ProposalCard editor={editor} item={item} number={item.number} selected onSelect={scroll => select(item, scroll)} />
+              {/* The header's × rejects the proposal; closing the card is separate. */}
+              <button type="button" className="sp-margin-link" onClick={() => setSelectedProposal(null)}>
+                <ChevronUp size={12} /> 카드 닫기
+              </button>
             </section>
           )}
         </React.Fragment>;

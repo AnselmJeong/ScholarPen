@@ -407,10 +407,8 @@ body {
   outline: 2px solid hsl(var(--ring)); outline-offset: -2px;
 }
 @container scholar-editor (max-width: 760px) {
-  .editor-mini-outline {
-    position: absolute; top: 0; right: 0; bottom: 0; width: min(160px, 85cqw); z-index: 30;
-    box-shadow: -8px 0 24px hsl(var(--foreground) / 0.06);
-  }
+  /* Docked, never over the text: an overlay hid the end of lines and the margin's note pins. */
+  .editor-mini-outline { flex-basis: clamp(96px, 22cqw, 160px); }
   .editor-breadcrumb { padding-inline: 20px; }
   .editor-breadcrumb > span:first-child { display: none; }
   .editor-breadcrumb > span:nth-child(2) { display: none; }
