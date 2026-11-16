@@ -19,6 +19,11 @@ export function linkReviewRegistry(value: CollabRegistry) {
   registry = value;
 }
 
+/** Project folders of the documents open in an editor. */
+export function openDocumentProjects(): string[] {
+  return (registry?.list() ?? []).map(session => session.projectPath);
+}
+
 async function root(path: string) {
   return realpath(await fileSystem.resolveProjectPath(path)).catch(() => path);
 }

@@ -23,6 +23,8 @@ export interface ReviewProviders {
 export class ReviewEngine {
   private output = new Map<string, LiveReviewOutput>();
   liveOutput(id: string) { return this.output.get(id); }
+  /** Whether a run of this session is going on in this process. */
+  isActive(id: string) { return this.active.has(id); }
   private active = new Map<string, { controller: AbortController; promise: Promise<void>; stop: "paused" | "cancelled" | null }>();
   constructor(readonly store: SessionStore, readonly providers: ReviewProviders) {}
   async create(value: unknown) { const input = parseInput(value); if (input.projectPath !== this.store.project) throw new Error("Project scope mismatch"); return this.store.create(input); }
