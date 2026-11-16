@@ -3,7 +3,7 @@ import type { Node as PMNode } from "prosemirror-model";
 import type { EditorState, Transaction } from "prosemirror-state";
 import { transformToSuggestionTransaction } from "@handlewithcare/prosemirror-suggest-changes";
 import type { ReviewProposal } from "../review-session/proposals";
-import { readableHunks } from "./suggested-edits";
+import { diffHunks, type Hunk } from "./text-diff";
 
 /**
  * Review & Revision proposals placed in a document, keyed by proposal key.
@@ -34,6 +34,28 @@ export interface ProposalEntry extends ReviewProposal {
   threadId?: string;
   instruction?: string;
   redoCount?: number;
+  /** How the tracked change was split; older placements are laid out again while untouched. */
+  layout?: number;
+}
+
+/** Phrase-level redlines (see phraseHunks). */
+export const PROPOSAL_LAYOUT = 2;
+
+/**
+ * Word-level changes joined across short unchanged stretches, so the redline
+ * in the text reads as whole phrases ("struck original, new wording") rather
+ * than alternating single words.
+ */
+export function phraseHunks(before: string, after: string, maxGap = 12): Hunk[] {
+  const merged: Hunk[] = [];
+  for (const hunk of diffHunks(before, after)) {
+    const last = merged.at(-1);
+    if (last && hunk.from - last.to <= maxGap) {
+      last.insert += before.slice(last.to, hunk.from) + hunk.insert;
+      last.to = hunk.to;
+    } else merged.push({ ...hunk });
+  }
+  return merged.filter((hunk) => before.slice(hunk.from, hunk.to) !== hunk.insert);
 }
 
 /** States that still need the author; settled proposals leave the manuscript. */
@@ -103,7 +125,7 @@ export function buildProposalTransaction(state: EditorState, blockPos: number, b
   if (!range) return hasSuggestionBetween(state.doc, blockPos, blockPos + block.nodeSize) ? { kind: "pending" } : { kind: "missing" };
   if (hasSuggestionBetween(state.doc, range.from, range.to)) return { kind: "pending" };
   let tr = state.tr;
-  const hunks = readableHunks(before, after);
+  const hunks = phraseHunks(before, after);
   for (const hunk of [...hunks].reverse()) {
     const from = range.from + hunk.from;
     const to = range.from + hunk.to;

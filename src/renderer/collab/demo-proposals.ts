@@ -37,6 +37,6 @@ export function placeDemoProposal(editor: BlockNoteEditor<any, any, any>, ydoc: 
   view.dispatch(placement.tr);
   ydoc.transact(() => {
     ydoc.getMap<ChangeSetInfo>(CHANGE_SETS_MAP).set(String(id), { id, label: proposalLabel(SAMPLE), persona: "scholarpen-ai", reviewProposal: SAMPLE.key, createdAt: Date.now() });
-    entries.set(SAMPLE.key, { ...SAMPLE, blockId, state: "pending", changeSetId: id, placedAt: Date.now() });
+    entries.set(SAMPLE.key, { ...SAMPLE, blockId, state: "pending", changeSetId: id, placedAt: Date.now(), layout: 2 });
   });
 }

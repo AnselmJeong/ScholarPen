@@ -746,12 +746,24 @@ body {
   border: 1px solid hsl(var(--review-peer) / 0.35); background: hsl(var(--background)); color: hsl(var(--foreground));
 }
 .sp-proposal-ask textarea:focus { outline: 2px solid hsl(var(--review-peer) / 0.45); outline-offset: 1px; }
-/* The proposal's changes in the manuscript text. */
-.bn-editor .sp-hunk-peer ins[data-id], .bn-editor ins[data-id] .sp-hunk-peer, .bn-editor ins[data-id]:has(.sp-hunk-peer) {
-  text-decoration-color: hsl(var(--review-peer) / 0.85); text-decoration-style: solid;
+/* Reviewer revisions always read as a redline in the text, in either review mode:
+   the original struck through, the proposal underlined. Accepting keeps the proposal. */
+[data-review-mode] .bn-editor del[data-id]:has(.sp-hunk-peer) {
+  display: inline; margin-inline-end: 0.2em; color: hsl(var(--foreground) / 0.5);
+  text-decoration: line-through; text-decoration-thickness: 1.5px; text-decoration-color: hsl(var(--review-deletion) / 0.8);
 }
-.bn-editor .sp-hunk-peer { background: hsl(var(--review-peer) / 0.07); border-radius: 2px; }
-.bn-editor .sp-hunk-peer.sp-hunk-active { background: hsl(var(--review-peer) / 0.16); }
-.sp-del-marker.sp-hunk-peer { border-color: hsl(var(--review-peer)); }
+.bn-editor ins[data-id]:has(.sp-hunk-peer) {
+  text-decoration: underline; text-decoration-style: solid; text-decoration-thickness: 2px;
+  text-decoration-color: hsl(var(--review-peer) / 0.9); text-underline-offset: 4px;
+}
+.bn-editor ins[data-id] .sp-hunk-peer { background: hsl(var(--review-peer) / 0.08); border-radius: 2px; }
+.bn-editor ins[data-id] .sp-hunk-peer.sp-hunk-active { background: hsl(var(--review-peer) / 0.18); }
+.bn-editor del[data-id] .sp-hunk-peer.sp-hunk-active { background: hsl(var(--review-deletion) / 0.1); border-radius: 2px; }
+/* Removed text is visible, so it needs no marker. */
+.sp-del-marker.sp-hunk-peer { display: none; }
+.sp-proposal-hint { margin-bottom: 6px; line-height: 1.5; }
+.sp-margin-card.sp-margin-card-floating { right: 34px; z-index: 45; max-width: calc(100% - 48px); box-shadow: 0 8px 24px hsl(var(--foreground) / 0.14); }
+.sp-proposal-hint-del { text-decoration: line-through; text-decoration-color: hsl(var(--review-deletion)); }
+.sp-proposal-hint-ins { text-decoration: underline; text-decoration-color: hsl(var(--review-peer)); text-decoration-thickness: 2px; text-underline-offset: 3px; }
 .bn-editor .sp-sugg-block-peer > .bn-block > .bn-block-content::after,
 .bn-editor .sp-sugg-block-peer > .bn-block-content::after { background: hsl(var(--review-peer) / 0.7); width: 3px; }

@@ -244,3 +244,69 @@ test("decisions of a closed document come from its saved state and manuscript JS
     "/p", { schemaVersion: 1, sessionId: session.id, round: 1, stagedAt: "", proposals });
   expect(decisions.map((d) => [d.state, d.final])).toEqual([["edited", "작가가 고쳐 쓴 문장 [@x]"], ["pending", null]]);
 });
+
+const { transformToSuggestionTransaction } = await import("@handlewithcare/prosemirror-suggest-changes");
+const { diffHunks } = await import("../../shared/collab/text-diff");
+const { locateText, phraseHunks } = await import("../../shared/collab/review-proposals");
+
+test("phrase-level changes join words separated by short unchanged stretches", () => {
+  const before = "Earlier meta-analyses pooled tasks with very different demands.";
+  const after = "Earlier meta-analyses pooled tasks whose demands differed by up to a factor of three.";
+  expect(diffHunks(before, after).length).toBeGreaterThan(2);
+  const hunks = phraseHunks(before, after);
+  expect(hunks).toHaveLength(1);
+  expect(before.slice(hunks[0].from, hunks[0].to)).toBe("with very different demands");
+});
+
+/** A placement made before phrase-level layout: one tracked change per word. */
+function placeWordByWord(target: any, proposal: any, changeSetId: number) {
+  const doc = readDoc(target);
+  const block = findBlock(doc, proposal.blockId)!;
+  const content = blockContent(block);
+  const range = locateText(content.node, content.from, proposal.before)!;
+  const state = EditorState.create({ schema: target.schema, doc });
+  let tr = state.tr;
+  for (const hunk of [...diffHunks(proposal.before, proposal.after)].reverse()) {
+    if (hunk.insert) tr.insertText(hunk.insert, range.from + hunk.from, range.from + hunk.to);
+    else tr.delete(range.from + hunk.from, range.from + hunk.to);
+  }
+  tr = transformToSuggestionTransaction(tr, state, () => changeSetId);
+  writeBlock(target, tr.doc.nodeAt(block.pos)!, "editor");
+  target.ydoc.getMap(REVIEW_PROPOSALS_MAP).set(proposal.key, { ...proposal, state: "pending", changeSetId, placedAt: 1 });
+}
+
+const runs = (target: any, blockId: string, mark: string) => {
+  let count = 0, previous = false;
+  for (const part of marks(target, blockId)) { const has = part.mark.includes(mark); if (has && !previous) count++; previous = has; }
+  return count;
+};
+
+test("an untouched older placement is laid out again as phrases; one edited by hand is left alone", async () => {
+  const target = await open();
+  const [proposal] = proposalsFromSession(session, result);
+  placeWordByWord(target, proposal, 7);
+  const wordRuns = runs(target, "b1", "deletion");
+  expect(wordRuns).toBeGreaterThan(2);
+  expect(placeReviewProposals(target, [proposal])).toEqual({ placed: 0, unplaced: 0, waiting: 0, relaid: 1 });
+  expect(runs(target, "b1", "deletion")).toBe(2);
+  expect(target.ydoc.getMap<any>(REVIEW_PROPOSALS_MAP).get(proposal.key)).toMatchObject({ layout: 2, changeSetId: 7, state: "pending" });
+  // Same original and proposal as before.
+  accept(target, 7);
+  expect(marks(target, "b1").map((part) => part.text).join("")).toContain(proposal.after.trim());
+});
+
+test("a hand-edited older placement keeps its wording", async () => {
+  const target = await open();
+  const [proposal] = proposalsFromSession(session, result);
+  placeWordByWord(target, proposal, 7);
+  // The author typed inside the proposed words.
+  const doc = readDoc(target);
+  const block = findBlock(doc, "b1")!;
+  let at = -1;
+  blockContent(block).node.descendants((node, pos) => { if (at < 0 && node.isText && node.text!.includes("비열등성")) at = blockContent(block).from + pos + node.text!.indexOf("비열등성"); });
+  const tr = EditorState.create({ schema: target.schema, doc }).tr.insertText("명백한 ", at);
+  writeBlock(target, tr.doc.nodeAt(block.pos)!, "editor");
+  const before = readDoc(target).toJSON();
+  expect(placeReviewProposals(target, [proposal])).toEqual({ placed: 0, unplaced: 0, waiting: 0 });
+  expect(readDoc(target).toJSON()).toEqual(before);
+});

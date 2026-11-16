@@ -89,6 +89,14 @@ test("reviewer revisions get their own card, apart from AI review notes, and set
     expect(cards[0].textContent).toContain("Reviewer asks about C1-p2.");
     expect(cards[2].textContent).toContain("AI review");
     expect([...store.peer].sort()).toEqual(["4", "5"]);
+    // The change is read in the text (redline), not repeated in the narrow card.
+    expect(cards[0].textContent).not.toContain("was inferior to");
+    expect(cards[0].textContent).toContain("취소선");
+    // Clicking the redline in the text selects the proposal's card instead of the generic popover.
+    await act(async () => { store.set({ active: store.hunks.findIndex(hunk => String(hunk.id) === "5"), open: true }); });
+    await settle();
+    expect(container.querySelector('.sp-margin-card[aria-label="Reviewer revision 2"]')!.getAttribute("data-active")).toBe("true");
+    expect(store.open).toBe(false);
 
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="Accept Reviewer revision 1"]')!.click(); });
     await settle();

@@ -44,6 +44,13 @@ function statusLine(item: ProposalItem, phase: Phase) {
   }
 }
 
+/** The review's internal reason, in words an author can act on. */
+function deferredReason(reason: string) {
+  if (/baseline mismatch/i.test(reason)) return "자동 검토가 원문과의 일치를 확인하지 못해 적용을 보류했습니다. 본문의 수정안을 직접 확인해 주세요.";
+  if (/계산 근거|calculation/i.test(reason)) return "새로 넣은 수치를 자동으로 검증하지 못했습니다. 출처의 수치와 맞는지 확인해 주세요.";
+  return reason;
+}
+
 const inserted = (hunks: SuggestionHunk[]) => hunks.map((hunk) => hunk.inserted).filter(Boolean).join(" … ");
 
 /** Margin card of one Review & Revision proposal: reviewer request, the change, and the author's options. */
@@ -92,22 +99,14 @@ export function ProposalCard({ editor, item, number, selected, onSelect }: {
       aria-expanded={details} title={details ? "접기" : "심사의견 전체 보기"}>
       <span className="sp-proposal-caption">심사의견</span>{request}
     </button>}
-    {phase === "review" && entry.state === "pending" && <div className="sp-margin-excerpt sp-proposal-diff">
-      <span className="sp-proposal-caption">원문 → 수정안</span>
-      <del>{entry.before.trim()}</del>{" "}<ins>{entry.after.trim()}</ins>
-    </div>}
-    {phase === "review" && entry.state !== "pending" && <div className="sp-margin-excerpt sp-proposal-diff">
-      {hunks.map((hunk, index) => <React.Fragment key={`${hunk.from}:${index}`}>
-        {index > 0 && <span className="sp-margin-detail"> … </span>}
-        {hunk.deleted && <del>{hunk.deleted}</del>}{hunk.deleted && hunk.inserted && " "}{hunk.inserted && <ins>{hunk.inserted}</ins>}
-      </React.Fragment>)}
-    </div>}
-    {(phase === "editing" || phase === "unplaced") && <div className="sp-margin-excerpt sp-proposal-diff">
-      <span className="sp-proposal-caption">{phase === "editing" ? "검토 전 원문" : "검토 당시 수정안"}</span>
-      {phase === "editing" ? <del>{entry.before}</del> : <ins>{entry.after}</ins>}
-    </div>}
+    {/* The change itself is drawn in the manuscript as a redline; the margin is too narrow for it. */}
+    {phase === "review" && <p className="sp-margin-detail sp-proposal-hint">
+      본문에 <span className="sp-proposal-hint-del">취소선</span>은 원문, <span className="sp-proposal-hint-ins">밑줄</span>은 수정안입니다. ✓를 누르면 수정안으로 확정됩니다.
+    </p>}
+    {phase === "editing" && details && <p className="sp-proposal-rationale" data-open><span className="sp-proposal-caption">검토 전 원문</span>{entry.before.trim()}</p>}
+    {phase === "unplaced" && <p className="sp-proposal-rationale" data-open={details}><span className="sp-proposal-caption">검토 당시 수정안</span>{entry.after.trim()}</p>}
     {phase === "unplaced" && entry.note && <p className="sp-proposal-warning">{entry.note}</p>}
-    {entry.origin === "deferred" && entry.reason && entry.state === "pending" && <p className="sp-proposal-warning">보류 사유: {entry.reason}</p>}
+    {entry.origin === "deferred" && entry.reason && entry.state === "pending" && <p className="sp-proposal-warning">보류 사유: {deferredReason(entry.reason)}</p>}
     {phase !== "working" && entry.rationale && (entry.state !== "redo" || !aiReply) &&
       <p className="sp-proposal-rationale" data-open={details}><span className="sp-proposal-caption">AI 근거</span>{entry.rationale}</p>}
     {entry.state === "redo" && aiReply && phase !== "working" &&

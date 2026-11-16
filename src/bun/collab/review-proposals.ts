@@ -1,4 +1,5 @@
-import { EditorState } from "prosemirror-state";
+import { EditorState, type Transaction } from "prosemirror-state";
+import { applySuggestion, revertSuggestion } from "@handlewithcare/prosemirror-suggest-changes";
 import type { CollabSession } from "./registry";
 import { COLLAB_FRAGMENT } from "../../shared/collab/protocol";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../shared/collab/change-sets";
@@ -9,6 +10,7 @@ import {
   buildProposalTransaction,
   locateText,
   proposalLabel,
+  PROPOSAL_LAYOUT,
   REVIEW_PROPOSALS_MAP,
   type ProposalEntry,
 } from "../../shared/collab/review-proposals";
@@ -18,7 +20,41 @@ import { blockContent, findBlock, readDoc, writeBlock } from "./agent/doc-model"
 /** Transaction origin of placed proposals: not an AI edit, so "Undo AI edit" leaves them alone. */
 export const REVIEW_PROPOSAL_ORIGIN = "review-proposals";
 
-export interface PlacementResult { placed: number; unplaced: number; waiting: number }
+export interface PlacementResult { placed: number; unplaced: number; waiting: number; relaid?: number }
+
+function run(state: EditorState, command: (state: EditorState, dispatch: (tr: Transaction) => void) => boolean) {
+  let next: EditorState | null = null;
+  command(state, (tr) => { next = state.apply(tr); });
+  return next as EditorState | null;
+}
+
+/**
+ * Lays an older placement out again with phrase-level changes, only while it
+ * is still exactly the review's proposal: undecided, and neither its original
+ * nor its proposed wording edited by hand.
+ */
+function relayout(session: CollabSession, entry: ProposalEntry): boolean {
+  if (entry.state !== "pending" || entry.changeSetId === undefined || (entry.layout ?? 1) >= PROPOSAL_LAYOUT) return false;
+  const doc = readDoc(session);
+  const block = findBlock(doc, entry.blockId);
+  if (!block) return false;
+  const state = EditorState.create({ schema: session.schema, doc });
+  const original = run(state, revertSuggestion(entry.changeSetId));
+  const proposed = run(state, applySuggestion(entry.changeSetId));
+  const contentOf = (next: EditorState | null) => {
+    const node = next?.doc.nodeAt(block.pos);
+    return node?.attrs.id === block.id && node.firstChild ? { node: node.firstChild, from: block.pos + 2 } : null;
+  };
+  const before = contentOf(original);
+  const after = contentOf(proposed);
+  if (!original || !before || !after || !locateText(before.node, before.from, entry.before) || !locateText(after.node, after.from, entry.after)) return false;
+  const placement = buildProposalTransaction(original, block.pos, entry.before, entry.after, entry.changeSetId);
+  if (placement.kind !== "ready") return false;
+  const updated = placement.tr.doc.nodeAt(block.pos);
+  if (!updated || updated.attrs.id !== block.id) return false;
+  writeBlock(session, updated, REVIEW_PROPOSAL_ORIGIN);
+  return true;
+}
 
 /**
  * Shows a document's Review & Revision proposals in it: each becomes a tracked
@@ -33,7 +69,15 @@ export function placeReviewProposals(session: CollabSession, proposals: ReviewPr
   const entries = session.ydoc.getMap<ProposalEntry>(REVIEW_PROPOSALS_MAP);
   const record = (entry: ProposalEntry) => session.ydoc.transact(() => entries.set(entry.key, entry), REVIEW_PROPOSAL_ORIGIN);
   for (const proposal of proposals) {
-    if (proposal.document !== session.filename || entries.has(proposal.key)) continue;
+    if (proposal.document !== session.filename) continue;
+    const existing = entries.get(proposal.key);
+    if (existing) {
+      if (relayout(session, existing)) {
+        session.ydoc.transact(() => entries.set(proposal.key, { ...existing, layout: PROPOSAL_LAYOUT }), REVIEW_PROPOSAL_ORIGIN);
+        result.relaid = (result.relaid ?? 0) + 1;
+      }
+      continue;
+    }
     const doc = readDoc(session);
     const block = findBlock(doc, proposal.blockId);
     if (!block) {
@@ -69,7 +113,7 @@ export function placeReviewProposals(session: CollabSession, proposals: ReviewPr
         })),
         paragraphs: [{ blockId: proposal.blockId, before: proposal.before, after: proposal.after }],
       });
-      entries.set(proposal.key, { ...proposal, state: "pending", changeSetId, revisionId, placedAt: now });
+      entries.set(proposal.key, { ...proposal, state: "pending", changeSetId, revisionId, placedAt: now, layout: PROPOSAL_LAYOUT });
     }, REVIEW_PROPOSAL_ORIGIN);
     result.placed++;
   }
