@@ -106,7 +106,7 @@ export function placeReviewProposals(session: CollabSession, proposals: ReviewPr
       });
       const revisionId = recordRevision(session.ydoc.getMap<RevisionEntry>(REVISIONS_MAP), {
         createdAt: now, kind: "peer-review", label, changeSetId, status: "pending",
-        summary: `${proposal.origin === "deferred" ? "자동 검토가 보류한 " : ""}심사의견 반영 수정안 ${proposal.id}: ${proposal.rationale}`,
+        summary: `${proposal.origin === "carried" ? "앞서 제출한 수정본에서 옮겨 온 문장" : `${proposal.origin === "deferred" ? "자동 검토가 보류한 " : ""}심사의견 반영 수정안`} ${proposal.id}: ${proposal.rationale}`,
         items: proposal.comments.map(comment => ({
           threadId: `review:${proposal.key}:${comment.id}`, comment: comment.text, commentBy: "author" as const,
           response: proposal.rationale, outcome: "addressed" as const, blockIds: [proposal.blockId],

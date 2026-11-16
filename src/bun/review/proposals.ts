@@ -26,7 +26,7 @@ function validProposal(value: unknown): value is ReviewProposal {
   const p = value as ReviewProposal;
   return !!p && typeof p === "object" && ["key", "sessionId", "id", "document", "blockId", "before", "after", "rationale"]
     .every(field => typeof (p as unknown as Record<string, unknown>)[field] === "string")
-    && (p.origin === "applied" || p.origin === "deferred") && Array.isArray(p.comments);
+    && ["applied", "deferred", "carried"].includes(p.origin) && Array.isArray(p.comments);
 }
 
 export async function readStagedProposals(project: string, sessionId: string): Promise<StagedProposals | null> {

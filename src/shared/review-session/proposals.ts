@@ -18,7 +18,8 @@ export interface ReviewProposal {
   blockId: string;
   before: string;
   after: string;
-  origin: "applied" | "deferred";
+  /** applied/deferred: the review's own changes; carried: a passage of an earlier submitted revision missing from the manuscript. */
+  origin: "applied" | "deferred" | "carried";
   /** Why the review held a deferred proposal back. */
   reason?: string;
   rationale: string;
@@ -32,6 +33,8 @@ export interface StagedProposals {
   round: number;
   stagedAt: string;
   proposals: ReviewProposal[];
+  /** false: deciding these proposals never rewrites the session's letter (e.g. passages carried over from a letter already sent). */
+  respond?: boolean;
 }
 
 const TARGET = /^(.+?\.scholarpen\.json)#([^:]+):(.+)$/;

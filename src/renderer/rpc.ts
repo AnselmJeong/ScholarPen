@@ -3,7 +3,7 @@ import { bundledManifests, legacyExtensionCommands } from "../shared/extensions/
 import type { ExtensionInfo, ExtensionRequest } from "../shared/extensions/contracts";
 import type { AIDetectorStatus } from "../shared/ai-detector-setup";
 import type { RevisionChapterContext, RevisionResponseSave } from "../shared/review-session/chapter-context";
-import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport, ResponseSyncStatus } from "../shared/review-session/types";
+import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ResponseSyncStatus } from "../shared/review-session/types";
 import type { StagedProposals } from "../shared/review-session/proposals";
 import type { ClaudeStatus } from "../shared/claude";
 import type { ReviewCategory, ProjectReviewSettings } from "../shared/collab/review";
@@ -63,7 +63,7 @@ const strictRpcMethods = new Set([
   ...Object.keys(legacyExtensionCommands),
   "getAIDetectorStatus", "installAIDetector", "cancelAIDetectorInstall",
   "reviewConfirmSnapshot",
-  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewDelete", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStageProposals", "reviewPlaceProposals", "reviewSyncResponses", "reviewEditResponse", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
+  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewDelete", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStageProposals", "reviewPlaceProposals", "reviewSyncResponses", "reviewEditResponse", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
   "getAuthorLearning", "dismissAuthorPreference",
   "getClaudeStatus", "loginClaude", "cancelClaudeLogin", "logoutClaude",
@@ -472,11 +472,9 @@ export const rpc = {
   reviewSaveRevisionResponse: (params: RevisionResponseSave) => call<string>("reviewSaveRevisionResponse", params),
   reviewRevisionContext: (projectPath: string, filename: string) => call<RevisionChapterContext | null>("reviewRevisionContext", { projectPath, filename }),
   reviewConfirmSnapshot: (request: { projectPath: string; filename: string; savedDocument: unknown; fingerprint: string }) => call<void>("reviewConfirmSnapshot", request),
-  reviewExportManuscripts: (request: ReviewManuscriptExport) => call<string>("reviewExportManuscripts", request),
   reviewManuscript: (address: ReviewAddress, round: number) => call<string>("reviewManuscript", { ...address, round }),
   reviewList: (projectPath: string) => call<ReviewSession[]>("reviewList", { projectPath }),
   reviewCreate: (input: ReviewInput) => call<ReviewSession>("reviewCreate", input),
-  reviewFollowup: (address: ReviewAddress) => call<ReviewSession>("reviewFollowup", address),
   reviewDelete: (address: ReviewAddress) => call<{ trashed: string[] }>("reviewDelete", address),
   reviewStart: (address: ReviewAddress) => call<ReviewSession>("reviewStart", address),
   reviewGet: (address: ReviewAddress) => call<ReviewView>("reviewGet", address),
@@ -489,7 +487,6 @@ export const rpc = {
   reviewDecideFigure: (address: ReviewAddress, approvalId: string, decision: "approved" | "kept" | "deferred") => call<ReviewSession>("reviewDecideFigure", { ...address, approvalId, decision }),
   reviewImportFigure: (address: ReviewAddress, approvalId: string) => call<ReviewSession | null>("reviewImportFigure", { ...address, approvalId }),
   reviewFigurePreview: (address: ReviewAddress, figureId: string, round = 0) => call<string>("reviewFigurePreview", { ...address, figureId, round }),
-  reviewExport: (address: ReviewAddress, editable = false) => call<string>("reviewExport", { ...address, editable }),
   reviewExportResponses: (address: ReviewAddress) => call<string>('reviewExportResponses', address),
   listProjects: () => call<ProjectInfo[]>("listProjects"),
   openProject: (name: string) => call<ProjectInfo>("openProject", { name }),

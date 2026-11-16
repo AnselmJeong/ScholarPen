@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath, rm, symlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReviewEngine, type ReviewModelRequest } from "./orchestrator";
@@ -7,9 +8,8 @@ import { SessionStore } from "./session-store";
 import * as Y from "yjs";
 import { manuscriptHash } from "../collab/registry";
 import { snapshot } from "./workspace";
-import { exportReviewManuscripts } from "./manuscript-export";
 import { context, describeDocument } from "./context";
-import { hash, manifest, scopedPath, writeJSON } from "./workspace";
+import { copyPackage, hash, manifest, scopedPath, writeJSON } from "./workspace";
 import { applyPatches, validateResponses } from "./patches";
 import { parseInput } from "../../shared/review-session/schema";
 import { DEFAULT_REVIEWERS, type ReviewInput, type ReviewComment } from "../../shared/review-session/types";
@@ -48,26 +48,16 @@ function fakeProvider(options: { alwaysRevise?: boolean; failResponse?: boolean;
   };
   return { calls, check: async () => ({ codex: "fixture", anthropic: "fixture" }), complete };
 }
-test("review JSON exports preserve revised bytes and dependencies without overwriting earlier exports", async () => {
-  const { root, input } = await fixture(1);
-  const engine = new ReviewEngine(new SessionStore(root), fakeProvider());
-  const session = await engine.create(input); await engine.start(session.id); await engine.wait(session.id);
-  const source = join(await engine.store.root(session.id), "rounds/01/project");
-  const before = await manifest(source);
-  const request = { projectPath: root, sessionId: session.id, round: 1, format: "json" as const };
-  const first = await exportReviewManuscripts(engine.store, request);
-  const second = await exportReviewManuscripts(engine.store, request);
-  expect(first.startsWith(join(await realpath(root), "exports") + "/")).toBe(true);
-  expect(first).not.toBe(second);
-  for (const output of [first, second]) {
-    for (const file of before.files) expect(hash(await readFile(join(output, file.path)))).toBe(file.hash);
-    expect(await readFile(join(output, "documents/paper.scholarpen.json"), "utf8")).toContain("indicate an association");
-  }
-  expect(await manifest(source)).toEqual(before);
-  expect(await readFile(join(root, "documents/paper.scholarpen.json"), "utf8")).toContain("prove causality");
-  expect((await engine.store.load(session.id)).exportedPaths).toEqual([first, second]);
-});
-
+/** The editable copy earlier versions made at completion (`revisions/<session>/`), still readable by the legacy chapter view. */
+async function legacyCopy(root: string, engine: ReviewEngine, id: string) {
+  const s = await engine.store.load(id); const result = s.rounds.find(r => r.round === s.selectedFinalRound)!;
+  const record = await engine.store.root(id); const copy = join(await realpath(root), "revisions", id);
+  await copyPackage(join(record, "final/project"), copy);
+  for (const name of ["response.json", "response-to-reviewers.md"]) await writeFile(join(copy, name), await readFile(join(record, "final", name)));
+  await writeJSON(copy, ".scholarpen/review-origin.json", { schemaVersion: 1, sessionId: id, round: result.round, baselineHash: result.packageHash });
+  s.editablePath = copy; await engine.store.save(s);
+  return copy;
+}
 test("snapshot ignores newer review metadata while detecting actual unsaved manuscript changes", async () => {
   const { root } = await fixture();
   const doc = new Y.Doc(); const paragraph = new Y.XmlElement("paragraph"); const text = new Y.XmlText("Saved manuscript");
@@ -84,55 +74,6 @@ test("snapshot ignores newer review metadata while detecting actual unsaved manu
   await writeFile(join(root, state), Y.encodeStateAsUpdate(doc));
   await expect(snapshot(root, join(root, "reviews/invalid"), ["paper.scholarpen.json"])).rejects.toThrow("paper.scholarpen.json");
   doc.destroy();
-});
-
-test("review Markdown and Quarto exports bundle figures and snapshot bibliography independently", async () => {
-  const { root, input } = await fixture(1);
-  const engine = new ReviewEngine(new SessionStore(root), fakeProvider());
-  const session = await engine.create(input); await engine.start(session.id); await engine.wait(session.id);
-  const source = join(await engine.store.root(session.id), "rounds/01/project");
-  const before = await manifest(source);
-  await writeFile(join(root, "exports/references.bib"), "new unrelated bibliography");
-  for (const format of ["md", "qmd"] as const) {
-    const output = await exportReviewManuscripts(engine.store, {
-      projectPath: root, sessionId: session.id, round: 1, format,
-      documents: [{ filename: "paper.scholarpen.json", content: "---\nbibliography: references.bib\n---\n\n![](../figures/plot-0.png)\n\n[@smith2020]\n" }],
-    });
-    expect(await readFile(join(output, `paper.${format}`), "utf8")).toContain("![](figures/plot-0.png)");
-    expect(await readFile(join(output, "figures/plot-0.png"))).toEqual(await readFile(join(source, "figures/plot-0.png")));
-    expect(await readFile(join(output, "references.bib"), "utf8")).toContain("smith2020");
-  }
-  expect(await manifest(source)).toEqual(before);
-  expect(await readFile(join(root, "exports/references.bib"), "utf8")).toBe("new unrelated bibliography");
-});
-
-test("review exports reject missing rounds, incomplete document sets and changed snapshots", async () => {
-  const { root, input } = await fixture();
-  const engine = new ReviewEngine(new SessionStore(root), fakeProvider());
-  const session = await engine.create(input); await engine.start(session.id); await engine.wait(session.id);
-  const request = { projectPath: root, sessionId: session.id, round: 1, format: "json" as const };
-  await expect(exportReviewManuscripts(engine.store, { ...request, round: 2 })).rejects.toThrow("검증 완료");
-  await expect(exportReviewManuscripts(engine.store, { ...request, format: "qmd", documents: [] })).rejects.toThrow("모든 원고");
-  const source = join(await engine.store.root(session.id), "rounds/01/project");
-  await writeFile(join(source, "documents/paper.scholarpen.json"), "[]");
-  await expect(exportReviewManuscripts(engine.store, request)).rejects.toThrow("봉인된 원고");
-  expect(await readdir(join(root, "exports"))).toEqual(["references.bib"]);
-});
-
-test("nested manuscripts with equal basenames export to distinct files", async () => {
-  const { root, input } = await fixture();
-  await mkdir(join(root, "documents/supplement"));
-  await writeFile(join(root, "documents/supplement/paper.scholarpen.json"), JSON.stringify([{ id: "supp", type: "paragraph", content: [{ type: "text", text: "Supplement", styles: {} }], children: [] }]));
-  input.documents.push("supplement/paper.scholarpen.json");
-  const engine = new ReviewEngine(new SessionStore(root), fakeProvider());
-  const session = await engine.create(input); await engine.start(session.id); await engine.wait(session.id);
-  const output = await exportReviewManuscripts(engine.store, {
-    projectPath: root, sessionId: session.id, round: 1, format: "md",
-    documents: input.documents.map((filename, i) => ({ filename, content: `Document ${i}` })),
-  });
-  const files = (await readdir(output)).filter(f => f.endsWith(".md"));
-  expect(files).toHaveLength(2);
-  expect((await Promise.all(files.map(f => readFile(join(output, f), "utf8")))).sort()).toEqual(["Document 0", "Document 1"]);
 });
 
 test("actual peer review: immutable source, cumulative response, hard two-cycle cap and durable final package", async () => {
@@ -245,14 +186,13 @@ test("cumulative changes remove reverted claims and replace superseded evidence"
 test("figure replacement requires matching approval and immutable input, exports are portable and private", async () => {
   const { realpath } = await import("node:fs/promises"); const fixtureResult = await fixture(1); const root = await realpath(fixtureResult.root); const input = { ...fixtureResult.input, projectPath: root };
   const { fileSystem } = await import("../fs/manager"); await fileSystem.openProjectByPath(root);
-  const { decideFigure, importFigure, exportReview } = await import("./service");
+  const { decideFigure, importFigure, exportReviewResponses } = await import("./service");
   const provider = fakeProvider({ figureRequest: true, failResponse: true }); const engine = new ReviewEngine(new SessionStore(root), provider); const s = await engine.create(input); await engine.start(s.id); const pending = await engine.wait(s.id); const approval = pending.approvals[0]!;
   const address = { projectPath: root, sessionId: s.id, approvalId: approval.id };
   await expect(importFigure(address, join(root, "figures/plot-0.png"))).rejects.toThrow("승인");
   await decideFigure({ ...address, decision: "approved" }); await importFigure(address, join(root, "figures/plot-0.png")); await engine.start(s.id); const done = await engine.wait(s.id);
   expect(done.status).toBe("completed"); expect(done.rounds[0]!.changes.some(c => c.id.includes("figure"))).toBe(true); expect(done.rounds[0]!.authorChecks?.filter(c => c.kind === "figure")).toEqual([]);
-  const exported = await exportReview({ ...address, editable: false }); expect(await Bun.file(join(exported, "response-to-reviewers.md")).exists()).toBe(true); expect(await Bun.file(join(exported, ".state/journal.jsonl")).exists()).toBe(false);
-  const packaged = await context(join(exported, "project"), input.documents); expect(packaged.figures.every(f => f.available)).toBe(true);
+  const exported = await exportReviewResponses(address); expect(await Bun.file(join(exported, "response-to-reviewers.md")).exists()).toBe(true); expect(await Bun.file(join(exported, ".state/journal.jsonl")).exists()).toBe(false);
   const sr = await engine.store.root(s.id); await expect(fileSystem.openProjectByPath(join(sr, "original/project"))).rejects.toThrow("Review storage");
   await expect(fileSystem.readTextFile(join(sr, "final/response-to-reviewers.md"))).rejects.toThrow("Review storage");
   await expect(decideFigure({ ...address, decision: "approved" })).rejects.toThrow("sealed");
@@ -264,11 +204,6 @@ test("numbered human requests preserve exact contiguous original ranges", async 
   expect(comments.map(c => c.original).join("")).toBe(original); expect(comments.map(c => c.id)).toEqual(["R2-C01", "R2-C02", "R2-C03"]);
   expect(comments.every(c => original.slice(c.sourceStart, c.sourceEnd) === c.original)).toBe(true);
 });
-test("explicit follow-up starts a new budget from the selected final candidate", async () => {
-  const { root, input } = await fixture(); const engine = new ReviewEngine(new SessionStore(root), fakeProvider()); const s = await engine.create(input); await engine.start(s.id); const done = await engine.wait(s.id); const child = await engine.followup(s.id);
-  expect(child.input.parentSessionId).toBe(s.id); expect(child.allocatedCycles).toBe(0); expect(child.status).toBe("created"); expect(child.manifest.packageHash).toBe(done.rounds[0]!.packageHash);
-});
-
 test("unverified numerical proposal is deferred through resume and later rounds while safe changes complete", async () => {
   const { root, input } = await fixture(); input.language = "Korean";
   const document = JSON.parse(await readFile(join(root, "documents/paper.scholarpen.json"), "utf8"));
@@ -419,29 +354,42 @@ test("exhausted format repairs stay bounded when resuming a later provider failu
   expect(done.status).toBe("completed");expect(provider.calls.filter(c=>c.stage==="plan-1")).toHaveLength(3);
 });
 
-test('editable revision stays inside the project, saves independently and reopens without overwriting user edits', async()=>{
+test('a completed review leaves no manuscript copy: record and letter sit under .scholarpen, older layouts move there', async()=>{
   const f=await fixture(1); const root=await realpath(f.root); const input={...f.input,projectPath:root};
   const {fileSystem}=await import('../fs/manager'); await fileSystem.openProjectByPath(root);
   const engine=new ReviewEngine(new SessionStore(root),fakeProvider());const s=await engine.create(input);await engine.start(s.id);const done=await engine.wait(s.id);
-  const copy=join(root,'revisions',s.id);expect(done.editablePath).toBe(copy);
+  const record=await engine.store.root(s.id); expect(record).toBe(join(root,'.scholarpen/reviews',s.id));
+  expect(done.editablePath).toBeUndefined(); expect(done.letterAt).toBeString();
+  expect(await readdir(root)).not.toContain('revisions'); expect(await readdir(root)).not.toContain('reviews');
+  expect(existsSync(join(record,'workspace'))).toBe(false); expect(existsSync(join(record,'final/project'))).toBe(true);
+  expect(JSON.parse(await readFile(join(record,'letter/response.json'),'utf8')).responses[0].commentId).toBe('R1-C01');
+  // A project from an earlier version keeps its records in the root; they move on first use, and empty leftovers go.
+  await mkdir(join(root,'reviews/2026-01-01-peer-unfinished'),{recursive:true}); await rename(record,join(root,'reviews',s.id));
+  expect((await new SessionStore(root).list()).map(x=>x.id)).toEqual([s.id]);
+  expect(await readdir(root)).not.toContain('reviews'); expect(existsSync(join(record,'session.json'))).toBe(true);
+});
+
+test('a revision copy left by an earlier version still opens, saves on its own, and hands its letter over', async()=>{
+  const f=await fixture(1); const root=await realpath(f.root); const input={...f.input,projectPath:root};
+  const {fileSystem}=await import('../fs/manager'); await fileSystem.openProjectByPath(root);
+  const engine=new ReviewEngine(new SessionStore(root),fakeProvider());const s=await engine.create(input);await engine.start(s.id);await engine.wait(s.id);
+  const copy=await legacyCopy(root,engine,s.id);
   const filename=input.documents[0]!;const source=await readFile(join(root,'documents',filename),'utf8');
-  expect(await readFile(join(copy,'documents',filename),'utf8')).toContain('indicate an association');
   const edited=await fileSystem.loadDocument(copy,filename) as any[];edited[0].content[0].text='The author revised this interpretation.';
   await fileSystem.saveDocument(copy,filename,edited);
   expect(await fileSystem.collabStatePath(copy,filename)).toStartWith(join(copy,'.scholarpen/collab'));
   expect(await readFile(join(root,'documents',filename),'utf8')).toBe(source);
-  const {exportReview,reviewRevisionContext}=await import('./service');
-  const reopened=await exportReview({projectPath:root,sessionId:s.id,editable:true});expect(reopened).toBe(copy);
-  expect(await readFile(join(copy,'documents',filename),'utf8')).toContain('The author revised');
+  const {reviewRevisionContext,reviewView}=await import('./service');
   const panel=await reviewRevisionContext({projectPath:copy,filename});
   expect(panel!.changes[0]!.before).toContain('prove causality');expect(panel!.changes[0]!.after).toContain('indicate an association');
   expect(JSON.stringify(panel!.original)).toContain('prove causality');expect(panel!.comments[0]!.comment.original).toBe(comment.original);
-  expect(panel!.comments[0]!.response!.response).toContain('clarified');
-  const tree=await fileSystem.listProjectFiles(root);expect(tree.some(n=>n.name==='revisions')).toBe(true);
-  const {collectDocumentNodes}=await import('../../renderer/utils/document-tree');
-  expect(collectDocumentNodes(tree).some(n=>n.path===join(copy,'documents',filename))).toBe(true);
-  expect(await fileSystem.readFigure(copy,'figures/plot-0.png')).toStartWith('data:image/png;base64,');
-  expect(await fileSystem.loadBibtex(copy)).toContain('smith2020');
+  // Only the copy holds the edited letter: the record takes it over, and the copy stays as it was.
+  const record=await engine.store.root(s.id); await rm(join(record,'letter'),{recursive:true});
+  const letter=await readFile(join(copy,'response.json'),'utf8'); const changed=JSON.parse(letter); changed.responses[0].response='Answer edited in the old copy.';
+  await writeFile(join(copy,'response.json'),JSON.stringify(changed));
+  const view=await reviewView({projectPath:root,sessionId:s.id});
+  expect(view.responseDocument?.responses[0]!.response).toBe('Answer edited in the old copy.');
+  expect(view.responseDocument?.path).toBe(join(record,'letter')); expect(existsSync(join(copy,'response.json'))).toBe(true);
 });
 
 test('chapter sidebar selects its comments and keeps unlocated comments without leaking other chapters', async()=>{
@@ -458,7 +406,7 @@ test('editing chapter responses updates working JSON and Markdown, preserves ori
   const f = await fixture(); const root = await realpath(f.root); const input = { ...f.input, projectPath: root };
   const { fileSystem } = await import('../fs/manager'); await fileSystem.openProjectByPath(root);
   const engine = new ReviewEngine(new SessionStore(root), fakeProvider()); const s = await engine.create(input); await engine.start(s.id); const done = await engine.wait(s.id);
-  const copy = done.editablePath!; const sealedRoot = join(await engine.store.root(s.id), 'final'); const before = await manifest(sealedRoot);
+  const copy = await legacyCopy(root, engine, s.id); const sealedRoot = join(await engine.store.root(s.id), 'final'); const before = await manifest(sealedRoot);
   const { reviewRevisionContext, reviewSaveRevisionResponse } = await import('./service');
   const filename = input.documents[0]!; const initial = (await reviewRevisionContext({ projectPath: copy, filename }))!;
   const ai = initial.comments[0]!.response!.response;
@@ -486,53 +434,52 @@ test('concurrent response saves merge different comments and share one response 
   done.comments[0]!.targets.push('other.scholarpen.json');
   done.comments.push({ ...comment, id: 'R2-C01', targets: ['other.scholarpen.json'] });
   result.responses.push({ ...result.responses[0]!, commentId: 'R2-C01', response: 'Second answer', locations: ['other.scholarpen.json'] });
-  await writeJSON(done.editablePath!, 'response.json', { schemaVersion: 1, responses: result.responses });
+  const letter = join(await engine.store.root(s.id), 'letter');
+  await writeJSON(letter, 'response.json', { schemaVersion: 1, responses: result.responses });
   const { saveRevisionResponse, readEditableResponses } = await import('./revision-responses');
   await Promise.all([
-    saveRevisionResponse(done.editablePath!, done, result, { projectPath: done.editablePath!, filename: input.documents[0]!, commentId: 'R1-C01', expectedResponse: result.responses[0]!.response, response: 'Shared answer' }),
-    saveRevisionResponse(done.editablePath!, done, result, { projectPath: done.editablePath!, filename: 'other.scholarpen.json', commentId: 'R2-C01', expectedResponse: 'Second answer', response: 'Other chapter answer' }),
+    saveRevisionResponse(letter, done, result, { projectPath: letter, filename: input.documents[0]!, commentId: 'R1-C01', expectedResponse: result.responses[0]!.response, response: 'Shared answer' }),
+    saveRevisionResponse(letter, done, result, { projectPath: letter, filename: 'other.scholarpen.json', commentId: 'R2-C01', expectedResponse: 'Second answer', response: 'Other chapter answer' }),
   ]);
-  const responses = await readEditableResponses(done.editablePath!, result);
+  const responses = await readEditableResponses(letter, result);
   expect(responses.map(r => r.response)).toEqual(['Shared answer', 'Other chapter answer']);
-  await saveRevisionResponse(done.editablePath!, done, result, { projectPath: done.editablePath!, filename: 'other.scholarpen.json', commentId: 'R1-C01', expectedResponse: 'Shared answer', response: 'Shared answer from the other chapter' });
-  const md = await readFile(join(done.editablePath!, 'response-to-reviewers.md'), 'utf8');
+  await saveRevisionResponse(letter, done, result, { projectPath: letter, filename: 'other.scholarpen.json', commentId: 'R1-C01', expectedResponse: 'Shared answer', response: 'Shared answer from the other chapter' });
+  const md = await readFile(join(letter, 'response-to-reviewers.md'), 'utf8');
   expect(md).toContain('Shared answer from the other chapter'); expect(md).toContain('Other chapter answer');
-  await expect(saveRevisionResponse(done.editablePath!, done, result, { projectPath: done.editablePath!, filename: input.documents[0]!, commentId: 'R2-C01', expectedResponse: 'Other chapter answer', response: 'Wrong chapter' })).rejects.toThrow('현재 장');
+  await expect(saveRevisionResponse(letter, done, result, { projectPath: letter, filename: input.documents[0]!, commentId: 'R2-C01', expectedResponse: 'Other chapter answer', response: 'Wrong chapter' })).rejects.toThrow('현재 장');
 });
 
-test('Review and full-letter/share exports use every latest author answer and saved revision manuscript', async () => {
+test('the exported letter uses every latest author answer, in one folder per session', async () => {
   const f = await fixture(1); const root = await realpath(f.root); const input = { ...f.input, projectPath: root };
   const { fileSystem } = await import('../fs/manager'); await fileSystem.openProjectByPath(root);
   const engine = new ReviewEngine(new SessionStore(root), fakeProvider()); const s = await engine.create(input); await engine.start(s.id); const done = await engine.wait(s.id);
-  const result = done.rounds[0]!; const copy = done.editablePath!;
+  const result = done.rounds[0]!; const letter = join(await engine.store.root(s.id), 'letter');
   // A general comment must be included, even without a chapter location.
   done.comments.push({ ...comment, id: 'R2-C01', reviewerId: 'R2', original: 'General concern\n<script>alert(1)</script>', targets: [] });
   result.responses.push({ ...result.responses[0]!, commentId: 'R2-C01', response: 'General AI answer', locations: [] });
-  await engine.store.save(done); await writeJSON(copy, 'response.json', { responses: result.responses });
+  await engine.store.save(done); await writeJSON(letter, 'response.json', { responses: result.responses });
   const sealedRoot = join(await engine.store.root(s.id), 'final'); const sealed = await manifest(sealedRoot);
-  const { reviewSaveRevisionResponse, reviewView, exportReviewResponses, exportReview } = await import('./service');
+  const { reviewView, exportReviewResponses } = await import('./service');
+  const { editReviewResponse } = await import('./manuscript-proposals');
   const answers = ['Author final answer.\n수정된 답변입니다.', 'General author answer <img src=x onerror=alert(2)>'];
-  for (const [i, response] of result.responses.entries()) await reviewSaveRevisionResponse({ projectPath: copy, filename: input.documents[0]!, commentId: response.commentId, expectedResponse: response.response, response: answers[i]! });
-  await writeJSON(copy, `documents/${input.documents[0]}`, [{ ...blocks[0], content: [{ type: 'text', text: 'Author final manuscript', styles: {} }] }]);
+  for (const [i, response] of result.responses.entries()) await editReviewResponse({ projectPath: root, sessionId: s.id, commentId: response.commentId, expectedResponse: response.response, response: answers[i]! });
   const address = { projectPath: root, sessionId: s.id };
   const view = await reviewView(address);
   expect(view.responseDocument?.source).toBe('revision'); expect(view.responseDocument?.editedCommentIds).toEqual(['R1-C01', 'R2-C01']);
   expect(view.responseDocument?.responses.map(r => r.response)).toEqual(answers);
   expect(view.session.rounds[0]!.responses[0]!.response).toBe(result.responses[0]!.response);
-  for (const output of [await exportReviewResponses(address), await exportReview({ ...address, editable: false })]) {
-    expect(output.startsWith(join(root, 'exports') + '/')).toBe(true);
-    const md = await readFile(join(output, 'response-to-reviewers.md'), 'utf8');
-    expect(md).toBe(view.responsesMarkdown);
-    for (const answer of answers) expect(md).toContain(answer);
-    for (const c of done.comments) expect(md).toContain(c.id);
-    expect(md).not.toContain(result.responses[0]!.response); expect(md).not.toContain('General AI answer');
-    const html = await readFile(join(output, 'response-to-reviewers.html'), 'utf8');
-    expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>'); expect(html).not.toContain('<img'); expect(html).toContain('@media print');
-    if (output.includes('-share-')) {
-      expect(await readFile(join(output, 'project/documents', input.documents[0]!), 'utf8')).toContain('Author final manuscript');
-      expect(JSON.parse(await readFile(join(output, 'package-manifest.json'), 'utf8')).quality).toBe('author-edited-not-revalidated');
-    }
-  }
+  const output = await exportReviewResponses(address);
+  const [year, month, day, , uuid] = s.id.split('-');
+  expect(output).toBe(join(root, 'exports', `response-${year}-${month}-${day}-${uuid}`));
+  expect(await exportReviewResponses(address)).toBe(output); // Exporting again replaces the files, not another folder.
+  expect((await readdir(join(root, 'exports'))).filter(name => name.startsWith('response-'))).toHaveLength(1);
+  const md = await readFile(join(output, 'response-to-reviewers.md'), 'utf8');
+  expect(md).toBe(view.responsesMarkdown);
+  for (const answer of answers) expect(md).toContain(answer);
+  for (const c of done.comments) expect(md).toContain(c.id);
+  expect(md).not.toContain(result.responses[0]!.response); expect(md).not.toContain('General AI answer');
+  const html = await readFile(join(output, 'response-to-reviewers.html'), 'utf8');
+  expect(html).toContain('&lt;script&gt;'); expect(html).not.toContain('<script>'); expect(html).not.toContain('<img'); expect(html).toContain('@media print');
   expect(await manifest(sealedRoot)).toEqual(sealed);
   expect(await readFile(join(root, 'documents', input.documents[0]!), 'utf8')).toContain('prove causality');
 });
@@ -542,10 +489,11 @@ test('corrupt or missing working answers never fall back to the old AI letter', 
   const { fileSystem } = await import('../fs/manager'); await fileSystem.openProjectByPath(root);
   const engine = new ReviewEngine(new SessionStore(root), fakeProvider()); const s = await engine.create({ ...f.input, projectPath: root }); await engine.start(s.id); const done = await engine.wait(s.id);
   const { reviewView, exportReviewResponses } = await import('./service'); const address = { projectPath: root, sessionId: s.id };
-  await writeJSON(done.editablePath!, 'response.json', { responses: [] });
+  const letter = join(await engine.store.root(s.id), 'letter'); expect(done.letterAt).toBeString();
+  await writeJSON(letter, 'response.json', { responses: [] });
   const view = await reviewView(address); expect(view.responsesMarkdown).toBe(''); expect(view.responseError).toContain('형식');
   await expect(exportReviewResponses(address)).rejects.toThrow('형식');
-  await rm(done.editablePath!, { recursive: true });
+  await rm(letter, { recursive: true });
   expect((await reviewView(address)).responseError).toContain('찾을 수 없습니다');
   await expect(exportReviewResponses(address)).rejects.toThrow('찾을 수 없습니다');
 });
@@ -553,7 +501,7 @@ test('corrupt or missing working answers never fall back to the old AI letter', 
 test("a session made by mistake goes to the Trash with its copy, never the manuscript or exports", async () => {
   const fixtureResult = await fixture(); const root = await realpath(fixtureResult.root); const input = { ...fixtureResult.input, projectPath: root };
   const { fileSystem } = await import("../fs/manager"); await fileSystem.openProjectByPath(root);
-  const { exportReview, exportReviewResponses } = await import("./service");
+  const { exportReviewResponses } = await import("./service");
   const { deleteReviewSession } = await import("./delete-session");
   const engine = new ReviewEngine(new SessionStore(root), fakeProvider());
   const kept = await engine.create(input); await engine.start(kept.id); await engine.wait(kept.id);
@@ -561,7 +509,7 @@ test("a session made by mistake goes to the Trash with its copy, never the manus
   const address = { projectPath: root, sessionId: s.id };
   await expect(deleteReviewSession(address, { trash: async () => { throw new Error("must not trash"); } })).rejects.toThrow("진행 중");
   await engine.wait(s.id);
-  const copy = await exportReview({ ...address, editable: true });
+  const copy = await legacyCopy(root, engine, s.id);
   const letter = await exportReviewResponses(address);
   await mkdir(join(root, ".scholarpen/review-proposals"), { recursive: true });
   await writeFile(join(root, `.scholarpen/review-proposals/${s.id}.json`), "{}");

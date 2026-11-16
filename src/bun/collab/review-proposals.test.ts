@@ -28,7 +28,7 @@ const { COLLAB_THREADS_MAP } = await import("../../shared/collab/protocol");
 const { createThread, readThreads } = await import("../../shared/collab/threads");
 const { CHANGE_SETS_MAP } = await import("../../shared/collab/change-sets");
 const { REVISIONS_MAP } = await import("../../shared/collab/revision-log");
-const { REVIEW_PROPOSALS_MAP, proposalRedoRequest } = await import("../../shared/collab/review-proposals");
+const { REVIEW_PROPOSALS_MAP, proposalRedoRequest, readProposalEntries } = await import("../../shared/collab/review-proposals");
 const { placeReviewProposals } = await import("./review-proposals");
 const { proposalsFromSession } = await import("../../shared/review-session/proposals");
 const sync = await import("../review/response-sync");
@@ -324,3 +324,44 @@ test("an open and a closed document give the same paragraph, so letters are not 
   expect(sync.commentSyncStates(session.comments, closed).map((s) => s.fingerprint))
     .toEqual(sync.commentSyncStates(session.comments, live).map((s) => s.fingerprint));
 });
+
+test("showing proposals first saves a version to go back to; carried passages never rewrite a letter", async () => {
+  const { mkdtemp, mkdir, writeFile, realpath, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "scholar-proposals-")));
+  try {
+    await mkdir(join(root, "documents")); await writeFile(join(root, "documents", FILE), JSON.stringify(BLOCKS));
+    const { fileSystem } = await import("../fs/manager"); await fileSystem.openProjectByPath(root);
+    const seeded = blocksToYDoc(editor, BLOCKS as any, "document-store");
+    registry = new CollabRegistry({
+      read: async () => ({ state: Y.encodeStateAsUpdate(seeded), meta: { jsonHash: "h", updatedAt: 0 } }),
+      write: async () => {},
+      jsonHash: async () => "h",
+    }, { update: () => {}, awareness: () => {} });
+    await registry.open({ projectPath: root, filename: FILE, peerId: "editor", schema: schemaSpec });
+    const proposals = proposalsFromSession(session, result).map((proposal) => ({ ...proposal, origin: "carried" as const }));
+    await mkdir(join(root, ".scholarpen/review-proposals"), { recursive: true });
+    await writeFile(join(root, ".scholarpen/review-proposals", `${session.id}.json`),
+      JSON.stringify({ schemaVersion: 1, sessionId: session.id, round: 1, stagedAt: "", proposals, respond: false }));
+
+    const { placeManuscriptProposals, responseSyncStatus } = await import("../review/manuscript-proposals");
+    const names: string[] = [];
+    const nameVersion = async (_session: unknown, name: string) => { names.push(name); };
+    const first = await placeManuscriptProposals(registry, `${root}::${FILE}`, root, FILE, nameVersion);
+    expect(first.placed).toBe(proposals.length);
+    expect(names).toEqual(["심사 수정안 표시 전 (2026-11-16 세션)"]);
+    // Nothing new to show: no new version.
+    await placeManuscriptProposals(registry, `${root}::${FILE}`, root, FILE, nameVersion);
+    expect(names).toHaveLength(1);
+    expect(readProposalEntries(registry.get(`${root}::${FILE}`)!.ydoc.getMap(REVIEW_PROPOSALS_MAP)).map((entry: any) => entry.origin)).toEqual(proposals.map(() => "carried"));
+
+    const { SessionStore } = await import("../review/session-store");
+    const status = await responseSyncStatus(new SessionStore(root), { ...session, status: "completed" });
+    expect(status!.proposals).toHaveLength(proposals.length);
+    expect(status!.comments).toEqual([]); // no letter follows these decisions
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

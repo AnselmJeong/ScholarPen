@@ -36,6 +36,7 @@ function statusLine(item: ProposalItem, phase: Phase) {
   switch (phase) {
     case "review":
       if (item.entry.state === "redo") return `AI 재수정안${round > 1 ? ` ${round}차` : ""} · 저자 확인 필요`;
+      if (item.entry.origin === "carried") return "앞서 제출한 수정본의 문장 · 저자 확인 필요";
       return item.entry.origin === "deferred" ? "자동 검토가 보류한 수정안 · 저자 확인 필요" : "AI 수정안 · 저자 확인 필요";
     case "working": return "AI가 새 수정안을 작성하는 중…";
     case "answered": return "AI 답변 · 새 수정안 없음";
@@ -108,7 +109,7 @@ export function ProposalCard({ editor, item, number, selected, onSelect }: {
     {phase === "unplaced" && entry.note && <p className="sp-proposal-warning">{entry.note}</p>}
     {entry.origin === "deferred" && entry.reason && entry.state === "pending" && <p className="sp-proposal-warning">보류 사유: {deferredReason(entry.reason)}</p>}
     {phase !== "working" && entry.rationale && (entry.state !== "redo" || !aiReply) &&
-      <p className="sp-proposal-rationale" data-open={details}><span className="sp-proposal-caption">AI 근거</span>{entry.rationale}</p>}
+      <p className="sp-proposal-rationale" data-open={details}><span className="sp-proposal-caption">{entry.origin === "carried" ? "설명" : "AI 근거"}</span>{entry.rationale}</p>}
     {entry.state === "redo" && aiReply && phase !== "working" &&
       <p className="sp-proposal-rationale" data-open={details}><span className="sp-proposal-caption">AI 답변</span>{aiReply}</p>}
     {entry.instruction && entry.state === "redo" &&

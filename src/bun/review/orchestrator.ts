@@ -1,8 +1,8 @@
-import { ensureEditableRevision } from "./editable-copy";
+import { ensureLetter } from "./letter";
 import { reconcilePlan, reconcileResponses, reconcileAssessment } from "./reconcile";
 import { mergeAuthorChecks, includeAuthorChecks } from "./author-checks";
 import { importComments } from "./comment-import";
-import { mkdir, rename, readFile } from "node:fs/promises";
+import { mkdir, rename, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentImage } from "../../shared/rpc-types";
@@ -28,21 +28,13 @@ export class ReviewEngine {
   private active = new Map<string, { controller: AbortController; promise: Promise<void>; stop: "paused" | "cancelled" | null }>();
   constructor(readonly store: SessionStore, readonly providers: ReviewProviders) {}
   async create(value: unknown) { const input = parseInput(value); if (input.projectPath !== this.store.project) throw new Error("Project scope mismatch"); return this.store.create(input); }
-  async followup(id: string) {
-    const parent = await this.store.load(id);
-    if (parent.status !== "completed" || !parent.selectedFinalRound) throw new Error("완료된 최종 후보에서만 후속 세션을 만들 수 있습니다.");
-    const root = await this.store.root(id); const baseline = join(root, "final/project");
-    const result = parent.rounds.find(r => r.round === parent.selectedFinalRound)!;
-    if ((await manifest(baseline)).packageHash !== result.packageHash) throw new Error("Parent candidate integrity mismatch");
-    return this.store.create({ ...parent.input, parentSessionId: id, baselineNote: `Follow-up to ${id}, round ${parent.selectedFinalRound}. Previous internal issues: ${result.assessment.issues.join("; ")}` }, baseline);
-  }
   async start(id: string) {
     if (this.active.has(id)) return this.store.load(id);
     const release = await this.store.lock(id);
     let s: ReviewSession;
     try {
       s = await this.store.load(id);
-      if (["completed", "cancelled"].includes(s.status)) throw new Error("종료된 세션은 다시 실행할 수 없습니다. 후속 세션을 시작해 주세요.");
+      if (["completed", "cancelled"].includes(s.status)) throw new Error("종료된 세션은 다시 실행할 수 없습니다. 새 심사가 필요하면 새 세션을 만들어 주세요.");
       s.status = "running"; s.error = null; s.runId = randomUUID(); await this.store.save(s);
       await this.store.event(id, { kind: "run-start", stage: s.stage, runId: s.runId });
     } catch (e) { await release(); throw e; }
@@ -236,7 +228,9 @@ export class ReviewEngine {
       s.rounds.push(result); s.completedCycles = round; await this.store.save(s);
       if (!assessment.needsRevision || assessment.regression) break;
     }
-    await this.stage(s, "finalizing", signal); await finalize(root, s); signal.throwIfAborted(); await ensureEditableRevision(root, s); signal.throwIfAborted(); s.status = "completed"; s.stage = "completed"; await this.store.save(s);
+    await this.stage(s, "finalizing", signal); await finalize(root, s); signal.throwIfAborted(); await ensureLetter(this.store, s, s.rounds.find(r => r.round === s.selectedFinalRound)!); s.letterAt = new Date().toISOString(); signal.throwIfAborted();
+    // The working copies are only needed while the review runs; the rounds and the final package stay.
+    await rm(await scopedPath(root, "workspace"), { recursive: true, force: true }); s.status = "completed"; s.stage = "completed"; await this.store.save(s);
   }
   private async applyFigures(s: ReviewSession, candidate: string, before: ReviewContext, signal: AbortSignal) {
     const root = await this.store.root(s.id);
