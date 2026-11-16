@@ -1,18 +1,16 @@
 import { composeWritingContext } from "../ai/context-composer";
 import { normalizeStyleLanguage } from "../../shared/author-style";
-import { ensureEditableRevision } from "./editable-copy";
 import { join, extname } from "node:path";
 import { mkdir, readFile, lstat, realpath } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { fileSystem } from "../fs/manager";
 import { codexClient } from "../codex/client";
 import { claudeClient } from "../claude/client";
 import { completeAgentModel } from "../agent/providers";
 import { codexQuotaError } from "../../shared/codex";
-import type { ReviewAddress, ReviewView, FigureApproval, ReviewManifest } from "../../shared/review-session/types";
+import type { ReviewAddress, ReviewView, FigureApproval } from "../../shared/review-session/types";
 import { SessionStore } from "./session-store";
 import { ReviewEngine } from "./orchestrator";
-import { copyPackage, atomicWrite, hash, writeJSON, readJSON, manifest, scopedPath, exists, snapshot } from "./workspace";
+import { atomicWrite, hash, writeJSON, readJSON, scopedPath } from "./workspace";
 import { currentResponses } from './current-responses';
 import { responseLetterMarkdown, responseLetterHTML } from '../../shared/review-session/response-letter';
 import { context, figureImage } from "./context";
@@ -44,11 +42,17 @@ export async function reviewView(a: ReviewAddress): Promise<ReviewView> {
   if (staged) view.staged = staged;
   if (result) {
     try {
-      view.responseDocument = await currentResponses(engine.store.project, session, result);
+      view.responseDocument = await currentResponses(engine.store, session, result);
       view.responsesMarkdown = responseLetterMarkdown(session, view.responseDocument.responses);
     } catch (error) { view.responseError = error instanceof Error ? error.message : String(error); }
   }
   return view;
+}
+
+/** The folder one session's letter is exported to; exporting again replaces its files. */
+export function responseExportName(sessionId: string) {
+  const [year, month, day, , uuid] = sessionId.split("-");
+  return `response-${year}-${month}-${day}-${uuid}`;
 }
 
 /** Export only the complete current letter, without sealed AI reports or manuscript files. */
@@ -58,13 +62,14 @@ export async function exportReviewResponses(a: ReviewAddress): Promise<string> {
     const session = await engine.store.load(a.sessionId);
     const result = session.rounds.find(r => r.round === session.selectedFinalRound);
     if (session.status !== 'completed' || !result) throw new Error('먼저 세션을 완료해 주세요.');
-    const document = await currentResponses(engine.store.project, session, result);
-    const destination = await scopedPath(engine.store.project, `exports/response-${session.id}-${randomUUID().slice(0, 8)}`);
+    const document = await currentResponses(engine.store, session, result);
+    await mkdir(await scopedPath(engine.store.project, 'exports'), { recursive: true });
+    const destination = await scopedPath(engine.store.project, `exports/${responseExportName(session.id)}`);
     await mkdir(destination, { recursive: true });
     await atomicWrite(destination, 'response-to-reviewers.md', responseLetterMarkdown(session, document.responses));
     await atomicWrite(destination, 'response-to-reviewers.html', responseLetterHTML(session, document.responses));
     await writeJSON(destination, 'response.json', { schemaVersion: 1, source: document.source, editedCommentIds: document.editedCommentIds, responses: document.responses });
-    session.exportedPaths.push(destination); await engine.store.save(session);
+    if (!session.exportedPaths.includes(destination)) { session.exportedPaths.push(destination); await engine.store.save(session); }
     return destination;
   } finally { await release(); }
 }
@@ -98,38 +103,6 @@ export async function reviewFigurePreview(a: ReviewAddress & { figureId: string;
   const project = join(root, a.round ? `rounds/${String(a.round).padStart(2, "0")}/project` : "original/project");
   const c = await context(project, s.input.documents); const f = c.figures.find(f => f.id === a.figureId); if (!f) throw new Error("Unknown figure"); return (await figureImage(project, f)).dataUrl;
 }
-export async function exportReview(a: ReviewAddress & { editable: boolean }) {
-  const engine = await reviewEngine(a.projectPath); const release = await engine.store.lock(a.sessionId);
-  try {
-    const s = await engine.store.load(a.sessionId); if (s.status !== "completed") throw new Error("먼저 세션을 완료해 주세요.");
-    const root = await engine.store.root(s.id); const result = s.rounds.find(r => r.round === s.selectedFinalRound)!;
-    if ((await manifest(join(root, "final/project"))).packageHash !== result.packageHash) throw new Error("Final package integrity mismatch");
-    const sealedManifest = await readJSON<ReviewManifest>(root, "final/package-manifest.json");
-    for (const item of sealedManifest.files) {
-      const bytes = await readFile(await scopedPath(join(root, "final"), item.path));
-      if (hash(bytes) !== item.hash) throw new Error("봉인된 결과가 변경되었습니다. 답변과 원고를 다시 검증해야 합니다.");
-    }
-    if (a.editable) {
-      const destination = await ensureEditableRevision(root, s);
-      await engine.store.save(s); return destination;
-    }
-    const document = await currentResponses(engine.store.project, s, result);
-    const name = `review-${s.id}-share-${randomUUID().slice(0, 8)}`;
-    const destination = await scopedPath(engine.store.project, `exports/${name}`);
-    await mkdir(await scopedPath(engine.store.project, "exports"), { recursive: true });
-    await mkdir(destination, { recursive: false });
-    if (document.path) await snapshot(document.path, join(destination, 'project'), s.input.documents);
-    else await copyPackage(join(root, "final/project"), join(destination, "project"));
-    await atomicWrite(destination, 'response-to-reviewers.md', responseLetterMarkdown(s, document.responses));
-    await atomicWrite(destination, 'response-to-reviewers.html', responseLetterHTML(s, document.responses));
-    await writeJSON(destination, 'response.json', { schemaVersion: 1, source: document.source, editedCommentIds: document.editedCommentIds, responses: document.responses });
-    for (const name of ["change-summary.md", ...(await exists(root, "final/review-warnings.json") ? ["review-warnings.json"] : []), ...(await exists(root, "final/author-checks.json") ? ["author-checks.json"] : [])]) await atomicWrite(destination, `automated-review/${name}`, await readFile(await scopedPath(root, `final/${name}`)));
-    await atomicWrite(destination, 'README.md', '# Review export\n\nThe letter includes every reviewer comment and the latest saved response. The project folder contains the saved manuscript and its dependencies. Files in automated-review describe the earlier automated review, before manual edits. Manual edits require author verification.\n');
-    await writeJSON(destination, "package-manifest.json", { ...await manifest(destination), selectedFinalRound: s.selectedFinalRound, source: document.source, quality: document.source === 'revision' ? 'author-edited-not-revalidated' : s.quality });
-    s.exportedPaths.push(destination); await engine.store.save(s); return destination;
-  } finally { await release(); }
-}
-
 export async function reviewManuscript(a: ReviewAddress & { round: number }) {
   const engine = await reviewEngine(a.projectPath); const s = await engine.store.load(a.sessionId);
   if (!Number.isInteger(a.round) || a.round < 0 || a.round > s.completedCycles) throw new Error("Unknown manuscript version");

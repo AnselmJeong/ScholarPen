@@ -3,10 +3,9 @@ import { detectStyleLanguage } from "../shared/author-style";
 import { readDoc } from "./collab/agent/doc-model";
 import { initializeExtensions, shutdownExtensions } from "./extensions/runtime";
 import { createLegacyExtensionHandlers } from "./extensions/catalog.generated";
-import { exportReviewManuscripts } from "./review/manuscript-export";
 import { editReviewResponse, placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
 import { linkReviewRegistry } from "./review/decision-sources";
-import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, exportReview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
+import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
 import { deleteReviewSession } from "./review/delete-session";
 import { claudeClient } from "./claude/client";
 import * as Y from "yjs";
@@ -141,6 +140,8 @@ const collabHistory = new CollabHistory(collabRegistry, createFileHistoryStorage
   aiBusy: (docKey) => collabAgent.jobs(docKey).some((job) => job.state === "working"),
   onChanged: (docKey) => sendCollabHistoryChanged?.({ docKey }),
 });
+/** The version a document returns to from History if the author wants the manuscript as it was before review proposals. */
+const nameVersionBeforeProposals = (session: { docKey: string }, name: string) => collabHistory.name(session.docKey, undefined, name);
 
 function collabAgentStatus(docKey: string): AgentActivityMessage {
   return {
@@ -264,7 +265,6 @@ async function main() {
         extensionsInvoke: request => extensions.invoke(request),
         extensionsSetEnabled: request => extensions.setEnabled(request.id, request.enabled),
         extensionsCancel: ({ requestId }) => extensions.cancel(requestId),
-        reviewExportManuscripts: async (request) => exportReviewManuscripts((await reviewEngine(request.projectPath)).store, request),
         reviewManuscript,
         reviewRevisionContext,
         reviewSaveRevisionResponse,
@@ -290,13 +290,12 @@ async function main() {
           const engine = await reviewEngine(input.projectPath);
           return engine.create({ ...input, projectPath: engine.store.project });
         },
-        reviewFollowup: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).followup(sessionId),
         reviewDelete: ({ projectPath, sessionId }) => deleteReviewSession({ projectPath, sessionId }),
         reviewStart: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).start(sessionId),
         reviewGet: async (address) => {
           const view = await reviewView(address);
           if (view.session.status === "completed") {
-            const sync = await responseSyncStatus((await reviewEngine(address.projectPath)).store.project, view.session)
+            const sync = await responseSyncStatus((await reviewEngine(address.projectPath)).store, view.session)
               .catch((error) => { console.error("[review] Could not read proposal decisions", error); return undefined; });
             if (sync) view.responseSync = sync;
           }
@@ -304,8 +303,8 @@ async function main() {
         },
         reviewSyncResponses: ({ projectPath, sessionId, force }) => syncReviewResponses({ projectPath, sessionId }, { force }),
         reviewEditResponse: editReviewResponse,
-        reviewStageProposals: (address) => stageManuscriptProposals(collabRegistry, address),
-        reviewPlaceProposals: ({ projectPath, filename }) => placeManuscriptProposals(collabRegistry, collabDocKey(projectPath, filename), projectPath, filename),
+        reviewStageProposals: (address) => stageManuscriptProposals(collabRegistry, address, nameVersionBeforeProposals),
+        reviewPlaceProposals: ({ projectPath, filename }) => placeManuscriptProposals(collabRegistry, collabDocKey(projectPath, filename), projectPath, filename, nameVersionBeforeProposals),
         reviewStop: async ({ projectPath, sessionId, cancel }) => (await reviewEngine(projectPath)).stop(sessionId, cancel),
         reviewDecideFigure: decideFigure,
         reviewImportFigure: async (address) => {
@@ -314,7 +313,6 @@ async function main() {
           return path ? importFigure(address, path) : null;
         },
         reviewFigurePreview,
-        reviewExport: exportReview,
         reviewExportResponses: exportReviewResponses,
 
         getOllamaStatus: () => ollamaClient.getStatus(),

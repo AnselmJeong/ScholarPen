@@ -4,12 +4,13 @@ import { fileSystem } from "../fs/manager";
 import type { CollabRegistry, CollabSession } from "../collab/registry";
 import { placeReviewProposals, type PlacementResult } from "../collab/review-proposals";
 import { REVIEW_PROPOSALS_MAP, type ProposalEntry } from "../../shared/collab/review-proposals";
-import type { ResponseSyncStatus, ReviewAddress, ReviewSession } from "../../shared/review-session/types";
-import type { StagedProposals } from "../../shared/review-session/proposals";
+import type { ResponseSyncStatus, ReviewAddress, ReviewSession, RoundResult } from "../../shared/review-session/types";
+import type { ReviewProposal, StagedProposals } from "../../shared/review-session/proposals";
 import { reviewEngine } from "./service";
 import { readStagedProposals, stageReviewProposals, stagedProposalsFor } from "./proposals";
 import { decisionSources } from "./decision-sources";
-import { ensureEditableRevision } from "./editable-copy";
+import { ensureLetter, existingLetter } from "./letter";
+import type { SessionStore } from "./session-store";
 import { readEditableResponses, updateRevisionResponses } from "./revision-responses";
 import { applyRewrittenResponses, commentSyncStates, proposalDecisions, rewriteResponses, type ProposalDecision } from "./response-sync";
 import { exists, readJSON, scopedPath, writeJSON } from "./workspace";
@@ -19,26 +20,39 @@ async function projectRoot(path: string) {
   return realpath(await fileSystem.resolveProjectPath(path));
 }
 
+/** Saves a named version of a document just before proposals first appear in it, so the author can go back to it in History. */
+export type BeforePlacing = (session: CollabSession, name: string) => Promise<unknown>;
+
+async function place(session: CollabSession, proposals: ReviewProposal[], beforePlacing?: BeforePlacing): Promise<PlacementResult> {
+  const placed = session.ydoc.getMap<ProposalEntry>(REVIEW_PROPOSALS_MAP);
+  const fresh = proposals.filter(proposal => proposal.document === session.filename && !placed.has(proposal.key));
+  if (fresh.length && beforePlacing) {
+    const sessions = [...new Set(fresh.map(proposal => proposal.sessionId.slice(0, 10)))].join(", ");
+    await beforePlacing(session, `심사 수정안 표시 전 (${sessions} 세션)`).catch(error => console.error("[review] Could not name the version before proposals", error));
+  }
+  return placeReviewProposals(session, proposals);
+}
+
 /** Stages a completed session's proposals and shows them at once in the documents that are open. */
-export async function stageManuscriptProposals(registry: CollabRegistry, address: ReviewAddress): Promise<StagedProposals> {
+export async function stageManuscriptProposals(registry: CollabRegistry, address: ReviewAddress, beforePlacing?: BeforePlacing): Promise<StagedProposals> {
   const engine = await reviewEngine(address.projectPath);
   const staged = await stageReviewProposals(engine.store.project, await engine.store.load(address.sessionId));
   for (const session of registry.list()) {
     const root = await projectRoot(session.projectPath).catch(() => null);
-    if (root === engine.store.project) placeReviewProposals(session, staged.proposals);
+    if (root === engine.store.project) await place(session, staged.proposals, beforePlacing);
   }
   return staged;
 }
 
-/** Places the staged proposals of one open document of the main project (never a revisions/ copy). */
-export async function placeManuscriptProposals(registry: CollabRegistry, docKey: string, projectPath: string, filename: string): Promise<PlacementResult> {
+/** Places the staged proposals of one open document of the project. */
+export async function placeManuscriptProposals(registry: CollabRegistry, docKey: string, projectPath: string, filename: string, beforePlacing?: BeforePlacing): Promise<PlacementResult> {
   const session = registry.get(docKey);
   const root = session ? await projectRoot(projectPath).catch(() => null) : null;
   if (!session || !root) return { placed: 0, unplaced: 0, waiting: 0 };
-  return placeReviewProposals(session, await stagedProposalsFor(root, filename));
+  return place(session, await stagedProposalsFor(root, filename), beforePlacing);
 }
 
-/** `revisions/<session>/.scholarpen/response-sync.json`: which decisions each response was written from. */
+/** `<record>/letter/.scholarpen/response-sync.json`: which decisions each response was written from. */
 const SYNC_FILE = ".scholarpen/response-sync.json";
 interface SyncRecord {
   schemaVersion: 1;
@@ -46,16 +60,16 @@ interface SyncRecord {
   last?: { at: string; updated: string[]; error?: string };
 }
 
-async function readSyncRecord(revision: string | null): Promise<SyncRecord> {
+async function readSyncRecord(letter: string | null): Promise<SyncRecord> {
   const empty: SyncRecord = { schemaVersion: 1, comments: {} };
-  if (!revision || !await exists(revision, SYNC_FILE)) return empty;
-  const record = await readJSON<SyncRecord>(revision, SYNC_FILE).catch(() => empty);
+  if (!letter || !await exists(letter, SYNC_FILE)) return empty;
+  const record = await readJSON<SyncRecord>(letter, SYNC_FILE).catch(() => empty);
   return record?.schemaVersion === 1 && record.comments && typeof record.comments === "object" ? record : empty;
 }
 
-function statusOf(decisions: ProposalDecision[], session: ReviewSession, record: SyncRecord): ResponseSyncStatus {
+function statusOf(decisions: ProposalDecision[], session: ReviewSession, record: SyncRecord, respond = true): ResponseSyncStatus {
   return {
-    comments: commentSyncStates(session.comments, decisions).map(state => {
+    comments: !respond ? [] : commentSyncStates(session.comments, decisions).map(state => {
       const synced = record.comments[state.commentId];
       return { commentId: state.commentId, proposals: state.proposals, waiting: state.waiting, ready: state.ready,
         current: synced?.fingerprint === state.fingerprint, ...(synced ? { syncedAt: synced.at, method: synced.method } : {}) };
@@ -67,26 +81,23 @@ function statusOf(decisions: ProposalDecision[], session: ReviewSession, record:
 }
 
 /** Decisions on the proposals and whether each response follows them; reads only, never runs a model. */
-export async function responseSyncStatus(project: string, session: ReviewSession): Promise<ResponseSyncStatus | undefined> {
-  const staged = await readStagedProposals(project, session.id).catch(() => null);
+export async function responseSyncStatus(store: SessionStore, session: ReviewSession): Promise<ResponseSyncStatus | undefined> {
+  const staged = await readStagedProposals(store.project, session.id).catch(() => null);
   if (!staged?.proposals.length) return undefined;
-  const decisions = await proposalDecisions(decisionSources(), project, staged);
-  const relative = `revisions/${session.id}`;
-  const revision = await exists(project, relative) ? await scopedPath(project, relative) : null;
-  return statusOf(decisions, session, await readSyncRecord(revision));
+  const decisions = await proposalDecisions(decisionSources(), store.project, staged);
+  const letter = session.status === "completed" ? await existingLetter(store, session) : null;
+  return statusOf(decisions, session, await readSyncRecord(letter), staged.respond !== false);
 }
 
 type Engine = Awaited<ReturnType<typeof reviewEngine>>;
 
-/** The session's revision folder, which holds the editable response letter; created on first use. */
-async function revisionFolder(engine: Engine, session: ReviewSession) {
-  const relative = `revisions/${session.id}`;
-  if (!await exists(engine.store.project, relative)) {
-    const release = await engine.store.lock(session.id);
-    try { await ensureEditableRevision(await engine.store.root(session.id), session); await engine.store.save(session); }
-    finally { await release(); }
-  }
-  return scopedPath(engine.store.project, relative);
+/** The session's editable response letter (in its review record); written on first use. */
+async function letterFolder(engine: Engine, session: ReviewSession, result: RoundResult) {
+  const existing = await existingLetter(engine.store, session);
+  if (existing) return existing;
+  const release = await engine.store.lock(session.id);
+  try { return await ensureLetter(engine.store, session, result); }
+  finally { await release(); }
 }
 
 /** The author's own wording for one response (e.g. filling a [저자: …] note); rewrites keep it until the manuscript changes. */
@@ -96,7 +107,7 @@ export async function editReviewResponse(a: ReviewAddress & { commentId: string;
   const session = await engine.store.load(a.sessionId);
   const result = session.rounds.find(round => round.round === session.selectedFinalRound);
   if (session.status !== "completed" || !result) throw new Error("완료된 세션의 답변만 고칠 수 있습니다.");
-  await updateRevisionResponses(await revisionFolder(engine, session), session, result, items => {
+  await updateRevisionResponses(await letterFolder(engine, session, result), session, result, items => {
     const item = items.find(value => value.commentId === a.commentId);
     if (!item) throw new Error("고칠 답변을 찾을 수 없습니다.");
     if (item.response !== a.expectedResponse && item.response !== a.response) throw new Error("이 답변이 그사이 다시 쓰였습니다. 입력한 내용은 그대로 두었습니다. 최신 답변을 확인한 뒤 다시 저장해 주세요.");
@@ -123,7 +134,9 @@ export async function syncReviewResponses(address: ReviewAddress, options: { for
     const staged = await readStagedProposals(project, session.id);
     if (session.status !== "completed" || !result || !staged?.proposals.length) return undefined;
     const decisions = await proposalDecisions(decisionSources(), project, staged);
-    const revision = await revisionFolder(engine, session);
+    // Passages carried over from a letter already sent change the manuscript only.
+    if (staged.respond === false) return statusOf(decisions, session, { schemaVersion: 1, comments: {} }, false);
+    const revision = await letterFolder(engine, session, result);
     const record = await readSyncRecord(revision);
     const targets = commentSyncStates(session.comments, decisions)
       .filter(state => state.ready && (options.force || record.comments[state.commentId]?.fingerprint !== state.fingerprint));

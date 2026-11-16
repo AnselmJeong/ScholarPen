@@ -1,14 +1,36 @@
 import { parseInput } from "../../shared/review-session/schema";
-import { mkdir, readFile, readdir, open, unlink } from "node:fs/promises";
+import { mkdir, readFile, readdir, open, rename, rmdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ReviewInput, ReviewSession } from "../../shared/review-session/types";
 import { atomicWrite, copyPackage, scopedPath, snapshot, writeJSON, readJSON, exists } from "./workspace";
+/** Review records live out of sight, beside the project's other app data; the manuscript is `documents/`. */
+export const REVIEW_RECORDS = ".scholarpen/reviews";
+/** Where earlier versions kept them, in the project root. */
+const LEGACY_RECORDS = "reviews";
+const SESSION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}-(virtual|peer)-[a-f0-9-]{36}$/;
+
 export class SessionStore {
   constructor(readonly project: string) {}
   async root(id: string) {
-    if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}-(virtual|peer)-[a-f0-9-]{36}$/.test(id)) throw new Error("Invalid session ID");
-    return scopedPath(this.project, `reviews/${id}`);
+    if (!SESSION_ID.test(id)) throw new Error("Invalid session ID");
+    const path = await scopedPath(this.project, `${REVIEW_RECORDS}/${id}`);
+    if (!await exists(this.project, `${REVIEW_RECORDS}/${id}`) && await exists(this.project, `${LEGACY_RECORDS}/${id}/session.json`)) {
+      await mkdir(await scopedPath(this.project, REVIEW_RECORDS), { recursive: true });
+      await rename(await scopedPath(this.project, `${LEGACY_RECORDS}/${id}`), path);
+    }
+    return path;
+  }
+  /** Moves records out of the old root `reviews/` folder; empty leftovers of unfinished snapshots go with it. */
+  private async migrate() {
+    if (!await exists(this.project, LEGACY_RECORDS)) return;
+    const legacy = await scopedPath(this.project, LEGACY_RECORDS);
+    for (const item of await readdir(legacy, { withFileTypes: true })) {
+      if (!item.isDirectory()) continue;
+      if (SESSION_ID.test(item.name) && await exists(legacy, `${item.name}/session.json`)) await this.root(item.name);
+      else await rmdir(join(legacy, item.name)).catch(() => {}); // only when empty
+    }
+    await rmdir(legacy).catch(() => {}); // only when empty
   }
   async create(input: ReviewInput, baselineSource = this.project) {
     const id = `${new Date().toISOString().slice(0, 10)}-${input.mode}-${randomUUID()}`;
@@ -33,9 +55,10 @@ export class SessionStore {
   }
   async save(session: ReviewSession) { session.updatedAt = new Date().toISOString(); await writeJSON(await this.root(session.id), "session.json", session); }
   async list() {
-    if (!await exists(this.project, "reviews")) return [];
+    await this.migrate();
+    if (!await exists(this.project, REVIEW_RECORDS)) return [];
     const sessions: ReviewSession[] = [];
-    for (const item of await readdir(await scopedPath(this.project, "reviews"), { withFileTypes: true })) {
+    for (const item of await readdir(await scopedPath(this.project, REVIEW_RECORDS), { withFileTypes: true })) {
       if (!item.isDirectory()) continue;
       try { sessions.push(await this.load(item.name)); } catch { /* Uncommitted snapshots are never presented as sessions. */ }
     }

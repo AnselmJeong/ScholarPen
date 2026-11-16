@@ -2,7 +2,7 @@ import type { PunctuationPolicy, WritingPreferences } from "./writing-preference
 import type { ExtensionInfo, ExtensionRequest } from "./extensions/contracts";
 import type { AIDetectorStatus } from "./ai-detector-setup";
 import type { RevisionChapterContext, RevisionResponseSave } from "./review-session/chapter-context";
-import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport, ResponseSyncStatus } from "./review-session/types";
+import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ResponseSyncStatus } from "./review-session/types";
 import type { StagedProposals } from "./review-session/proposals";
 import type { ClaudeStatus } from "./claude";
 import type { ReviewCategory, ProjectReviewSettings } from "./collab/review";
@@ -53,11 +53,9 @@ type BunRequests = RPCSchema<{
     reviewSaveRevisionResponse: { params: RevisionResponseSave; response: string };
     reviewRevisionContext: { params: { projectPath: string; filename: string }; response: RevisionChapterContext | null };
     reviewConfirmSnapshot: { params: { projectPath: string; filename: string; savedDocument: unknown; fingerprint: string }; response: void };
-    reviewExportManuscripts: { params: ReviewManuscriptExport; response: string };
     reviewManuscript: { params: ReviewAddress & { round: number }; response: string };
     reviewList: { params: { projectPath: string }; response: ReviewSession[] };
     reviewCreate: { params: ReviewInput; response: ReviewSession };
-    reviewFollowup: { params: ReviewAddress; response: ReviewSession };
     /** Moves a session's review record, revision copy and staged proposals to the Trash. */
     reviewDelete: { params: ReviewAddress; response: { trashed: string[] } };
     reviewStart: { params: ReviewAddress; response: ReviewSession };
@@ -74,7 +72,6 @@ type BunRequests = RPCSchema<{
     reviewDecideFigure: { params: ReviewAddress & { approvalId: string; decision: "approved" | "kept" | "deferred" }; response: ReviewSession };
     reviewImportFigure: { params: ReviewAddress & { approvalId: string }; response: ReviewSession | null };
     reviewFigurePreview: { params: ReviewAddress & { figureId: string; round: number }; response: string };
-    reviewExport: { params: ReviewAddress & { editable: boolean }; response: string };
     reviewExportResponses: { params: ReviewAddress; response: string };
     getAIDetectorStatus: { params: void; response: AIDetectorStatus };
     installAIDetector: { params: void; response: AIDetectorStatus };

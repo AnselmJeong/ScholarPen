@@ -29,6 +29,8 @@ export interface ManifestFile { path: string; hash: string; bytes: number }
 export interface ReviewManifest { schemaVersion: 1; files: ManifestFile[]; packageHash: string; warnings: string[] }
 export interface ReviewSession {
   editablePath?: string;
+  /** When the session's letter was written into its record; a session with a letter never falls back to the AI's first answers. */
+  letterAt?: string;
   warnings?: { stage: string; reason: string }[];
   schemaVersion: 1; id: string; createdAt: string; updatedAt: string; input: ReviewInput;
   roles: { reviewer: { provider: "codex"; model: string }; reviser: { provider: "anthropic"; model: string } };
@@ -75,8 +77,3 @@ export const DEFAULT_REVIEWERS: ReviewerProfile[] = [
   { id: "R3", name: "Reviewer 3", focus: "Logic and reporting completeness", original: "" },
 ];
 
-export type ReviewExportFormat = "json" | "md" | "qmd";
-export type ReviewManuscriptExport = ReviewAddress & { round: number } & (
-  | { format: "json" }
-  | { format: "md" | "qmd"; documents: { filename: string; content: string }[] }
-);
