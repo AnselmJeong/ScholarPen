@@ -13,8 +13,11 @@ const button = "inline-flex items-center justify-center gap-2 rounded-lg border 
 const primary = `${button} bg-primary text-primary-foreground hover:bg-primary/90`;
 const dispositionLabels: Record<string, string> = { changed: "수정 반영", "clarified-no-change": "기존 설명 안내", "reasoned-disagreement": "근거 있는 반박", "partially-addressed": "일부 반영", "needs-author": "저자 판단 필요", "awaiting-figure-approval": "그림 승인 대기", unresolved: "미해결" };
 const qualityLabels: Record<string, string> = { "not-assessed": "검토 전", "ready-for-author-review": "저자 최종 검토 가능", "needs-author-action": "저자 판단 필요", "incomplete-coverage": "미검토 자료 있음" };
-interface Props { project: ProjectInfo; files: FileNode[]; activeDocument: string | null; prepare: () => Promise<void>; saveResponses?: () => Promise<void>; onClose: () => void; onExported: () => Promise<void>; onOpenRevision: (path: string, filename: string) => Promise<void> }
-export function ReviewWorkspace({ project, files, activeDocument, prepare, saveResponses, onClose, onExported, onOpenRevision }: Props) {
+interface Props { project: ProjectInfo; files: FileNode[]; activeDocument: string | null; prepare: () => Promise<void>; saveResponses?: () => Promise<void>; onClose: () => void; onExported: () => Promise<void>; onOpenRevision: (path: string, filename: string) => Promise<void>;
+  /** Opens a manuscript document of the project and selects a proposal's margin card. */
+  onOpenProposal: (filename: string, key: string) => void }
+const proposalStateLabels: Record<string, string> = { pending: "원고에서 확인 대기", editing: "직접 고쳐 쓰는 중", redo: "AI가 다시 작성 중", unplaced: "위치를 찾지 못함", accepted: "반영함", edited: "고쳐 써서 반영함", rejected: "거절 · 원문 유지", dismissed: "적용 안 함", "not-shown": "문서를 열면 표시됨" };
+export function ReviewWorkspace({ project, files, activeDocument, prepare, saveResponses, onClose, onExported, onOpenRevision, onOpenProposal }: Props) {
   const [sessions, setSessions] = useState<ReviewSession[]>([]);
   const [view, setView] = useState<ReviewView | null>(null);
   const [creating, setCreating] = useState(false);
@@ -50,6 +53,25 @@ export function ReviewWorkspace({ project, files, activeDocument, prepare, saveR
   const responses = view?.responseError ? [] : view?.responseDocument?.responses ?? result?.responses ?? [];
   const selectedResponse = responses.find(r => r.commentId === selectedComment?.id);
   const editedIds = view?.responseDocument?.editedCommentIds ?? [];
+  const sync = view?.responseSync;
+  const syncOf = (id: string) => sync?.comments.find(item => item.commentId === id);
+  const proposalsOf = (id: string) => (sync?.proposals ?? view?.staged?.proposals.map(p => ({ key: p.key, id: p.id, document: p.document, blockId: p.blockId, state: "not-shown", commentIds: p.comments.map(c => c.id) })) ?? []).filter(p => p.commentIds.includes(id));
+  const stageProposals = () => action(async () => {
+    await saveResponses?.();
+    const staged = await rpc.reviewStageProposals(address!);
+    await refresh(s!.id);
+    const documents = new Set(staged.proposals.map(p => p.document)).size;
+    setNotice(staged.proposals.length
+      ? `수정안 ${staged.proposals.length}개를 원고 ${documents}개 문서에 표시했습니다. 각 문서의 여백에 보라색 ‘심사 반영’ 카드로 나타납니다(AI 자체 검토 메모는 노란색). 확인·고쳐 쓰기·거절을 마치면 해당 의견의 답변이 원고 결과에 맞게 다시 쓰입니다.`
+      : "이 세션에는 원고에 표시할 문장 수정안이 없습니다.");
+  });
+  const rewriteResponses = () => action(async () => {
+    await saveResponses?.();
+    await rpc.reviewSyncResponses(address!, true);
+    await refresh(s!.id);
+    setNotice("원고에서 결정한 내용으로 답변을 다시 썼습니다. 답변서 탭에서 확인해 주세요.");
+  });
+  const waitingProposals = sync?.proposals.filter(p => !["accepted", "edited", "rejected", "dismissed"].includes(p.state)).length ?? 0;
   const exportResponses = () => action(async () => {
     await saveResponses?.();
     const path = await rpc.reviewExportResponses(address!);
@@ -82,7 +104,7 @@ export function ReviewWorkspace({ project, files, activeDocument, prepare, saveR
           {!["running", "completed", "cancelled"].includes(s!.status) && <button disabled={busy} className={primary} onClick={() => action(async () => { await rpc.reviewStart(address!); await refresh(s!.id); })}><Play size={13} />{s!.status === "created" ? "심사·수정 시작" : "저장된 단계부터 재개"}</button>}
           {s!.status === "running" && <button disabled={busy} className={button} onClick={() => action(async () => { await rpc.reviewStop(address!); await refresh(s!.id); })}><Pause size={13} />일시정지</button>}
           {!["completed", "cancelled", "created"].includes(s!.status) && <button disabled={busy} className={button} onClick={() => action(async () => { await rpc.reviewStop(address!, true); await refresh(s!.id); })}><X size={13} />실행 취소</button>}
-          {s!.status === "completed" && <><button disabled={busy} className={button} onClick={() => action(async () => { const next = await rpc.reviewFollowup(address!); await refresh(next.id); })}>최종 후보로 후속 세션 만들기</button><button disabled={busy} className={button} onClick={() => action(async () => { await saveResponses?.(); await prepare(); setNotice(`최신 원고·답변서 내보내기: ${await rpc.reviewExport(address!)}`); await onExported(); })}><Download size={13} />최신 원고·답변서 내보내기</button><button disabled={busy} className={button} onClick={() => action(async () => { const path = await rpc.reviewExport(address!, true); await onExported(); await onOpenRevision(path, s!.input.documents[0]!); })}><FilePlus2 size={13} />수정 원고에서 계속 편집</button></>}
+          {s!.status === "completed" && <><button disabled={busy} className={button} onClick={() => action(async () => { const next = await rpc.reviewFollowup(address!); await refresh(next.id); })}>최종 후보로 후속 세션 만들기</button><button disabled={busy} className={button} onClick={() => action(async () => { await saveResponses?.(); await prepare(); setNotice(`최신 원고·답변서 내보내기: ${await rpc.reviewExport(address!)}`); await onExported(); })}><Download size={13} />최신 원고·답변서 내보내기</button><button disabled={busy} className={primary} onClick={stageProposals} title="수정안을 원본 원고에 변경 추적으로 표시합니다. 문서 여백의 카드에서 확인·고쳐 쓰기·거절·AI 재요청을 할 수 있습니다.">{view.staged ? "원고 수정안 다시 표시" : "원고에 수정안 표시"}</button><button disabled={busy} className={button} onClick={() => action(async () => { const path = await rpc.reviewExport(address!, true); await onExported(); await onOpenRevision(path, s!.input.documents[0]!); })}><FilePlus2 size={13} />수정 원고에서 계속 편집</button></>}
           {s!.rounds.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
             <select aria-label="내보낼 리뷰 회차" className="rounded border border-border bg-background px-2 py-1 text-xs" value={exportRound || s!.selectedFinalRound || s!.rounds.at(-1)!.round} onChange={e => setExportRound(Number(e.target.value))}>
               {s!.rounds.map(r => <option key={r.round} value={r.round}>{r.round}차 원고{r.round === s!.selectedFinalRound ? " · 최종 후보" : ""}</option>)}
@@ -104,11 +126,16 @@ export function ReviewWorkspace({ project, files, activeDocument, prepare, saveR
       <div className="min-h-0 flex-1 overflow-auto"><ReviewProgress view={view} lastCheckedAt={lastCheckedAt} connectionError={connectionError} />
         {view.responseError && <p role="alert" className="m-5 rounded border border-destructive/30 p-3 text-sm text-destructive">{view.responseError}</p>}
         {tab === "comments" && <div className="grid min-h-full grid-cols-[220px_1fr]">
-          <aside className="border-r border-border p-3">{!s!.comments.length && <p className="p-2 text-xs text-muted-foreground">{s!.status === "running" ? "원고 문맥 분석 후 심사의견이 표시됩니다." : "정리된 심사의견이 여기에 표시됩니다."}</p>}{s!.comments.map(c => <button key={c.id} onClick={() => setCommentId(c.id)} className={`mb-2 w-full rounded-lg p-3 text-left text-xs ${selectedComment?.id === c.id ? "bg-primary/10 text-primary" : "hover:bg-accent"}`}><strong>{c.reviewerId} · {c.id}</strong><p className="mt-1 line-clamp-3 leading-5">{c.original}</p><p className="mt-2 text-muted-foreground">{editedIds.includes(c.id) ? "저자 수정 답변" : dispositionLabels[responses.find(r => r.commentId === c.id)?.disposition ?? ""] ?? "대응 전"}</p></button>)}</aside>
-          <article className="space-y-5 p-6">{selectedComment ? <><div><h3 className="mb-2 text-xs font-semibold text-muted-foreground">심사의견 원문 · {selectedComment.source === "human" ? "실제 의견" : "가상 의견"}</h3><p className="whitespace-pre-wrap text-sm leading-7">{selectedComment.original}</p></div>{selectedResponse && <><div className="border-t border-border pt-4"><h3 className="mb-2 text-xs font-semibold text-primary">{editedIds.includes(selectedResponse.commentId) ? "저자가 수정한 최신 답변 · 원고와의 일치 확인 필요" : `AI 답변 · ${dispositionLabels[selectedResponse.disposition]} · ${selectedResponse.verification}`}</h3><p className="whitespace-pre-wrap text-sm leading-7">{selectedResponse.response}</p></div><p className="break-all text-xs text-muted-foreground">자동 검토 당시 위치: {selectedResponse.locations.join("; ") || "변경 없음"}<br />연결된 변경: {selectedResponse.changeIds.join(", ") || "없음"}</p></>}</> : <p className="text-sm text-muted-foreground">{s!.status === "running" ? "검토가 진행 중입니다. 위에서 현재 작업과 최근 완료 단계를 확인할 수 있습니다." : s!.status === "created" ? "심사·수정 시작 버튼을 누르면 검토를 시작합니다." : "진행 상황과 중단 안내를 확인해 주세요."}</p>}</article>
+          <aside className="border-r border-border p-3">{!s!.comments.length && <p className="p-2 text-xs text-muted-foreground">{s!.status === "running" ? "원고 문맥 분석 후 심사의견이 표시됩니다." : "정리된 심사의견이 여기에 표시됩니다."}</p>}{s!.comments.map(c => <button key={c.id} onClick={() => setCommentId(c.id)} className={`mb-2 w-full rounded-lg p-3 text-left text-xs ${selectedComment?.id === c.id ? "bg-primary/10 text-primary" : "hover:bg-accent"}`}><strong>{c.reviewerId} · {c.id}</strong><p className="mt-1 line-clamp-3 leading-5">{c.original}</p><p className="mt-2 text-muted-foreground">{syncOf(c.id)?.current ? "원고 확인 결과로 다시 쓴 답변" : syncOf(c.id)?.waiting ? `원고 확인 대기 ${syncOf(c.id)!.waiting}개` : editedIds.includes(c.id) ? "저자 수정 답변" : dispositionLabels[responses.find(r => r.commentId === c.id)?.disposition ?? ""] ?? "대응 전"}</p></button>)}</aside>
+          <article className="space-y-5 p-6">{selectedComment ? <><div><h3 className="mb-2 text-xs font-semibold text-muted-foreground">심사의견 원문 · {selectedComment.source === "human" ? "실제 의견" : "가상 의견"}</h3><p className="whitespace-pre-wrap text-sm leading-7">{selectedComment.original}</p></div>{proposalsOf(selectedComment.id).length > 0 && <ProposalList proposals={proposalsOf(selectedComment.id)} sync={syncOf(selectedComment.id)} onOpen={onOpenProposal} />}{selectedResponse && <><div className="border-t border-border pt-4"><h3 className="mb-2 text-xs font-semibold text-primary">{syncOf(selectedResponse.commentId)?.current ? `원고 확인 결과로 다시 쓴 답변 · ${dispositionLabels[selectedResponse.disposition]}${syncOf(selectedResponse.commentId)?.method === "template" ? " · 기본 문안(모델 응답 없음)" : ""}` : editedIds.includes(selectedResponse.commentId) ? "저자가 수정한 최신 답변 · 원고와의 일치 확인 필요" : `AI 답변 · ${dispositionLabels[selectedResponse.disposition]} · ${selectedResponse.verification}`}</h3><p className="whitespace-pre-wrap text-sm leading-7">{selectedResponse.response}</p></div><p className="break-all text-xs text-muted-foreground">자동 검토 당시 위치: {selectedResponse.locations.join("; ") || "변경 없음"}<br />연결된 변경: {selectedResponse.changeIds.join(", ") || "없음"}</p></>}</> : <p className="text-sm text-muted-foreground">{s!.status === "running" ? "검토가 진행 중입니다. 위에서 현재 작업과 최근 완료 단계를 확인할 수 있습니다." : s!.status === "created" ? "심사·수정 시작 버튼을 누르면 검토를 시작합니다." : "진행 상황과 중단 안내를 확인해 주세요."}</p>}</article>
         </div>}
         {tab === "changes" && <div className="space-y-5 p-5">{!view.changes.length && <p className="text-sm text-muted-foreground">완료된 회차의 실제 변경이 여기에 표시됩니다.</p>}{view.changes.map(c => <article key={c.id} className="overflow-hidden rounded-xl border border-border"><div className="border-b border-border bg-accent/40 px-4 py-3 text-xs"><strong>{c.id}</strong> · {c.commentIds.join(", ")}<p className="mt-1 break-all text-muted-foreground">{c.target}</p></div><div className="grid grid-cols-2"><div className="border-r border-border bg-red-500/5 p-4"><h4 className="mb-2 text-xs font-semibold">변경 전</h4><pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6">{c.before}</pre></div><div className="bg-emerald-500/5 p-4"><h4 className="mb-2 text-xs font-semibold">변경 후</h4><pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6">{c.after}</pre></div></div><p className="border-t border-border p-3 text-xs text-muted-foreground">{c.rationale}</p></article>)}</div>}
         {tab === "response" && <div className="p-6">
+          {sync && <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/5 p-3 text-xs leading-6">
+            <p>{waitingProposals ? `원고에서 아직 결정하지 않은 수정안 ${waitingProposals}개가 있습니다. 문서 여백의 보라색 ‘심사 반영’ 카드에서 확인·고쳐 쓰기·거절하면 해당 의견의 답변이 다시 쓰입니다.` : "원고의 수정안을 모두 결정했습니다."} 다시 쓴 답변 {sync.comments.filter(c => c.current).length}/{sync.comments.length}개{sync.lastAt ? ` · 마지막 ${new Date(sync.lastAt).toLocaleString()}` : ""}.</p>
+            {sync.lastError && <p className="text-amber-700">일부 답변은 모델 응답을 받지 못해 기본 문안으로 썼습니다: {sync.lastError}</p>}
+            <button className={`${button} mt-2`} disabled={busy || !sync.comments.some(c => c.ready)} onClick={rewriteResponses}>원고 결정으로 답변 다시 쓰기</button>
+          </div>}
           <div className="mb-6 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4"><div><h2 className="text-base font-semibold">전체 심사의견과 답변</h2><p className="mt-2 text-xs leading-6 text-muted-foreground">{view.responseDocument?.source === 'revision' ? `수정 작업 폴더의 최신 저장본 · 의견 ${s!.comments.length}개 · 저자 수정 ${editedIds.length}개. 수정한 원고와 답변의 일치를 확인해 주세요.` : '자동 검토 당시 답변입니다. 아직 저장된 수정 답변서가 없습니다.'}</p></div><div className="flex gap-2"><button className={button} disabled={busy} onClick={() => action(() => refresh(s!.id))}>최신 답변 불러오기</button><button className={primary} disabled={busy || s!.status !== 'completed' || !!view.responseError} onClick={exportResponses}><Download size={14} />전체 답변서 내보내기</button></div></div>
           {view.responsesMarkdown ? <article aria-label="전체 답변서 미리보기" className="prose prose-sm max-w-none break-words dark:prose-invert prose-blockquote:whitespace-pre-wrap prose-blockquote:not-italic"><ReactMarkdown remarkPlugins={[remarkGfm]}>{view.responsesMarkdown}</ReactMarkdown></article> : <p className="text-sm text-muted-foreground">{view.responseError ? '최신 답변서를 불러오지 못했습니다.' : '답변 생성 전입니다.'}</p>}
         </div>}
@@ -179,4 +206,16 @@ function ManuscriptFigure({ address, figureId, round, caption }: { address: Revi
   const [url, setUrl] = useState(""); const [error, setError] = useState("");
   useEffect(() => { let stopped = false; setUrl(""); setError(""); void rpc.reviewFigurePreview(address, figureId, round).then(v => { if (!stopped) setUrl(v); }).catch(e => { if (!stopped) setError(String(e)); }); return () => { stopped = true; }; }, [address.projectPath, address.sessionId, figureId, round]);
   return <figure className="my-5">{url ? <img src={url} alt={caption} className="mx-auto max-h-96 max-w-full object-contain" /> : <p className="rounded-lg bg-accent p-3 text-xs text-muted-foreground">{error || "그림을 읽는 중…"}</p>}<figcaption className="mt-2 text-center text-sm text-muted-foreground">{caption}</figcaption></figure>;
+}
+
+function ProposalList({ proposals, sync, onOpen }: { proposals: NonNullable<ReviewView["responseSync"]>["proposals"]; sync?: NonNullable<ReviewView["responseSync"]>["comments"][number]; onOpen: (filename: string, key: string) => void }) {
+  return <div className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
+    <h3 className="mb-1 text-xs font-semibold text-violet-700 dark:text-violet-300">원고의 수정안</h3>
+    <p className="mb-2 text-xs leading-5 text-muted-foreground">{sync?.waiting ? `${sync.waiting}개를 원고에서 확인하면 이 의견의 답변이 다시 쓰입니다.` : sync?.current ? "원고에서 결정한 내용으로 답변을 다시 썼습니다." : "결정이 끝났습니다. 답변을 곧 다시 씁니다."}</p>
+    <ul className="space-y-1.5">{proposals.map(p => <li key={p.key} className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="font-medium">{p.document.replace(/\.scholarpen\.json$/, "")}</span>
+      <span className="rounded-full bg-background px-2 py-0.5 text-muted-foreground">{proposalStateLabels[p.state] ?? p.state}</span>
+      <button className={`${button} ml-auto py-1`} onClick={() => onOpen(p.document, p.key)}>원고에서 보기</button>
+    </li>)}</ul>
+  </div>;
 }

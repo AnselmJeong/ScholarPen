@@ -273,7 +273,7 @@ export function ActivityPanel({ editor, documentName, projectPath, onExported }:
             key={thread.id}
             thread={thread}
             reference={thread.meta.scope === "document" ? "Whole manuscript" : referenceText(thread.id)}
-            detached={thread.meta.scope !== "document" && !positions.has(thread.id)}
+            detached={thread.meta.scope !== "document" && !thread.meta.reviewProposal && !positions.has(thread.id)}
             onSelect={() => editor.getExtension(CommentsExtension)?.selectThread(thread.id)}
             onAssign={(assignee) => setMeta(thread.id, {
               assignee, status: "open", statusNote: undefined,

@@ -26,7 +26,8 @@ export interface RevisionParagraph { blockId: string; before: string; after: str
 export interface RevisionEntry {
   id: string;
   createdAt: number;
-  kind: "comment" | "coordinated";
+  /** "peer-review": a Review & Revision proposal shown in the manuscript. */
+  kind: "comment" | "coordinated" | "peer-review";
   label: string;
   /** Suggestion id shared by the change set; absent for direct edits. */
   changeSetId?: number;

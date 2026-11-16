@@ -2,7 +2,8 @@ import type { PunctuationPolicy, WritingPreferences } from "./writing-preference
 import type { ExtensionInfo, ExtensionRequest } from "./extensions/contracts";
 import type { AIDetectorStatus } from "./ai-detector-setup";
 import type { RevisionChapterContext, RevisionResponseSave } from "./review-session/chapter-context";
-import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport } from "./review-session/types";
+import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport, ResponseSyncStatus } from "./review-session/types";
+import type { StagedProposals } from "./review-session/proposals";
 import type { ClaudeStatus } from "./claude";
 import type { ReviewCategory, ProjectReviewSettings } from "./collab/review";
 import type { CodexStatus } from "./codex";
@@ -59,6 +60,12 @@ type BunRequests = RPCSchema<{
     reviewFollowup: { params: ReviewAddress; response: ReviewSession };
     reviewStart: { params: ReviewAddress; response: ReviewSession };
     reviewGet: { params: ReviewAddress; response: ReviewView };
+    /** Shows the session's text revisions in the manuscript as tracked changes (open documents now, others when opened). */
+    reviewStageProposals: { params: ReviewAddress; response: StagedProposals };
+    /** Rewrites responses from the author's decisions on the proposals (all ready ones with `force`). */
+    reviewSyncResponses: { params: ReviewAddress & { force?: boolean }; response: ResponseSyncStatus | undefined };
+    /** Places staged proposals in an open document; called once its editor has loaded. */
+    reviewPlaceProposals: { params: { projectPath: string; filename: string }; response: { placed: number; unplaced: number; waiting: number } };
     reviewStop: { params: ReviewAddress & { cancel: boolean }; response: ReviewSession };
     reviewDecideFigure: { params: ReviewAddress & { approvalId: string; decision: "approved" | "kept" | "deferred" }; response: ReviewSession };
     reviewImportFigure: { params: ReviewAddress & { approvalId: string }; response: ReviewSession | null };

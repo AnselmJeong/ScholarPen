@@ -6,6 +6,7 @@ import { useThreads } from "@blocknote/react";
 import { Check, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
 import type { CollabPeer } from "../../collab/collab-peer";
 import { MarginThread } from "./MarginThread";
+import { ProposalCard, type ProposalItem } from "./ProposalCard";
 import type { ReviewStore } from "../../collab/suggestion-review";
 import type { SuggestionHunk } from "../../collab/suggestion-hunks";
 import { decideChangeSet } from "../../collab/use-change-sets";
@@ -13,12 +14,30 @@ import { hunkDecisionRange, packMarginCards } from "../../collab/margin-review-l
 import { COLLAB_THREADS_MAP } from "../../../shared/collab/protocol";
 import { readThreads, updateThreadMeta, type ThreadSnapshot } from "../../../shared/collab/threads";
 import { REVIEW_MAP, isDisabledReviewType, reviewSettingsOf } from "../../../shared/collab/review";
+import { isAIUser } from "../../../shared/collab/personas";
+import { OPEN_PROPOSAL_STATES, readProposalEntries, REVIEW_PROPOSALS_MAP, type ProposalEntry } from "../../../shared/collab/review-proposals";
+import { REVISIONS_MAP } from "../../../shared/collab/revision-log";
+import { proposalChangeSet, syncProposalStates } from "../../collab/review-proposals";
+import { takeProposalFocus, subscribeProposalFocus } from "../../collab/proposal-focus";
 
 type Editor = BlockNoteEditor<any, any, any>;
 type Annotation = { key: string; from: number; to: number; number: number } & (
   | { kind: "edit"; hunk: SuggestionHunk; index: number }
   | { kind: "comment"; thread: ThreadSnapshot }
+  | ({ kind: "proposal" } & ProposalItem)
 );
+const KIND_LABEL = { edit: "Edit", comment: "Comment", proposal: "Reviewer revision" } as const;
+
+/** Start of a block's own text, for proposals that have no tracked change to anchor to. */
+function blockTextStart(editor: Editor, blockId: string) {
+  let found: number | null = null;
+  editor.prosemirrorState.doc.descendants((node, pos) => {
+    if (found !== null) return false;
+    if (node.type.name === "blockContainer" && node.attrs.id === blockId) { found = pos + 2; return false; }
+    return true;
+  });
+  return found as number | null;
+}
 type Position = { key: string; top: number; anchor: number; x: number; height: number };
 export type MarginPresentation = { count: number; wide: boolean };
 
@@ -46,34 +65,69 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
   const threadSlot = useRef<HTMLDivElement>(null);
   const [threadHeight, setThreadHeight] = useState(180);
   const revealedSelection = useRef<string | undefined>(undefined);
+  const [selectedProposal, setSelectedProposal] = useState<string | null>(null);
 
   useEffect(() => {
     const threads = peer.ydoc.getMap(COLLAB_THREADS_MAP);
     const settings = peer.ydoc.getMap(REVIEW_MAP);
+    const proposals = peer.ydoc.getMap(REVIEW_PROPOSALS_MAP);
+    const revisions = peer.ydoc.getMap(REVISIONS_MAP);
     const refresh = () => setRevision(n => n + 1);
     threads.observeDeep(refresh);
     settings.observe(refresh);
-    return () => { threads.unobserveDeep(refresh); settings.unobserve(refresh); };
+    proposals.observe(refresh);
+    revisions.observe(refresh);
+    return () => { threads.unobserveDeep(refresh); settings.unobserve(refresh); proposals.unobserve(refresh); revisions.unobserve(refresh); };
   }, [peer]);
+
+  // Review & Revision proposals: one card per proposal, over all of its tracked changes.
+  const proposalItems = useMemo(() => {
+    const threads = readThreads(peer.ydoc.getMap(COLLAB_THREADS_MAP));
+    const entries = readProposalEntries(peer.ydoc.getMap<ProposalEntry>(REVIEW_PROPOSALS_MAP));
+    return { entries, threads, items: entries.filter(entry => OPEN_PROPOSAL_STATES.has(entry.state)).map(entry => {
+      const thread = entry.threadId ? threads.find(item => item.id === entry.threadId) : undefined;
+      const changeSetId = proposalChangeSet(entry, thread);
+      const hunks = changeSetId === undefined ? [] : store.hunks.filter(hunk => String(hunk.id) === String(changeSetId));
+      return { entry, thread, changeSetId, hunks } satisfies ProposalItem;
+    }) };
+  }, [peer, store, version, revision]);
+  const peerIds = useMemo(() => new Set(proposalItems.items.flatMap(item => item.changeSetId === undefined ? [] : [String(item.changeSetId)])),
+    [proposalItems]);
+  useEffect(() => {
+    const same = peerIds.size === store.peer.size && [...peerIds].every(id => store.peer.has(id));
+    if (!same) store.set({ peer: peerIds });
+  }, [peerIds, store]);
+  // Decisions made from the review bar or Activity settle the proposal too.
+  useEffect(() => { syncProposalStates(peer.ydoc, proposalItems.entries, proposalItems.threads); }, [peer, proposalItems]);
 
   const items = useMemo<Annotation[]>(() => {
     const muted = reviewSettingsOf(peer.ydoc.getMap(REVIEW_MAP)).muted;
-    const edits: Annotation[] = store.hunks.map((hunk, index) => ({
-      key: `edit:${hunk.id}:${hunk.from}`, kind: "edit", hunk, index, number: 0,
+    const edits: Annotation[] = store.hunks.flatMap((hunk, index) => peerIds.has(String(hunk.id)) ? [] : [{
+      key: `edit:${hunk.id}:${hunk.from}`, kind: "edit" as const, hunk, index, number: 0,
       from: hunk.insertions[0]?.from ?? hunk.to,
       to: hunk.insertions[0]?.to ?? hunk.to,
-    }));
+    }]);
+    const proposals: Annotation[] = proposalItems.items.flatMap(item => {
+      const first = item.hunks[0];
+      // A proposal decided elsewhere, or not yet arrived, has nothing to point at.
+      if (!first && item.entry.state === "pending") return [];
+      const from = first ? first.insertions[0]?.from ?? first.to : blockTextStart(editor, item.entry.blockId);
+      if (from === null) return [];
+      return [{ ...item, key: `proposal:${item.entry.key}`, kind: "proposal" as const, number: 0,
+        from, to: first ? first.insertions[0]?.to ?? first.to : from }];
+    });
     const notes: Annotation[] = readThreads(peer.ydoc.getMap(COLLAB_THREADS_MAP)).flatMap(thread => {
       const range = commentState.threadPositions.get(thread.id);
       // Whole-document requests and detached comments stay in Activity, without a false anchor.
-      if (!range || thread.meta.scope === "document" || thread.resolved || thread.meta.status === "resolved" ||
+      // A request for another version of a reviewer revision is shown on the proposal's card.
+      if (!range || thread.meta.scope === "document" || thread.meta.reviewProposal || thread.resolved || thread.meta.status === "resolved" ||
           thread.meta.muted || isDisabledReviewType(thread.meta.category, muted) ||
           !thread.comments.some(comment => !comment.deleted)) return [];
       return [{ key: `comment:${thread.id}`, kind: "comment" as const, thread, ...range, number: 0 }];
     });
-    return [...edits, ...notes].sort((a, b) => a.from - b.from || a.key.localeCompare(b.key))
+    return [...edits, ...proposals, ...notes].sort((a, b) => a.from - b.from || a.key.localeCompare(b.key))
       .map((item, index) => ({ ...item, number: index + 1 }));
-  }, [peer, store, version, revision, commentState.threadPositions]);
+  }, [editor, peer, store, version, revision, commentState.threadPositions, proposalItems, peerIds]);
 
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
@@ -135,14 +189,22 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
 
   const active = (item: Annotation) => item.kind === "edit"
     ? store.open && store.active === item.index
-    : commentState.selectedThreadId === item.thread.id;
+    : item.kind === "proposal" ? selectedProposal === item.entry.key
+      : commentState.selectedThreadId === item.thread.id;
   const select = (item: Annotation, scroll = false) => {
     // The card header explicitly asks to reveal the source, not the card.
     if (scroll && wide) revealedSelection.current = item.key;
     if (item.kind === "edit") {
+      setSelectedProposal(null);
       comments.selectThread(undefined);
       store.set({ active: item.index, open: true });
+    } else if (item.kind === "proposal") {
+      comments.selectThread(undefined);
+      const first = item.hunks[0] ? store.hunks.indexOf(item.hunks[0]) : -1;
+      store.set({ active: first >= 0 ? first : null, open: false });
+      setSelectedProposal(item.entry.key);
     } else {
+      setSelectedProposal(null);
       store.set({ active: null, open: false });
       comments.selectThread(item.thread.id, false);
     }
@@ -156,8 +218,21 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
 
   // Prevent simultaneous comment and revision selection when a source highlight is clicked.
   useEffect(() => {
-    if (commentState.selectedThreadId) store.set({ active: null, open: false });
+    if (commentState.selectedThreadId) { store.set({ active: null, open: false }); setSelectedProposal(null); }
   }, [commentState.selectedThreadId]);
+  useEffect(() => { if (store.open) setSelectedProposal(null); }, [store.open]);
+  // "Show in manuscript" from the Review & Revision workspace selects the proposal's card.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  useEffect(() => {
+    const reveal = () => {
+      const target = takeProposalFocus(peer.docKey, key => itemsRef.current.some(item => item.kind === "proposal" && item.entry.key === key));
+      const item = target && itemsRef.current.find(item => item.kind === "proposal" && item.entry.key === target);
+      if (item) requestAnimationFrame(() => select(item, true));
+    };
+    reveal();
+    return subscribeProposalFocus(reveal);
+  }, [peer, items.length]);
   useEffect(() => {
     if (store.open && comments.store.state.selectedThreadId) comments.selectThread(undefined);
   }, [store.open, store.active, comments]);
@@ -167,12 +242,14 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
       comments.selectThread(undefined);
       store.set({ open: false });
       setExpanded(null);
+      setSelectedProposal(null);
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [comments, store]);
 
   const selectedKey = commentState.selectedThreadId ? `comment:${commentState.selectedThreadId}`
+    : selectedProposal ? `proposal:${selectedProposal}`
     : store.open && store.active !== null ? items.find(item => item.kind === "edit" && item.index === store.active)?.key : undefined;
   useEffect(() => {
     if (!visible || !wide || !selectedKey) { revealedSelection.current = undefined; return; }
@@ -222,7 +299,7 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
         if (!members.length) return null;
         const selected = members.findIndex(active);
         const item = members[selected >= 0 ? selected : 0];
-        const label = members.map(item => `${item.kind === "edit" ? "Edit" : "Comment"} ${item.number}`).join(", ");
+        const label = members.map(item => `${KIND_LABEL[item.kind]} ${item.number}`).join(", ");
         return <button key={group[0].key} type="button" className="sp-margin-anchor" data-kind={item.kind} data-active={selected >= 0}
           style={{ left: group[0].x, top: group[0].anchor - 10 }} aria-label={`${label}: select margin card`}
           title={members.length > 1 ? `${label} — click to cycle` : label} aria-pressed={selected >= 0}
@@ -232,7 +309,7 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
       })}
       {visible && items.map(item => {
         const position = positions.find(position => position.key === item.key);
-        const label = `${item.kind === "edit" ? "Edit" : "Comment"} ${item.number}`;
+        const label = `${KIND_LABEL[item.kind]} ${item.number}`;
         const selected = active(item);
         const first = item.kind === "comment" ? item.thread.comments.find(comment => !comment.deleted) : null;
         return <React.Fragment key={item.key}>
@@ -240,11 +317,14 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
             <section ref={node => { if (node) cards.current.set(item.key, node); else cards.current.delete(item.key); }}
               className="sp-margin-card" data-kind={item.kind} data-active={selected}
               style={{ top: position?.top ?? 0, visibility: position ? "visible" : "hidden" }} aria-label={label}>
+              {item.kind === "proposal" ? <ProposalCard editor={editor} item={item} number={item.number} selected={selected}
+                onSelect={scroll => select(item, scroll)} /> : <>
               <div className="sp-margin-card-header">
                 <button type="button" className="sp-margin-title" onClick={() => select(item, true)}
                   aria-label={`${label}: show in text`} aria-pressed={selected}>
                   <span className="sp-margin-number">{item.number}</span>
-                  <span>{item.kind === "edit" ? "Revision" : "Review"}</span>
+                  {/* The AI's own review notes are not answers to the journal's reviewers. */}
+                  <span>{item.kind === "edit" ? "Revision" : first && isAIUser(first.userId) ? "AI review" : "Comment"}</span>
                   {item.kind === "edit" && <span className="sp-margin-detail">· {item.hunk.deleted ? "Original" : "Addition"}</span>}
                 </button>
                 {item.kind === "edit" ? <>
@@ -277,6 +357,7 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
                   <MessageSquare size={12} /> {item.thread.comments.filter(comment => !comment.deleted).length > 1 ? "Open thread" : "Reply"}
                   {item.thread.meta.status === "in-progress" && <span>· AI working</span>}
                 </button>
+              </>}
               </>}
             </section>
           ) : (
