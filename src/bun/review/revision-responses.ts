@@ -22,6 +22,30 @@ export async function readEditableResponses(root: string, result: RoundResult): 
   });
 }
 
+/**
+ * Replaces several responses at once (rewritten from the author's decisions in
+ * the manuscript), serialized with single-response saves.
+ */
+export async function updateRevisionResponses(root: string, session: ReviewSession, result: RoundResult, mutate: (responses: ResponseItem[]) => void): Promise<ResponseItem[]> {
+  const previous = pending.get(root) ?? Promise.resolve();
+  const operation = previous.catch(() => {}).then(async () => {
+    const responses = await readEditableResponses(root, result);
+    if (await exists(root, 'response-to-reviewers.md')) {
+      const markdown = await readFile(await scopedPath(root, 'response-to-reviewers.md'), 'utf8');
+      if (markdown !== responseLetterMarkdown(session, responses)) {
+        await atomicWrite(root, `.scholarpen/response-backups/${hash(markdown)}.md`, markdown);
+      }
+    }
+    mutate(responses);
+    await writeJSON(root, 'response.json', { schemaVersion: 1, authorEdited: true, updatedAt: new Date().toISOString(), responses });
+    await atomicWrite(root, 'response-to-reviewers.md', responseLetterMarkdown(session, responses));
+    return responses;
+  });
+  pending.set(root, operation);
+  try { return await operation; }
+  finally { if (pending.get(root) === operation) pending.delete(root); }
+}
+
 export async function saveRevisionResponse(root: string, session: ReviewSession, result: RoundResult, input: RevisionResponseSave): Promise<string> {
   const previous = pending.get(root) ?? Promise.resolve();
   const operation = previous.catch(() => {}).then(async () => {

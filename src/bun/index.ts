@@ -4,6 +4,8 @@ import { readDoc } from "./collab/agent/doc-model";
 import { initializeExtensions, shutdownExtensions } from "./extensions/runtime";
 import { createLegacyExtensionHandlers } from "./extensions/catalog.generated";
 import { exportReviewManuscripts } from "./review/manuscript-export";
+import { placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
+import { linkReviewRegistry } from "./review/decision-sources";
 import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, exportReview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
 import { claudeClient } from "./claude/client";
 import * as Y from "yjs";
@@ -130,6 +132,9 @@ const collabReviewer = new Reviewer(collabAgent, {
 
 // Version history: every change to an open document, grouped into checkpoints.
 let sendCollabHistoryChanged: ((payload: { docKey: string }) => void) | null = null;
+linkReviewRegistry(collabRegistry);
+// Settling proposals in the manuscript rewrites the matching responses to the reviewers.
+new ResponseSyncScheduler(collabRegistry);
 const collabHistory = new CollabHistory(collabRegistry, createFileHistoryStorage(fileSystem), {
   aiLabel: (docKey) => collabAgent.jobs(docKey).find((job) => job.state === "working")?.label,
   aiBusy: (docKey) => collabAgent.jobs(docKey).some((job) => job.state === "working"),
@@ -286,7 +291,18 @@ async function main() {
         },
         reviewFollowup: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).followup(sessionId),
         reviewStart: async ({ projectPath, sessionId }) => (await reviewEngine(projectPath)).start(sessionId),
-        reviewGet: reviewView,
+        reviewGet: async (address) => {
+          const view = await reviewView(address);
+          if (view.session.status === "completed") {
+            const sync = await responseSyncStatus((await reviewEngine(address.projectPath)).store.project, view.session)
+              .catch((error) => { console.error("[review] Could not read proposal decisions", error); return undefined; });
+            if (sync) view.responseSync = sync;
+          }
+          return view;
+        },
+        reviewSyncResponses: ({ projectPath, sessionId, force }) => syncReviewResponses({ projectPath, sessionId }, { force }),
+        reviewStageProposals: (address) => stageManuscriptProposals(collabRegistry, address),
+        reviewPlaceProposals: ({ projectPath, filename }) => placeManuscriptProposals(collabRegistry, collabDocKey(projectPath, filename), projectPath, filename),
         reviewStop: async ({ projectPath, sessionId, cancel }) => (await reviewEngine(projectPath)).stop(sessionId, cancel),
         reviewDecideFigure: decideFigure,
         reviewImportFigure: async (address) => {

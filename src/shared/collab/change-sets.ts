@@ -13,6 +13,8 @@ export interface ChangeSetInfo {
   threadId?: string;
   /** Comments addressed together; close only after the entire revision is accepted. */
   addressedThreadIds?: string[];
+  /** Key of the Review & Revision proposal this change set places (see review-proposals.ts). */
+  reviewProposal?: string;
   /** A partial rejection means the coordinated solution was not accepted in full. */
   rejected?: boolean;
   createdAt: number;

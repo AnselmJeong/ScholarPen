@@ -588,11 +588,14 @@ body {
   --review-edit: 151 48% 30%;
   --review-comment: 38 82% 31%;
   --review-deletion: 350 44% 39%;
+  /* Review & Revision: revisions answering the journal's reviewers. */
+  --review-peer: 276 50% 42%;
 }
 .dark {
   --review-edit: 151 42% 68%;
   --review-comment: 40 78% 69%;
   --review-deletion: 350 65% 78%;
+  --review-peer: 276 70% 78%;
 }
 .sp-review-canvas { position: relative; max-width: 800px; margin-inline: auto; }
 .scholar-editor-scroll[data-margin-layout="wide"] { padding-inline: 20px !important; }
@@ -641,8 +644,10 @@ body {
 .sp-margin-action[aria-label^="Reject"] { color: hsl(var(--foreground) / 0.7); }
 .sp-margin-excerpt { max-height: 176px; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
 .sp-margin-excerpt del, .sp-margin-excerpt ins { padding: 1px 3px; border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-.sp-margin-excerpt del { background: hsl(var(--review-deletion) / 0.1); text-decoration-color: hsl(var(--review-deletion)); }
-.sp-margin-excerpt ins { background: hsl(var(--review-edit) / 0.1); text-decoration: none; }
+/* Explicit ink: BlockNote's own ins/del colors are unreadable on the cards in dark mode. */
+.sp-margin-excerpt del { color: hsl(var(--foreground) / 0.62); background: hsl(var(--review-deletion) / 0.1); text-decoration-color: hsl(var(--review-deletion)); }
+.sp-margin-excerpt ins { color: hsl(var(--foreground)); background: hsl(var(--review-edit) / 0.1); text-decoration: none; }
+.sp-margin-card[data-kind="proposal"] .sp-margin-excerpt ins { background: hsl(var(--review-peer) / 0.12); }
 .sp-margin-detail { color: hsl(var(--foreground) / 0.7); font-size: 11px; }
 .sp-margin-card > .sp-margin-detail { margin-top: 6px; }
 .sp-margin-comment { display: block; text-align: left; width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 156px; overflow-y: auto; }
@@ -659,7 +664,7 @@ body {
 }
 .sp-margin-pin[data-kind="comment"] { --annotation-ink: var(--review-comment); }
 .sp-margin-pin:hover, .sp-margin-pin[data-active="true"] { background: hsl(var(--annotation-ink)); color: hsl(var(--card)); }
-.sp-margin-tail { position: absolute; right: 0; width: 1px; height: 32px; }
+.sp-margin-tail { position: absolute; right: 0; width: 1px; height: 120px; } /* clears the review bar */
 .sp-margin-toggle { margin-left: auto; display: flex; align-items: center; gap: 5px; flex-shrink: 0; border-radius: 5px; padding: 4px 6px; }
 .sp-margin-toggle[aria-pressed="true"] { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.07); }
 .sp-margin-toggle:hover { background: hsl(var(--primary) / 0.12); }
@@ -702,3 +707,51 @@ body {
 .sp-persistent-thread .sp-margin-thread { max-height: min(360px, 45vh); }
 .sp-persistent-thread.bn-container { background: transparent !important; }
 .sp-persistent-thread.bn-container[data-floating="true"] { background: hsl(var(--popover)) !important; }
+
+/* Review & Revision proposals: violet, apart from AI review notes (amber) and AI edits (green). */
+.sp-margin-leaders path[data-kind="proposal"] { stroke: hsl(var(--review-peer) / 0.55); }
+.sp-margin-card[data-kind="proposal"] {
+  --annotation-ink: var(--review-peer);
+  background: color-mix(in srgb, hsl(var(--review-peer)) 5%, hsl(var(--card)));
+  border-color: hsl(var(--review-peer) / 0.28);
+  border-left: 3px solid hsl(var(--review-peer) / 0.75);
+}
+.sp-margin-card[data-kind="proposal"][data-active="true"] { border-color: hsl(var(--review-peer) / 0.75); }
+.sp-margin-pin[data-kind="proposal"], .sp-margin-anchor[data-kind="proposal"] { --annotation-ink: var(--review-peer); }
+.sp-margin-card .sp-margin-title > .sp-margin-detail { overflow: hidden; text-overflow: ellipsis; }
+.sp-proposal-status { color: hsl(var(--review-peer)); font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+.sp-proposal-status[data-phase="unplaced"] { color: hsl(var(--review-comment)); }
+.sp-proposal-caption { display: block; color: hsl(var(--foreground) / 0.6); font-size: 10.5px; font-weight: 600; margin-bottom: 2px; }
+.sp-proposal-request, .sp-proposal-rationale {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+  width: 100%; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 6px;
+}
+.sp-proposal-request { padding: 5px 7px; border-radius: 7px; background: hsl(var(--review-peer) / 0.07); }
+.sp-proposal-request[data-open="true"], .sp-proposal-rationale[data-open="true"] { display: block; max-height: 220px; overflow-y: auto; }
+.sp-proposal-rationale { -webkit-line-clamp: 3; color: hsl(var(--foreground) / 0.8); font-size: 11px; }
+.sp-proposal-diff { margin-bottom: 6px; }
+.sp-proposal-warning { color: hsl(var(--review-comment)); font-size: 11px; margin-bottom: 6px; overflow-wrap: anywhere; }
+.sp-proposal-instruction { margin-top: 4px; overflow-wrap: anywhere; }
+.sp-proposal-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sp-proposal-button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 7px;
+  border: 1px solid hsl(var(--review-peer) / 0.35); color: hsl(var(--review-peer)); font-size: 11px;
+}
+.sp-proposal-button:hover { background: hsl(var(--review-peer) / 0.08); }
+.sp-proposal-button[data-primary] { background: hsl(var(--review-peer)); border-color: transparent; color: hsl(var(--card)); }
+.sp-proposal-button[data-primary]:hover { background: hsl(var(--review-peer) / 0.88); }
+.sp-proposal-ask { margin-top: 8px; }
+.sp-proposal-ask textarea {
+  width: 100%; resize: vertical; padding: 6px 7px; border-radius: 7px; font-size: 12px; line-height: 1.5;
+  border: 1px solid hsl(var(--review-peer) / 0.35); background: hsl(var(--background)); color: hsl(var(--foreground));
+}
+.sp-proposal-ask textarea:focus { outline: 2px solid hsl(var(--review-peer) / 0.45); outline-offset: 1px; }
+/* The proposal's changes in the manuscript text. */
+.bn-editor .sp-hunk-peer ins[data-id], .bn-editor ins[data-id] .sp-hunk-peer, .bn-editor ins[data-id]:has(.sp-hunk-peer) {
+  text-decoration-color: hsl(var(--review-peer) / 0.85); text-decoration-style: solid;
+}
+.bn-editor .sp-hunk-peer { background: hsl(var(--review-peer) / 0.07); border-radius: 2px; }
+.bn-editor .sp-hunk-peer.sp-hunk-active { background: hsl(var(--review-peer) / 0.16); }
+.sp-del-marker.sp-hunk-peer { border-color: hsl(var(--review-peer)); }
+.bn-editor .sp-sugg-block-peer > .bn-block > .bn-block-content::after,
+.bn-editor .sp-sugg-block-peer > .bn-block-content::after { background: hsl(var(--review-peer) / 0.7); width: 3px; }

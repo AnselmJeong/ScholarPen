@@ -17,6 +17,7 @@ import { currentResponses } from './current-responses';
 import { responseLetterMarkdown, responseLetterHTML } from '../../shared/review-session/response-letter';
 import { context, figureImage } from "./context";
 import { readReviewProgress } from "./progress";
+import { readStagedProposals } from "./proposals";
 const engines = new Map<string, ReviewEngine>();
 export async function reviewEngine(projectPath: string) {
   const project = await realpath(await fileSystem.resolveProjectPath(projectPath));
@@ -39,6 +40,8 @@ export async function reviewView(a: ReviewAddress): Promise<ReviewView> {
   const result = session.rounds.find(r => r.round === session.selectedFinalRound) ?? session.rounds.at(-1);
   const root = await engine.store.root(a.sessionId);
   const view: ReviewView = { session, root, responsesMarkdown: '', changes: result?.changes ?? [], progress: await readReviewProgress(root, session, engine.liveOutput(a.sessionId)) };
+  const staged = await readStagedProposals(engine.store.project, a.sessionId).catch(() => null);
+  if (staged) view.staged = staged;
   if (result) {
     try {
       view.responseDocument = await currentResponses(engine.store.project, session, result);

@@ -22,13 +22,15 @@ export interface ReviewStore {
   active: number | null;
   /** True while the popover for the active change is open. */
   open: boolean;
+  /** Suggestion ids of Review & Revision proposals, drawn in their own color. */
+  peer: ReadonlySet<string>;
   /** Reported by the plugin: pending changes and how many are still arriving. */
   hunks: SuggestionHunk[];
   arriving: number;
   /** Bumped on every change, for useSyncExternalStore. */
   version: number;
   /** Changes what the author is looking at; the plugin redraws. */
-  set(patch: Partial<Pick<ReviewStore, "mode" | "active" | "open">>): void;
+  set(patch: Partial<Pick<ReviewStore, "mode" | "active" | "open" | "peer">>): void;
   /** The plugin reports what it sees; only the UI listens. */
   report(patch: Partial<Pick<ReviewStore, "hunks" | "arriving">>): void;
   subscribe(listener: () => void): () => void;
@@ -48,6 +50,7 @@ export function createReviewStore(): ReviewStore {
     mode: readMode(),
     active: null,
     open: false,
+    peer: new Set<string>(),
     hunks: [],
     arriving: 0,
     version: 0,
@@ -106,11 +109,11 @@ const SETTLE_MS = 2_000;
 
 function blockPositions(doc: PMNode, hunks: SuggestionHunk[]) {
   const wanted = new Set(hunks.map((hunk) => hunk.blockId).filter(Boolean));
-  const found: Array<{ pos: number; size: number }> = [];
+  const found: Array<{ pos: number; size: number; id: string }> = [];
   if (!wanted.size) return found;
   doc.descendants((node, pos) => {
     if (node.type.name !== "blockContainer") return true;
-    if (wanted.has(node.attrs.id)) found.push({ pos, size: node.nodeSize });
+    if (wanted.has(node.attrs.id)) found.push({ pos, size: node.nodeSize, id: node.attrs.id });
     return true;
   });
   return found;
@@ -136,27 +139,30 @@ function wordRanges(doc: PMNode, from: number, to: number) {
 function buildDecorations(doc: PMNode, state: Omit<ReviewState, "decorations">, store: ReviewStore) {
   const decorations: Decoration[] = [];
   const animating = new Set(state.arrivals.map((arrival) => arrival.from));
-  for (const { pos, size } of blockPositions(doc, state.hunks)) {
+  const peerBlocks = new Set(state.hunks.filter((hunk) => store.peer.has(String(hunk.id))).map((hunk) => hunk.blockId));
+  for (const { pos, size, id } of blockPositions(doc, state.hunks)) {
     const live = state.arrivals.some((arrival) => arrival.from >= pos && arrival.to <= pos + size);
-    decorations.push(Decoration.node(pos, pos + size, { class: live ? "sp-sugg-block sp-sugg-block-live" : "sp-sugg-block" }));
+    const peer = peerBlocks.has(id) ? " sp-sugg-block-peer" : "";
+    decorations.push(Decoration.node(pos, pos + size, { class: (live ? "sp-sugg-block sp-sugg-block-live" : "sp-sugg-block") + peer }));
   }
   state.hunks.forEach((hunk, index) => {
     const active = store.active === index;
+    const className = `sp-hunk${active ? " sp-hunk-active" : ""}${store.peer.has(String(hunk.id)) ? " sp-hunk-peer" : ""}`;
     for (const range of hunk.deletions) {
-      decorations.push(Decoration.inline(range.from, range.to, { class: active ? "sp-hunk sp-hunk-active" : "sp-hunk", "data-hunk": String(index) }));
+      decorations.push(Decoration.inline(range.from, range.to, { class: className, "data-hunk": String(index) }));
     }
     for (const range of hunk.insertions) {
-      decorations.push(Decoration.inline(range.from, range.to, { class: active ? "sp-hunk sp-hunk-active" : "sp-hunk", "data-hunk": String(index) }));
+      decorations.push(Decoration.inline(range.from, range.to, { class: className, "data-hunk": String(index) }));
     }
     // A change that only removes text leaves a small mark where the text was.
     if (!hunk.insertions.length && !animating.has(hunk.from)) {
       decorations.push(Decoration.widget(hunk.to, () => {
         const marker = document.createElement("span");
-        marker.className = active ? "sp-del-marker sp-hunk-active" : "sp-del-marker";
+        marker.className = `sp-del-marker${active ? " sp-hunk-active" : ""}${store.peer.has(String(hunk.id)) ? " sp-hunk-peer" : ""}`;
         marker.dataset.hunk = String(index);
         marker.title = "Removed text — click to see it";
         return marker;
-      }, { side: -1, key: `del-marker-${index}-${active ? 1 : 0}`, ignoreSelection: true }));
+      }, { side: -1, key: `del-marker-${index}-${active ? 1 : 0}-${store.peer.has(String(hunk.id)) ? 1 : 0}`, ignoreSelection: true }));
     }
   });
   for (const arrival of state.arrivals) {

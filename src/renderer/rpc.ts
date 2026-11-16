@@ -3,7 +3,8 @@ import { bundledManifests, legacyExtensionCommands } from "../shared/extensions/
 import type { ExtensionInfo, ExtensionRequest } from "../shared/extensions/contracts";
 import type { AIDetectorStatus } from "../shared/ai-detector-setup";
 import type { RevisionChapterContext, RevisionResponseSave } from "../shared/review-session/chapter-context";
-import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport } from "../shared/review-session/types";
+import type { ReviewInput, ReviewSession, ReviewAddress, ReviewView, ReviewManuscriptExport, ResponseSyncStatus } from "../shared/review-session/types";
+import type { StagedProposals } from "../shared/review-session/proposals";
 import type { ClaudeStatus } from "../shared/claude";
 import type { ReviewCategory, ProjectReviewSettings } from "../shared/collab/review";
 import type { CodexStatus } from "../shared/codex";
@@ -62,7 +63,7 @@ const strictRpcMethods = new Set([
   ...Object.keys(legacyExtensionCommands),
   "getAIDetectorStatus", "installAIDetector", "cancelAIDetectorInstall",
   "reviewConfirmSnapshot",
-  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
+  "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewExportManuscripts", "reviewFollowup", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStageProposals", "reviewPlaceProposals", "reviewSyncResponses", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
   "getAuthorLearning", "dismissAuthorPreference",
   "getClaudeStatus", "loginClaude", "cancelClaudeLogin", "logoutClaude",
@@ -478,6 +479,9 @@ export const rpc = {
   reviewFollowup: (address: ReviewAddress) => call<ReviewSession>("reviewFollowup", address),
   reviewStart: (address: ReviewAddress) => call<ReviewSession>("reviewStart", address),
   reviewGet: (address: ReviewAddress) => call<ReviewView>("reviewGet", address),
+  reviewStageProposals: (address: ReviewAddress) => call<StagedProposals>("reviewStageProposals", address),
+  reviewSyncResponses: (address: ReviewAddress, force = false) => call<ResponseSyncStatus | undefined>("reviewSyncResponses", { ...address, force }),
+  reviewPlaceProposals: (projectPath: string, filename: string) => call<{ placed: number; unplaced: number; waiting: number }>("reviewPlaceProposals", { projectPath, filename }),
   reviewStop: (address: ReviewAddress, cancel = false) => call<ReviewSession>("reviewStop", { ...address, cancel }),
   reviewDecideFigure: (address: ReviewAddress, approvalId: string, decision: "approved" | "kept" | "deferred") => call<ReviewSession>("reviewDecideFigure", { ...address, approvalId, decision }),
   reviewImportFigure: (address: ReviewAddress, approvalId: string) => call<ReviewSession | null>("reviewImportFigure", { ...address, approvalId }),

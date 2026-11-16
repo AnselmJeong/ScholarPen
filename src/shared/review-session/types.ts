@@ -48,7 +48,26 @@ export interface ReviewProgress {
   recent: ReviewProgressEvent[];
 }
 export interface ReviewResponseDocument { source: 'review' | 'revision'; path?: string; responses: ResponseItem[]; editedCommentIds: string[] }
-export interface ReviewView { session: ReviewSession; root: string; responsesMarkdown: string; responseDocument?: ReviewResponseDocument; responseError?: string; changes: AppliedChange[]; progress?: ReviewProgress }
+/** How far the response letter follows the author's decisions on the proposals shown in the manuscript. */
+export interface ResponseSyncComment {
+  commentId: string;
+  /** Proposals answering the comment, and how many still wait for the author. */
+  proposals: number; waiting: number;
+  /** Every linked proposal is decided (for a general comment: every proposal). */
+  ready: boolean;
+  /** The saved response was written from the current decisions. */
+  current: boolean;
+  syncedAt?: string; method?: "model" | "template";
+}
+export interface ResponseSyncStatus {
+  comments: ResponseSyncComment[];
+  proposals: Array<{ key: string; id: string; document: string; blockId: string; state: string; commentIds: string[] }>;
+  lastAt?: string; lastError?: string;
+}
+export interface ReviewView { session: ReviewSession; root: string; responsesMarkdown: string; responseDocument?: ReviewResponseDocument; responseError?: string; changes: AppliedChange[]; progress?: ReviewProgress;
+  /** Text revisions staged for the manuscript, when the author chose to show them there. */
+  staged?: import("./proposals").StagedProposals;
+  responseSync?: ResponseSyncStatus }
 export interface ReviewAddress { projectPath: string; sessionId: string }
 export const DEFAULT_REVIEWERS: ReviewerProfile[] = [
   { id: "R1", name: "Reviewer 1", focus: "Field relevance and contribution", original: "" },

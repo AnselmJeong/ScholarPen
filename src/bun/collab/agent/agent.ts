@@ -483,7 +483,9 @@ export class CollabAgent {
     if (thread.meta.scope === "document" || thread.meta.documentAction === "humanize") return this.runDocumentRequest(job, attachment, thread, reply, signal);
 
     const doc = readDoc(session);
-    const range = threadRange(doc, threadId);
+    // A request for another version of a Review & Revision proposal names its paragraph instead of highlighting it.
+    const proposalBlock = thread.meta.reviewProposal && thread.meta.blockId ? findBlock(doc, thread.meta.blockId) : null;
+    const range = threadRange(doc, threadId) ?? (proposalBlock ? blockContent(proposalBlock) : null);
     if (!range) {
       reply({ assignee: "me", status: "open" },
         "I can't find the commented passage anymore. Re-select the text and comment again.");
@@ -508,7 +510,7 @@ export class CollabAgent {
       : undefined;
     const result = await this.editBlocks(job, attachment, thread, blocks.map((block) => block.id), {
       quoted: readableText(doc, range.from, range.to),
-      allowWiderScope: true,
+      allowWiderScope: !thread.meta.reviewProposal,
       ...(humanize !== undefined ? { guidance: humanizeGuidance(humanize), gateChangeRate: true } : {}),
     }, signal);
     if (result === "document") {

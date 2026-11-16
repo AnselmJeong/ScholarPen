@@ -80,6 +80,7 @@ import { AIEditHighlightExtension, AIZoneBadgeExtension, AI_EDITS_MAP } from "..
 import { createReviewStore, SuggestionReviewExtension } from "../../collab/suggestion-review";
 import { SuggestionReviewBar } from "./SuggestionReviewBar";
 import { ReviewMargin, type MarginPresentation } from "./ReviewMargin";
+import { isBrowserDemo, placeDemoProposal } from "../../collab/demo-proposals";
 import { ZONES_MAP } from "../../../shared/collab/zones";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
 
@@ -347,6 +348,14 @@ function CollabEditorArea({
     onEditorReady(editor);
     return () => onEditorReady(null);
   }, [editor, documentReady]);
+
+  // Review & Revision proposals staged for this document appear once it has loaded.
+  useEffect(() => {
+    if (!documentReady) return;
+    if (isBrowserDemo()) { placeDemoProposal(editor, peer.ydoc); return; }
+    rpc.reviewPlaceProposals(project.path, documentFilename || "manuscript.scholarpen.json")
+      .catch((error) => console.error("[review] Could not show revision proposals", error));
+  }, [documentReady, project.path, documentFilename, editor, peer]);
 
   // Hot-swap the AIExtension transport whenever Ollama status changes.
   useEffect(() => {

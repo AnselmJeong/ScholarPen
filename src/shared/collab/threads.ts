@@ -56,6 +56,8 @@ export interface ThreadMeta {
   changeSet?: number;
   /** The AI cannot continue without the author's decision or evidence; shown in the decision queue. */
   decision?: { question: string; askedAt: number };
+  /** The thread asks for another version of this Review & Revision proposal (its key); anchored by blockId, not a comment mark. */
+  reviewProposal?: string;
   /** Edit level captured when a coordinated revision was requested. */
   editLevel?: EditLevel;
 }
