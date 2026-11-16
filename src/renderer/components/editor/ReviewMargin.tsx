@@ -220,7 +220,14 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
   useEffect(() => {
     if (commentState.selectedThreadId) { store.set({ active: null, open: false }); setSelectedProposal(null); }
   }, [commentState.selectedThreadId]);
-  useEffect(() => { if (store.open) setSelectedProposal(null); }, [store.open]);
+  // Clicking a reviewer revision's redline in the text, or stepping onto it, selects its card.
+  useEffect(() => {
+    if (!store.open || store.active === null) return;
+    const hunk = store.hunks[store.active];
+    const item = hunk && items.find(entry => entry.kind === "proposal" && entry.hunks.includes(hunk));
+    if (item) select(item);
+    else setSelectedProposal(null);
+  }, [store.open, store.active]);
   // "Show in manuscript" from the Review & Revision workspace selects the proposal's card.
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -364,6 +371,13 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
             <button type="button" className="sp-margin-pin" data-kind={item.kind} data-active={selected}
               style={{ top: position?.top ?? 0, visibility: position ? "visible" : "hidden" }}
               aria-label={`${label}: show details`} aria-pressed={selected} onClick={() => select(item, true)}>{item.number}</button>
+          )}
+          {/* A narrow margin has only pins; the selected reviewer revision opens beside its pin. */}
+          {!wide && item.kind === "proposal" && selected && position && (
+            <section className="sp-margin-card sp-margin-card-floating" data-kind="proposal" data-active="true"
+              style={{ top: position.top }} aria-label={label}>
+              <ProposalCard editor={editor} item={item} number={item.number} selected onSelect={scroll => select(item, scroll)} />
+            </section>
           )}
         </React.Fragment>;
       })}
