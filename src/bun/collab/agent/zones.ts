@@ -11,6 +11,7 @@ import { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN, type Attachment, type CollabAg
 import type { EditMode } from "./block-edit";
 import { anchorThread, readDoc, readableText, removePlaceholders, sectionOf, topLevel, writeBlock, writeTopLevel } from "./doc-model";
 import { AI_PLACEHOLDER_TYPE } from "../../../shared/collab/ai-placeholder";
+import { withAIAuthored } from "../../../shared/collab/ai-authorship";
 import { clip } from "./prompts";
 
 /** Maps a block's zone to how AI edits may land there. */
@@ -27,13 +28,13 @@ export function zoneEditMode(session: CollabSession, blockId: string): EditMode 
 
 const CITATION = /\[(@[^\]]+)\]/g;
 
-/** One drafted paragraph as ProseMirror inline content, with [@key] turned into citation nodes. */
+/** One drafted paragraph as ProseMirror inline content, with [@key] turned into citation nodes and its text marked as AI-written. */
 export function paragraphContent(schema: Schema, text: string): PMNode[] {
   const nodes: PMNode[] = [];
   let cursor = 0;
   for (const match of text.matchAll(CITATION)) {
     const before = text.slice(cursor, match.index);
-    if (before) nodes.push(schema.text(before));
+    if (before) nodes.push(schema.text(before, withAIAuthored(schema)));
     for (const part of match[1].split(";")) {
       const [key, ...locator] = part.trim().replace(/^@/, "").split(",");
       if (!key.trim()) continue;
@@ -42,7 +43,7 @@ export function paragraphContent(schema: Schema, text: string): PMNode[] {
     cursor = (match.index ?? 0) + match[0].length;
   }
   const rest = text.slice(cursor);
-  if (rest) nodes.push(schema.text(rest));
+  if (rest) nodes.push(schema.text(rest, withAIAuthored(schema)));
   return nodes;
 }
 

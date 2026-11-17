@@ -214,3 +214,17 @@ test("a draft that stops part-way keeps what it wrote and clears its plan", asyn
   expect(blocks.some((block) => block.type === "aiPlaceholder")).toBe(false);
   expect(blocks.filter((block) => block.content?.[0]?.text === "The first paragraph.")).toHaveLength(1);
 });
+
+test("the AI's words carry the authorship mark, which never splits the text it edits next", async () => {
+  const { captureBlock } = await import("./block-edit");
+  const session = await setup(replace("The effect was large.", "The effect was moderate (d = 0.5)."));
+  session.ydoc.getMap(ZONES_MAP).set("results", { trust: "edit" });
+  await answered(session, ask(session, "r1", "@AI be precise"));
+  const runs: string[] = [];
+  blockContent(findBlock(readDoc(session), "r1")!).node.forEach((node) => {
+    if (node.isText) runs.push(node.marks.some((mark) => mark.type.name === "aiAuthored") ? `[${node.text}]` : node.text!);
+  });
+  // Only the changed words are the AI's.
+  expect(runs.join("")).toBe("The effect was [moderate (d = 0.5)].");
+  expect(captureBlock(findBlock(readDoc(session), "r1")!).texts).toEqual(["The effect was moderate (d = 0.5)."]);
+});

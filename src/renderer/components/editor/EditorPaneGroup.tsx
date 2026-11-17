@@ -16,6 +16,8 @@ import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import { PaneToggle } from "./PaneToggle";
 import { setOutlineVisible, useOutlineVisibility } from "./outline-visibility";
+import { Sparkles } from "lucide-react";
+import { setAuthorshipVisible, useAuthorshipVisibility } from "./authorship-visibility";
 import type { FileNode, ProjectInfo, OllamaStatus } from "@shared/rpc-types";
 import type { BlockNoteEditor } from "@blocknote/core";
 import type { DeepenAnalysisRequest } from "../../ai/deepen-analysis";
@@ -117,6 +119,7 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
     const [findRequests, setFindRequests] = useState<Record<string, DocumentFindRequest>>({});
     const [splitRatio, setSplitRatio] = useState(50);
     const outlineVisible = useOutlineVisibility();
+    const authorshipVisible = useAuthorshipVisibility();
     const comparing = Boolean(originalPane);
     useEffect(() => { if (comparing) setOutlineVisible(false); }, [comparing]);
 
@@ -566,10 +569,16 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
               <PaneToggle side="left" open={filesOpen} label={filesOpen ? "Hide files" : "Show files"}
                 controls="files-panel" onToggle={onToggleFiles} />
             )}
-            trailingControls={activeTab?.file.kind === "document" && (
+            trailingControls={activeTab?.file.kind === "document" && (<>
+              <button type="button" className="editor-pane-toggle" aria-pressed={authorshipVisible}
+                aria-label={authorshipVisible ? "Hide AI-written text" : "Show AI-written text"}
+                title={authorshipVisible ? "AI가 쓴 부분 표시 끄기" : "AI가 쓴 부분 표시 (수락한 AI 문장 포함)"}
+                onClick={() => setAuthorshipVisible(!authorshipVisible)}>
+                <Sparkles size={15} strokeWidth={1.7} aria-hidden="true" />
+              </button>
               <PaneToggle side="right" open={outlineVisible} label={outlineVisible ? "Hide outline" : "Show outline"}
                 controls={outlineIdFor(activeTab.id)} onToggle={() => setOutlineVisible(!outlineVisible)} />
-            )}
+            </>)}
           />
 
           {comparing && isFocused && <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">

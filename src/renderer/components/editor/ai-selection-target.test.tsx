@@ -1,4 +1,5 @@
 import { afterAll, afterEach, expect, mock, test } from "bun:test";
+import { withoutAuthorship } from "../../test-support/authorship";
 import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -134,7 +135,7 @@ for (const action of ["Improve", "Deepen"]) {
   for (const decision of ["Accept", "Reject"]) {
     test(`${action} shows collaborative changes across paragraphs; ${decision} preserves formatting and citations`, async () => {
       await mount();
-      const original = JSON.stringify(acceptedDocument(editor));
+      const original = JSON.stringify(withoutAuthorship(acceptedDocument(editor)));
       await clickButton(action);
       if (action === "Improve") await finishImprove();
       else { await render(false); await act(async () => { complete(); }); }
@@ -143,14 +144,14 @@ for (const action of ["Improve", "Deepen"]) {
       expect(listChangeSets(view.state.doc)[0].paragraphs).toHaveLength(2);
       expect([...view.dom.querySelectorAll("ins")].map(node => node.textContent).join(" ")).toContain("reports an association");
       expect([...view.dom.querySelectorAll("del")].map(node => node.textContent).join(" ")).toContain("proves causation");
-      expect(JSON.stringify(acceptedDocument(editor))).toBe(original);
+      expect(JSON.stringify(withoutAuthorship(acceptedDocument(editor)))).toBe(original);
       expect(container.textContent).toContain("1 AI change to review");
       await clickButton(decision);
       expect(listChangeSets(view.state.doc)).toHaveLength(0);
       expect(view.dom.querySelector("ins, del")).toBeNull();
-      if (decision === "Reject") expect(JSON.stringify(acceptedDocument(editor))).toBe(original);
+      if (decision === "Reject") expect(JSON.stringify(withoutAuthorship(acceptedDocument(editor)))).toBe(original);
       else {
-        expect(JSON.stringify(acceptedDocument(editor))).toBe(original.replace("proves causation", "reports an association").replace("typo", "correction"));
+        expect(JSON.stringify(withoutAuthorship(acceptedDocument(editor)))).toBe(original.replace("proves causation", "reports an association").replace("typo", "correction"));
       }
     });
   }
@@ -168,14 +169,14 @@ test("Check Citations sends the selection with its citations and stages the retu
   await clickButton("Check Citations");
   checkCitations = undefined;
   expect(request!.selectedText).toContain("The claim proves causation.[@smith2026, p. 4]");
-  const original = JSON.stringify(acceptedDocument(editor));
+  const original = JSON.stringify(withoutAuthorship(acceptedDocument(editor)));
   let error: string | null = "not applied";
   await act(async () => { error = apply!(revisionText()); });
   expect(error).toBeNull();
   const view = editor.prosemirrorView;
   expect(listChangeSets(view.state.doc)).toHaveLength(1);
   expect([...view.dom.querySelectorAll("ins")].map(node => node.textContent).join(" ")).toContain("reports an association");
-  expect(JSON.stringify(acceptedDocument(editor))).toBe(original);
+  expect(JSON.stringify(withoutAuthorship(acceptedDocument(editor)))).toBe(original);
 });
 
 test("Improve does not stage incomplete, failed or stopped responses", async () => {
@@ -229,7 +230,7 @@ test("a partial selection tracks only the changed words, and Reject restores the
     expect(suggestAISelection(editor, protection, protection.protectedText.replace("proves", "supports"), "Improve")).toBeNull();
   });
   expect([...view.dom.querySelectorAll("del")].map(node => node.textContent)).toEqual(["proves"]);
-  expect(JSON.stringify(acceptedDocument(editor))).toBe(original);
+  expect(JSON.stringify(withoutAuthorship(acceptedDocument(editor)))).toBe(original);
   await clickButton("Reject");
   expect(JSON.stringify(editor.document)).toBe(original);
 });
@@ -281,7 +282,7 @@ test("popup Validate automatically replaces multiple real BlockNote blocks, pres
   expect(notice?.kind).toBe("success");
   expect(editor.getSelectedText()).toContain("reports an association");
   expect(editor.getSelectedText()).toContain("correction");
-  expect(JSON.parse(JSON.stringify(editor.document[1].content))).toEqual([
+  expect(withoutAuthorship(JSON.parse(JSON.stringify(editor.document[1].content)))).toEqual([
     { type: "text", text: "The claim reports an association.", styles: { bold: true } },
     { type: "citation", props: { citekey: "smith2026", locator: "p. 4" } },
   ]);
@@ -359,7 +360,7 @@ test("Improve applies a JSON segment answer around the protected citation and fo
   await clickButton("Improve");
   await finishImprove(JSON.stringify({ edits: segments.filter(segment => segment.text.includes("proves causation") || segment.text.includes("typo"))
     .map(segment => ({ id: segment.id, text: segment.text.replace("proves causation", "reports an association").replace("typo", "correction") })) }));
-  const accepted = JSON.stringify(acceptedDocument(editor));
+  const accepted = JSON.stringify(withoutAuthorship(acceptedDocument(editor)));
   expect(listChangeSets(editor.prosemirrorView.state.doc)).toHaveLength(1);
   expect(accepted).toContain("smith2026");
   expect(document.body.textContent).not.toContain("protected BlockNote marker");
