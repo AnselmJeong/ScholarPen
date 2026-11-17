@@ -66,6 +66,8 @@ type BunRequests = RPCSchema<{
     reviewSyncResponses: { params: ReviewAddress & { force?: boolean }; response: ResponseSyncStatus | undefined };
     /** Saves the author's own wording for one response in the session's letter. */
     reviewEditResponse: { params: ReviewAddress & { commentId: string; response: string; expectedResponse: string }; response: void };
+    /** The session's letter as a document under documents/ (made on first use); returns its filename relative to documents/. */
+    reviewOpenLetter: { params: ReviewAddress; response: { filename: string; created: boolean } };
     /** Places staged proposals in an open document; called once its editor has loaded. */
     reviewPlaceProposals: { params: { projectPath: string; filename: string }; response: { placed: number; unplaced: number; waiting: number } };
     reviewStop: { params: ReviewAddress & { cancel: boolean }; response: ReviewSession };

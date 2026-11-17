@@ -1,4 +1,4 @@
-import type { User } from "@blocknote/core/comments";
+import type { User } from "@blocknote/core";
 import { LOCAL_USER_ID } from "../../shared/collab/threads";
 import { SCHOLARPEN_AI, personaByUser } from "../../shared/collab/personas";
 

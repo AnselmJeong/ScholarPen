@@ -23,6 +23,7 @@ import { isMinorEdit, mergeText } from "./text-diff";
 import { citationHunks, type CitationSpan } from "./citation-edits";
 
 import { readableHunks } from "../../../shared/collab/suggested-edits";
+import { authorshipBlind, withAIAuthored } from "../../../shared/collab/ai-authorship";
 export { nextSuggestionId } from "../../../shared/collab/suggested-edits";
 
 /** How an AI edit lands in the document ("observe": not at all, proposals only). */
@@ -52,7 +53,8 @@ function textNodes(content: PMNode, from: number) {
 
 export function captureBlock(block: BlockRef, punctuation?: PunctuationPolicy): BlockBase {
   const content = blockContent(block);
-  const doc = content.node;
+  // Authorship marks never split the text the model rewrites.
+  const doc = authorshipBlind(content.node);
   const slice = doc.slice(0, doc.content.size);
   const protection = protectSelectionSlice(slice, doc.textContent);
   if (punctuation) protection.punctuation = punctuation;
@@ -133,7 +135,7 @@ export function applyBlockRewrite(
   }
 
   const content = blockContent(block);
-  const nodes = textNodes(content.node, content.from);
+  const nodes = textNodes(authorshipBlind(content.node), content.from);
   const citation = session.schema.nodes.citation;
   const known = (key: string) => !!citation && !!citekeys?.has(key);
   const hunksByNode = nodes.map((node, index) => citekeys
@@ -162,13 +164,18 @@ export function applyBlockRewrite(
         const parts: PMNode[] = [];
         let cursor = 0;
         for (const span of hunk.citations) {
-          if (span.from > cursor) parts.push(session.schema.text(hunk.insert.slice(cursor, span.from), marks));
+          if (span.from > cursor) parts.push(session.schema.text(hunk.insert.slice(cursor, span.from), withAIAuthored(session.schema, marks)));
           parts.push(...span.items.map((item) => citation.create({ citekey: item.key, locator: item.locator })));
           cursor = span.to;
         }
-        if (cursor < hunk.insert.length) parts.push(session.schema.text(hunk.insert.slice(cursor), marks));
+        if (cursor < hunk.insert.length) parts.push(session.schema.text(hunk.insert.slice(cursor), withAIAuthored(session.schema, marks)));
         tr.replaceWith(from, to, parts);
-      } else if (hunk.insert) tr.insertText(hunk.insert, from, to);
+      } else if (hunk.insert) {
+        // The AI's words carry the authorship mark, kept once the author accepts them.
+        const $from = tr.doc.resolve(from);
+        const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
+        tr.replaceWith(from, to, session.schema.text(hunk.insert, withAIAuthored(session.schema, marks)));
+      }
       else tr.delete(from, to);
     }
   }

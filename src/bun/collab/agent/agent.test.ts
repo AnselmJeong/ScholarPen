@@ -147,7 +147,7 @@ async function waitFor(check: () => boolean) {
 function marks(session: any, blockId: string) {
   const out: Array<{ text: string; mark: string }> = [];
   blockContent(findBlock(readDoc(session), blockId)!).node.descendants((node) => {
-    if (node.isText) out.push({ text: node.text!, mark: node.marks.map((m) => m.type.name).filter((n) => n !== "comment").join(",") });
+    if (node.isText) out.push({ text: node.text!, mark: node.marks.map((m) => m.type.name).filter((n) => n !== "comment" && n !== "aiAuthored").join(",") });
     return true;
   });
   return out;

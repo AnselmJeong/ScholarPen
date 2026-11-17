@@ -571,7 +571,8 @@ export function App() {
             return id ? `[data-revision-document="${CSS.escape(activeFile.path)}"] .bn-block-outer[data-id="${CSS.escape(id)}"] > .bn-block { border-left: 2px solid hsl(var(--primary)); background: hsl(var(--primary) / 0.04); }` : "";
           }).join("\n")}</style>}
           {reviewWorkspaceOpen && activeProject && <ReviewWorkspace key={activeProject.path} project={activeProject} files={fileTree} activeDocument={activeDocumentFilename} saveResponses={saveReviewResponses} onExported={refreshFileTree} prepare={async () => { await editorGroupRef.current?.prepareReview(); }} onClose={() => setReviewWorkspaceOpen(false)}
-            onOpenProposal={(filename, key) => { requestProposalFocus(filename, key); handleFileSelect({ name: filename.split("/").at(-1)!, path: `${activeProject.path.replace(/\/$/, "")}/documents/${filename}`, kind: "document", isDirectory: false, lastModified: Date.now() }); }} />}
+            onOpenProposal={(filename, key) => { requestProposalFocus(filename, key); handleFileSelect({ name: filename.split("/").at(-1)!, path: `${activeProject.path.replace(/\/$/, "")}/documents/${filename}`, kind: "document", isDirectory: false, lastModified: Date.now() }); }}
+            onOpenLetter={(filename) => { handleFileSelect({ name: filename.split("/").at(-1)!, path: `${activeProject.path.replace(/\/$/, "")}/documents/${filename}`, kind: "document", isDirectory: false, lastModified: Date.now() }); }} />}
           {/* Editor */}
           <EditorPaneGroup
             originalPane={isRevisionDocument ? <OriginalManuscriptPane state={revisionContext} /> : undefined}

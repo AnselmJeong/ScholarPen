@@ -2,11 +2,14 @@ import {
   BlockNoteSchema,
   defaultBlockSpecs,
   defaultInlineContentSpecs,
+  defaultStyleSpecs,
 } from "@blocknote/core";
 import { mathBlock } from "./math-block";
 import { figureBlock } from "./figure-block";
 import { abstractBlock } from "./abstract-block";
 import { noteBlock } from "./note-block";
+import { aiPlaceholderBlock } from "./ai-placeholder-block";
+import { aiAuthoredStyle } from "./ai-authored-style";
 import { citationInline, footnoteInline } from "./citation-inline";
 import { inlineMath } from "./inline-math";
 import { crossReferenceInline, quartoLiteralInline } from "./cross-reference-inline";
@@ -24,6 +27,7 @@ export const scholarSchema = BlockNoteSchema.create({
     figure: figureBlock(),
     abstract: abstractBlock(),
     note: noteBlock(),
+    aiPlaceholder: aiPlaceholderBlock(),
   },
   inlineContentSpecs: {
     ...defaultInlineContentSpecs,
@@ -32,6 +36,10 @@ export const scholarSchema = BlockNoteSchema.create({
     inlineMath: inlineMath,
     crossReference: crossReferenceInline,
     quartoLiteral: quartoLiteralInline,
+  },
+  styleSpecs: {
+    ...defaultStyleSpecs,
+    aiAuthored: aiAuthoredStyle,
   },
 });
 

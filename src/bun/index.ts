@@ -3,7 +3,7 @@ import { detectStyleLanguage } from "../shared/author-style";
 import { readDoc } from "./collab/agent/doc-model";
 import { initializeExtensions, shutdownExtensions } from "./extensions/runtime";
 import { createLegacyExtensionHandlers } from "./extensions/catalog.generated";
-import { editReviewResponse, placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
+import { editReviewResponse, openLetterDocument, placeManuscriptProposals, responseSyncStatus, ResponseSyncScheduler, stageManuscriptProposals, syncReviewResponses } from "./review/manuscript-proposals";
 import { linkReviewRegistry } from "./review/decision-sources";
 import { reviewEngine, reviewView, decideFigure, importFigure, reviewFigurePreview, reviewManuscript, reviewRevisionContext, reviewSaveRevisionResponse, exportReviewResponses } from "./review/service";
 import { deleteReviewSession } from "./review/delete-session";
@@ -303,6 +303,7 @@ async function main() {
         },
         reviewSyncResponses: ({ projectPath, sessionId, force }) => syncReviewResponses({ projectPath, sessionId }, { force }),
         reviewEditResponse: editReviewResponse,
+        reviewOpenLetter: ({ projectPath, sessionId }) => openLetterDocument({ projectPath, sessionId }),
         reviewStageProposals: (address) => stageManuscriptProposals(collabRegistry, address, nameVersionBeforeProposals),
         reviewPlaceProposals: ({ projectPath, filename }) => placeManuscriptProposals(collabRegistry, collabDocKey(projectPath, filename), projectPath, filename, nameVersionBeforeProposals),
         reviewStop: async ({ projectPath, sessionId, cancel }) => (await reviewEngine(projectPath)).stop(sessionId, cancel),

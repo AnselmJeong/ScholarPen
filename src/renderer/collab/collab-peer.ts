@@ -7,8 +7,9 @@ import {
 } from "y-protocols/awareness";
 import { fromBase64, toBase64 } from "lib0/buffer";
 import { BlockNoteEditor } from "@blocknote/core";
-import { blocksToYXmlFragment } from "@blocknote/core/yjs";
-import { CommentsExtension, DefaultThreadStoreAuth, YjsThreadStore } from "@blocknote/core/comments";
+import { blocksToYXmlFragment, YjsThreadStore } from "@blocknote/core/yjs";
+import { SuggestionMarksExtension } from "../blocks/suggestion-marks";
+import { CommentsExtension, DefaultThreadStoreAuth } from "@blocknote/core/comments";
 import { rpc, onCollabAwareness, onCollabUpdate } from "../rpc";
 import { scholarSchema } from "../blocks/schema";
 import { COLLAB_FRAGMENT, COLLAB_THREADS_MAP, type CollabOpenResult } from "../../shared/collab/protocol";
@@ -42,7 +43,8 @@ let headlessEditor: BlockNoteEditor<any, any, any> | null = null;
 export function getHeadlessEditor() {
   headlessEditor ??= BlockNoteEditor.create({
     schema: scholarSchema,
-    extensions: [CommentsExtension({
+    // The schema shipped to Bun must know the tracked-change marks.
+    extensions: [SuggestionMarksExtension(), CommentsExtension({
       threadStore: new YjsThreadStore(LOCAL_USER_ID, new Y.Doc().getMap(COLLAB_THREADS_MAP),
         new DefaultThreadStoreAuth(LOCAL_USER_ID, "editor")),
       resolveUsers: async () => [],

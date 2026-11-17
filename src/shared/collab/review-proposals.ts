@@ -4,6 +4,7 @@ import type { EditorState, Transaction } from "prosemirror-state";
 import { transformToSuggestionTransaction } from "@handlewithcare/prosemirror-suggest-changes";
 import type { ReviewProposal } from "../review-session/proposals";
 import { diffHunks, type Hunk } from "./text-diff";
+import { withAIAuthored } from "./ai-authorship";
 
 /**
  * Review & Revision proposals placed in a document, keyed by proposal key.
@@ -131,7 +132,7 @@ export function buildProposalTransaction(state: EditorState, blockPos: number, b
     const to = range.from + hunk.to;
     const $from = tr.doc.resolve(from);
     const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
-    if (hunk.insert) tr.replaceWith(from, to, state.schema.text(hunk.insert, marks));
+    if (hunk.insert) tr.replaceWith(from, to, state.schema.text(hunk.insert, withAIAuthored(state.schema, marks)));
     else tr.delete(from, to);
   }
   if (!tr.docChanged) return { kind: "missing" };

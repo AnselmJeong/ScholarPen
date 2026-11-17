@@ -27,6 +27,7 @@ import {
   listBlocks,
   readDoc,
   readableText,
+  removePlaceholders,
   threadRange,
   type BlockRef,
 } from "./doc-model";
@@ -61,11 +62,8 @@ import { glossaryGuidance, type Glossary } from "../../../shared/glossary";
 import { mapGuidance, type ManuscriptMap } from "../../../shared/manuscript-map";
 import { recordRevision, REVISIONS_MAP, type RevisionEntry, type RevisionParagraph } from "../../../shared/collab/revision-log";
 
-/** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
-export const AI_ORIGIN = "ai-agent";
-/** Origin of AI bookkeeping (comment anchors, review state) that "undo AI edit" must not revert. */
-export const AI_META_ORIGIN = "ai-meta";
-export const AI_EDITS_MAP = "aiEdits";
+import { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN } from "./origins";
+export { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN };
 
 function detectionThread(thread: ThreadSnapshot) {
   const request = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId));
@@ -101,7 +99,7 @@ export interface Attachment {
   releaseHold: (() => void) | null;
 }
 
-interface Job {
+export interface Job {
   references?: MentionedFileContext[];
   /** Edit level, glossary and manuscript map for every prompt of this job. */
   policy?: string;
@@ -228,6 +226,8 @@ export class CollabAgent {
         }
       }
     }, AI_META_ORIGIN);
+    // Placeholders of a draft cut short by a restart are plans no one is writing.
+    removePlaceholders(session);
     this.scanThreads(attachment);
   }
 
@@ -295,6 +295,11 @@ export class CollabAgent {
     list.unshift({ ...view });
     this.history.set(view.docKey, list.slice(0, RECENT_JOBS));
     this.deps.onActivity(view.docKey, this.history.get(view.docKey)!);
+  }
+
+  /** Shows what a running job is doing now (its detail line in the Activity tab). */
+  reportProgress(job: Job, detail: string) {
+    this.update(job, { detail });
   }
 
   private update(job: Job, patch: Partial<AgentJobView>) {

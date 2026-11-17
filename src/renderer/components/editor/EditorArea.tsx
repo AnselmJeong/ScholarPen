@@ -26,6 +26,8 @@ import {
   AddCommentButton,
 } from "@blocknote/react";
 import { CommentsExtension } from "@blocknote/core/comments";
+import { withCollaboration } from "@blocknote/core/yjs";
+import { SuggestionMarksExtension } from "../../blocks/suggestion-marks";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
 import { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, startCommentAtCursor } from "../../collab/comment-composer";
 import { CommentFileMentionsProvider } from "../../collab/comment-file-mentions";
@@ -70,6 +72,9 @@ import { QuartoPropertiesDialog } from "../../../plugins/quarto/ui/QuartoPropert
 import { EditorSideMenu } from "./EditorSideMenu";
 import { EditorOutline } from "./EditorOutline";
 import { useOutlineVisibility } from "./outline-visibility";
+import { useAuthorshipVisibility } from "./authorship-visibility";
+import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
+import { AIAuthorshipExtension } from "../../collab/ai-authorship";
 import { QuartoBlockControls } from "../../../plugins/quarto/ui/QuartoBlockControls";
 import { openCollabPeer, normalizeDocumentContent, type CollabPeer } from "../../collab/collab-peer";
 import { reconcileBlocks } from "../../collab/reconcile";
@@ -83,6 +88,7 @@ import { ReviewMargin, type MarginPresentation } from "./ReviewMargin";
 import { isBrowserDemo, placeDemoProposal } from "../../collab/demo-proposals";
 import { ZONES_MAP } from "../../../shared/collab/zones";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
+import { authorshipBlindSlice } from "../../../shared/collab/ai-authorship";
 
 type SaveStatus = "saved" | "saving" | "unsaved";
 
@@ -230,10 +236,12 @@ function CollabEditorArea({
 }: EditorAreaProps & { project: ProjectInfo; peer: CollabPeer }) {
   const isDark = useIsDark();
   const outlineVisible = useOutlineVisibility();
+  const authorshipVisible = useAuthorshipVisibility();
   // Shared by the suggestion-review plugin and the review bar.
   const [reviewStore] = useState(createReviewStore);
   const reviewMode = useSyncExternalStore(reviewStore.subscribe, () => reviewStore.mode);
-  const editor = useCreateBlockNote({
+  // BlockNote 0.57 binds the editor to Yjs through withCollaboration (an editor option no longer does).
+  const editor = useCreateBlockNote(withCollaboration({
     schema: scholarSchema,
     collaboration: {
       fragment: peer.ydoc.getXmlFragment(COLLAB_FRAGMENT),
@@ -246,18 +254,22 @@ function CollabEditorArea({
       ai: aiEn,
     },
     extensions: [
+      SuggestionMarksExtension(),
       CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers }),
       AIEditHighlightExtension({ edits: peer.ydoc.getMap(AI_EDITS_MAP) }),
       AIZoneBadgeExtension({ zones: peer.ydoc.getMap(ZONES_MAP) }),
       SuggestionReviewExtension({ store: reviewStore }),
       AISelectionTargetExtension(),
+      AIAuthorshipExtension(),
       AIExtension({
+        // BlockNote's own AI writes under the same name and colour as the AI collaborator.
+        agentCursor: { name: SCHOLARPEN_AI.name, color: SCHOLARPEN_AI.color },
         transport: ollamaStatus.connected
           ? createOllamaTransport(ollamaStatus.activeModel ?? ollamaStatus.models[0] ?? "qwen3.5:397b", project?.path)
           : createNoOpTransport(),
       }),
     ],
-  });
+  }));
   const deletingRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveStatusRef = useRef<SaveStatus>("saved");
@@ -634,7 +646,8 @@ function CollabEditorArea({
     const { from, to } = view.state.selection;
     const selectedText = editor.getSelectedText();
     if (!selectedText.trim()) return;
-    const protection = protectSelectionSlice(view.state.doc.slice(from, to), selectedText);
+    // Authorship marks never split the text the model rewrites.
+    const protection = protectSelectionSlice(authorshipBlindSlice(view.state.doc.slice(from, to)), selectedText);
     protection.punctuation = punctuationSnapshot();
     const documentContext = buildInlineEditDocumentContext(view.state.doc, from, to);
     trackAISelection(view, from, to, protection);
@@ -796,7 +809,7 @@ function CollabEditorArea({
         onScroll={(event) => onScrollPositionChange?.(event.currentTarget.scrollTop)}
       >
         {/* max-width 800px for optimal reading line length per DESIGN.md */}
-        <div ref={reviewCanvasRef} className="sp-review-canvas" data-margin-layout={marginLayout}>
+        <div ref={reviewCanvasRef} className={`sp-review-canvas${authorshipVisible ? " sp-show-ai-authorship" : ""}`} data-margin-layout={marginLayout}>
           <QuartoBlockControls editor={editor} enabled={documentReady && quartoEnabled} onOpen={setPropertiesBlockId}>
           <BlockNoteView
             editor={editor}

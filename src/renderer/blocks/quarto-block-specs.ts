@@ -12,7 +12,7 @@ function withQuartoProps<T extends typeof defaultBlockSpecs.heading | typeof def
     ...base.implementation,
     render(this: any, block: any, editor: any) {
       const { label, caption, quartoClasses, ...props } = block.props;
-      const result = base.implementation.render.call(this, { ...block, props }, editor);
+      const result = base.implementation.render!.call(this, { ...block, props }, editor);
       if (label && result.dom instanceof HTMLElement) result.dom.setAttribute("data-label", label);
       return result;
     },

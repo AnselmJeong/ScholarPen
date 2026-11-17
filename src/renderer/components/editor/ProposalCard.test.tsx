@@ -14,7 +14,9 @@ mock.module("electrobun/view", () => ({ Electroview: class { static defineRPC(op
 mock.module("../../collab/comment-composer", () => ({ ScholarFloatingThread: () => null }));
 const { BlockNoteEditor } = await import("@blocknote/core");
 const { BlockNoteViewRaw: BlockNoteView } = await import("@blocknote/react");
-const { CommentsExtension, DefaultThreadStoreAuth, YjsThreadStore } = await import("@blocknote/core/comments");
+const { CommentsExtension, DefaultThreadStoreAuth } = await import("@blocknote/core/comments");
+const { YjsThreadStore } = await import("@blocknote/core/yjs");
+const { SuggestionMarksExtension } = await import("../../blocks/suggestion-marks");
 const { ReviewMargin } = await import("./ReviewMargin");
 const { createReviewStore, SuggestionReviewExtension } = await import("../../collab/suggestion-review");
 const { setEditorCollab } = await import("../../collab/editor-collab");
@@ -42,7 +44,7 @@ test("reviewer revisions get their own card, apart from AI review notes, and set
       { id: "a", type: "paragraph", content: "Tdcs was inferior to escitalopram." },
       { id: "b", type: "paragraph", content: "Patients must keep a positive mood. AI note target." },
     ],
-    extensions: [CommentsExtension({ threadStore, resolveUsers: async () => [] }), SuggestionReviewExtension({ store })],
+    extensions: [SuggestionMarksExtension(), CommentsExtension({ threadStore, resolveUsers: async () => [] }), SuggestionReviewExtension({ store })],
   });
   const peer = { ydoc, threadStore, docKey: "/p::doc.scholarpen.json", afterPushes: async () => {} };
   setEditorCollab(editor, peer as any);

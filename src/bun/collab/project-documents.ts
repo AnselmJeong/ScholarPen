@@ -2,6 +2,7 @@ import { relative, sep } from "node:path";
 import type { FileNode } from "../../shared/rpc-types";
 import { documentReferenceTargets } from "../../shared/project-references";
 import { blockNoteText, inlineText } from "./agent/bulk-sources";
+import { isLetterDocument } from "../../shared/review-session/letter-document";
 
 export interface DocumentParagraph { blockId: string; kind: string; text: string }
 
@@ -59,13 +60,13 @@ function flatten(nodes: FileNode[]): FileNode[] {
   return nodes.flatMap(node => node.isDirectory ? flatten(node.children ?? []) : [node]);
 }
 
-/** Every `documents/**\/*.scholarpen.json` of a project, in path order. Unreadable files are reported, not skipped. */
+/** Every manuscript document (`documents/**\/*.scholarpen.json` except response letters) of a project, in path order. Unreadable files are reported, not skipped. */
 export async function loadProjectDocuments(projectPath: string): Promise<ProjectDocument[]> {
   const { fileSystem } = await import("../fs/manager");
   const root = await fileSystem.resolveProjectPath(projectPath);
   const files = flatten(await fileSystem.listProjectFiles(root, 0, Number.POSITIVE_INFINITY))
     .map(file => ({ file, path: relative(root, file.path).split(sep).join("/") }))
-    .filter(({ path }) => path.startsWith("documents/") && path.endsWith(".scholarpen.json"))
+    .filter(({ path }) => path.startsWith("documents/") && path.endsWith(".scholarpen.json") && !isLetterDocument(path.slice("documents/".length)))
     .sort((a, b) => a.path.localeCompare(b.path));
   const documents: ProjectDocument[] = [];
   for (const { file, path } of files) {

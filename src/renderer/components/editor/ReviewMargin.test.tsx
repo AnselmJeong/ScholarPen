@@ -28,7 +28,9 @@ mock.module("../../collab/comment-composer", () => ({ ScholarFloatingThread: fun
   return <div className="bn-comment-editor"><textarea value={value} onInput={event => setValue(event.currentTarget.value)} /></div>;
 } }));
 const { BlockNoteViewRaw: BlockNoteView } = await import("@blocknote/react");
-const { CommentsExtension, DefaultThreadStoreAuth, YjsThreadStore } = await import("@blocknote/core/comments");
+const { CommentsExtension, DefaultThreadStoreAuth } = await import("@blocknote/core/comments");
+const { YjsThreadStore } = await import("@blocknote/core/yjs");
+const { SuggestionMarksExtension } = await import("../../blocks/suggestion-marks");
 const { ReviewMargin } = await import("./ReviewMargin");
 const { SuggestionReviewBar } = await import("./SuggestionReviewBar");
 const { createReviewStore, SuggestionReviewExtension } = await import("../../collab/suggestion-review");
@@ -45,7 +47,7 @@ test("margin cards follow live anchors, decide only one hunk, and retire resolve
   const store = createReviewStore();
   const editor = BlockNoteEditor.create({
     initialContent: [{ id: "intro", type: "paragraph", content: "First old claim. Second old claim. Comment target." }],
-    extensions: [CommentsExtension({ threadStore, resolveUsers: async () => [] }), SuggestionReviewExtension({ store })],
+    extensions: [SuggestionMarksExtension(), CommentsExtension({ threadStore, resolveUsers: async () => [] }), SuggestionReviewExtension({ store })],
   });
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);

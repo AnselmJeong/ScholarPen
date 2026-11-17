@@ -49,7 +49,9 @@ export interface ReviewProgress {
   lastCompleted?: { stage: string; at: string };
   recent: ReviewProgressEvent[];
 }
-export interface ReviewResponseDocument { source: 'review' | 'revision'; path?: string; responses: ResponseItem[]; editedCommentIds: string[] }
+export interface ReviewResponseDocument { source: 'review' | 'revision'; path?: string; responses: ResponseItem[]; editedCommentIds: string[];
+  /** The letter as a document under documents/ (relative to it), once the author opened one; it is then the letter. */
+  letterDocument?: string }
 /** How far the response letter follows the author's decisions on the proposals shown in the manuscript. */
 export interface ResponseSyncComment {
   commentId: string;
@@ -65,6 +67,8 @@ export interface ResponseSyncStatus {
   comments: ResponseSyncComment[];
   proposals: Array<{ key: string; id: string; document: string; blockId: string; state: string; commentIds: string[] }>;
   lastAt?: string; lastError?: string;
+  /** Comments whose rewritten response was not written into the letter document because the author changed that section. */
+  letterKept?: string[];
 }
 export interface ReviewView { session: ReviewSession; root: string; responsesMarkdown: string; responseDocument?: ReviewResponseDocument; responseError?: string; changes: AppliedChange[]; progress?: ReviewProgress;
   /** Text revisions staged for the manuscript, when the author chose to show them there. */

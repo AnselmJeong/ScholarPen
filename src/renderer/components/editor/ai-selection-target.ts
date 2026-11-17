@@ -9,6 +9,7 @@ import type { Mark, Slice } from "prosemirror-model";
 import { Plugin, PluginKey, TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { restoreProtectedSelection, type ProtectedSelection } from "./ai-inline-edit-protection";
+import { AI_AUTHORED_META, authorshipBlindSlice, withAIAuthored } from "../../../shared/collab/ai-authorship";
 
 type Target = { from: number; to: number; slice: Slice; invalid: boolean };
 type TargetAction = { id: string; target?: Target };
@@ -64,34 +65,31 @@ export function applyAISelection(view: EditorView | undefined, protection: Prote
     }
     const replacement = restoreProtectedSelection(view.state.schema, protection, response);
     let tr = view.state.tr;
-    let end: number;
-    if (suggestionId === undefined) {
-      tr.replace(target.from, target.to, replacement);
-      end = target.from + replacement.size;
-    } else {
-      let pending = false;
-      target.slice.content.descendants((node) => {
-        if (node.marks.some(mark => ["insertion", "deletion", "modification"].includes(mark.type.name))) pending = true;
-      });
-      if (pending) return "선택 영역에 검토 중인 수정안이 있습니다. 먼저 Accept 또는 Reject로 결정한 뒤 다시 실행해 주세요.";
-      const revisedTexts: string[] = [];
-      replacement.content.descendants(node => { if (node.isText) revisedTexts.push(node.text!); });
-      const edits: Array<{ from: number; to: number; insert: string; marks: readonly Mark[] }> = [];
-      let index = 0;
-      target.slice.content.descendants((node, pos) => {
-        if (!node.isText) return;
-        const offset = target.from + pos - target.slice.openStart;
-        for (const hunk of readableHunks(node.text!, revisedTexts[index++])) {
-          edits.push({ from: offset + hunk.from, to: offset + hunk.to, insert: hunk.insert, marks: node.marks });
-        }
-      });
-      for (const edit of edits.reverse()) {
-        if (edit.insert) tr.replaceWith(edit.from, edit.to, view.state.schema.text(edit.insert, edit.marks));
-        else tr.delete(edit.from, edit.to);
+    let pending = false;
+    target.slice.content.descendants((node) => {
+      if (node.marks.some(mark => ["insertion", "deletion", "modification"].includes(mark.type.name))) pending = true;
+    });
+    if (suggestionId !== undefined && pending) return "선택 영역에 검토 중인 수정안이 있습니다. 먼저 Accept 또는 Reject로 결정한 뒤 다시 실행해 주세요.";
+    // Word-level edits, so only the AI's words carry its authorship mark; text runs are read as the model saw them.
+    const revisedTexts: string[] = [];
+    replacement.content.descendants(node => { if (node.isText) revisedTexts.push(node.text!); });
+    const edits: Array<{ from: number; to: number; insert: string; marks: readonly Mark[] }> = [];
+    let index = 0;
+    const blind = authorshipBlindSlice(target.slice);
+    blind.content.descendants((node, pos) => {
+      if (!node.isText) return;
+      const offset = target.from + pos - blind.openStart;
+      for (const hunk of readableHunks(node.text!, revisedTexts[index++] ?? node.text!)) {
+        edits.push({ from: offset + hunk.from, to: offset + hunk.to, insert: hunk.insert, marks: node.marks });
       }
-      if (tr.docChanged) tr = transformToSuggestionTransaction(tr, view.state, () => suggestionId);
-      end = tr.mapping.map(target.to, 1);
+    });
+    for (const edit of edits.reverse()) {
+      if (edit.insert) tr.replaceWith(edit.from, edit.to, view.state.schema.text(edit.insert, withAIAuthored(view.state.schema, edit.marks)));
+      else tr.delete(edit.from, edit.to);
     }
+    if (suggestionId !== undefined && tr.docChanged) tr = transformToSuggestionTransaction(tr, view.state, () => suggestionId);
+    tr.setMeta(AI_AUTHORED_META, true);
+    const end = tr.mapping.map(target.to, 1);
     tr.setSelection(TextSelection.between(tr.doc.resolve(target.from), tr.doc.resolve(end)));
     tr.setMeta(targetKey, { id: protection.namespace } satisfies TargetAction);
     view.dispatch(tr.scrollIntoView());

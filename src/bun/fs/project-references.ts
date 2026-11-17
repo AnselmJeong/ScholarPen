@@ -1,6 +1,7 @@
 import { readdir, realpath, stat } from "fs/promises";
 import { join } from "path";
 import { documentReferenceTargets, type ReferenceDocument } from "../../shared/project-references";
+import { isLetterDocument } from "../../shared/review-session/letter-document";
 
 /** Metadata-only RPC output; unchanged chapters do not need JSON parsing again. */
 export class ProjectReferenceIndex {
@@ -18,7 +19,8 @@ export class ProjectReferenceIndex {
         if (entry.name.startsWith(".")) continue;
         const filename = prefix + entry.name;
         if (entry.isDirectory()) await walk(join(directory, entry.name), filename + "/");
-        else if (entry.isFile() && entry.name.endsWith(".scholarpen.json")) files.push(filename);
+        // Response letters are not manuscript: nothing in them is a cross-reference target.
+        else if (entry.isFile() && entry.name.endsWith(".scholarpen.json") && !isLetterDocument(filename)) files.push(filename);
       }
     }
     await walk(root);

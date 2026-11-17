@@ -32,7 +32,8 @@ mock.module("../rpc", () => ({ ...realRpc, rpc: { ...realRpc.rpc,
 } }));
 
 const { BlockNoteEditor } = await import("@blocknote/core");
-const { CommentsExtension, YjsThreadStore, DefaultThreadStoreAuth } = await import("@blocknote/core/comments");
+const { CommentsExtension, DefaultThreadStoreAuth } = await import("@blocknote/core/comments");
+const { YjsThreadStore } = await import("@blocknote/core/yjs");
 const { BlockNoteView } = await import("@blocknote/mantine");
 const { ComponentsContext, useComponentsContext } = await import("@blocknote/react");
 const { CommentFileMentionsProvider } = await import("./comment-file-mentions");

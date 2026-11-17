@@ -1,4 +1,5 @@
 import { afterAll, expect, mock, test } from "bun:test";
+import { withoutAuthorship } from "../test-support/authorship";
 import { controlByLabel, installDom } from "../test-support/dom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -103,6 +104,8 @@ const { protectSelectionSlice } = await import("../../shared/ai-text-protection"
 const { CHANGE_SETS_MAP } = await import("../../shared/collab/change-sets");
 const { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript } = await import("./comment-composer");
 const { getScholarSlashMenuItems } = await import("../blocks/slash-menu-items");
+const { withCollaboration } = await import("@blocknote/core/yjs");
+const { SuggestionMarksExtension } = await import("../blocks/suggestion-marks");
 
 async function settle() {
   for (let i = 0; i < 5; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -110,15 +113,15 @@ async function settle() {
 
 async function mountPeer(name: string, filename = "doc.scholarpen.json") {
   const peer = await openCollabPeer("/p", filename);
-  const editor = BlockNoteEditor.create({
+  const editor = BlockNoteEditor.create(withCollaboration({
     schema: scholarSchema,
     collaboration: {
       fragment: peer.ydoc.getXmlFragment(COLLAB_FRAGMENT),
       user: { name, color: "#000" },
       provider: { awareness: peer.awareness },
     },
-    extensions: [AISelectionTargetExtension(), CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
-  });
+    extensions: [SuggestionMarksExtension(), AISelectionTargetExtension(), CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
+  }));
   setEditorCollab(editor, peer);
   let changes = 0;
   editor.onChange(() => { changes++; });
@@ -271,7 +274,9 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
   await settle();
 
   // Seeded once: no duplicated blocks, custom blocks intact.
-  expect(b.editor.document.map((block: any) => block.id)).toEqual(["intro", "eq", "cite", expect.any(String)]);
+  // (BlockNote 0.57 no longer appends an empty trailing block to a seeded document.)
+  expect(b.editor.document.map((block: any) => block.id).slice(0, 3)).toEqual(["intro", "eq", "cite"]);
+  expect(b.editor.document.slice(3).every((block: any) => !block.content?.length)).toBe(true);
   expect((b.editor.document[1] as any).props.formula).toBe("E = mc^2");
   expect((b.editor.document[2] as any).content[1]).toMatchObject({ type: "citation", props: { citekey: "smith2026" } });
 
@@ -394,7 +399,7 @@ test("a comment for the AI comes back as a suggestion the author can accept", as
   // The editor shows a tracked change; the saved snapshot still holds the accepted text.
   expect(view.dom.querySelector("ins")?.textContent).toContain("support");
   expect(view.dom.querySelector("del")?.textContent).toContain("prove");
-  expect(JSON.stringify(acceptedDocument(a.editor))).toContain("These data prove the hypothesis beyond doubt.");
+  expect(JSON.stringify(withoutAuthorship(acceptedDocument(a.editor)))).toContain("These data prove the hypothesis beyond doubt.");
 
   // A reload from the saved JSON (accepted text only) must keep pending suggestions.
   await act(async () => { reconcileBlocks(a.editor, JSON.parse(JSON.stringify(acceptedDocument(a.editor)))); });
@@ -414,7 +419,7 @@ test("a comment for the AI comes back as a suggestion the author can accept", as
   expect(readThreads(a.peer.ydoc.getMap("threads"))[0]).toMatchObject({ resolved: true, meta: { status: "resolved" } });
   expect(panel.textContent).not.toContain("AI change to review");
   expect(view.dom.querySelector("ins")).toBeNull();
-  expect(JSON.stringify(acceptedDocument(a.editor))).toContain("These data support the hypothesis.");
+  expect(JSON.stringify(withoutAuthorship(acceptedDocument(a.editor)))).toContain("These data support the hypothesis.");
   // Accepting syncs back to Bun like any other edit.
   const bunDoc = (await import("../../bun/collab/agent/doc-model")).readDoc(registry.get("/p::agent.scholarpen.json")!);
   expect(bunDoc.textContent).toContain("These data support the hypothesis.");
@@ -464,7 +469,7 @@ test("selection suggestions sync metadata and support per-paragraph Accept/Rejec
   const sets = listChangeSets(b.editor.prosemirrorView.state.doc, b.peer.ydoc.getMap(CHANGE_SETS_MAP));
   expect(sets).toHaveLength(1);
   expect(sets[0].info?.label).toBe("Deepen");
-  expect(JSON.stringify(acceptedDocument(b.editor))).not.toContain("qualified");
+  expect(JSON.stringify(withoutAuthorship(acceptedDocument(b.editor)))).not.toContain("qualified");
   expect(b.editor.prosemirrorView.dom.querySelector("ins")?.textContent).toBe("qualified");
   const panel = document.createElement("div");
   document.body.append(panel);
