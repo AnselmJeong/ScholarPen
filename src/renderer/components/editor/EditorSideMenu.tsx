@@ -1,7 +1,7 @@
 import React, { useCallback } from "react";
 import {
   BlockColorsItem, DragHandleMenu, RemoveBlockItem, SideMenu, SideMenuController,
-  useBlockNoteEditor, useComponentsContext,
+  useBlockNoteEditor, useComponentsContext, usePortalElement,
 } from "@blocknote/react";
 import { LABEL_PREFIXES } from "../../../shared/quarto-references";
 
@@ -21,9 +21,10 @@ const BLOCK_TYPE_ITEMS = [
 function BlockTypeDragItem() {
   const editor = useBlockNoteEditor();
   const components = useComponentsContext();
+  const portalElement = usePortalElement();
   if (!components) return null;
   return (
-    <components.Generic.Menu.Root position="right" sub={true}>
+    <components.Generic.Menu.Root position="right" sub={true} portalElement={portalElement}>
       <components.Generic.Menu.Trigger sub={true}>
         <components.Generic.Menu.Item className="bn-menu-item" subTrigger={true}>
           Turn Into

@@ -104,6 +104,8 @@ const { protectSelectionSlice } = await import("../../shared/ai-text-protection"
 const { CHANGE_SETS_MAP } = await import("../../shared/collab/change-sets");
 const { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript } = await import("./comment-composer");
 const { getScholarSlashMenuItems } = await import("../blocks/slash-menu-items");
+const { withCollaboration } = await import("@blocknote/core/yjs");
+const { SuggestionMarksExtension } = await import("../blocks/suggestion-marks");
 
 async function settle() {
   for (let i = 0; i < 5; i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
@@ -111,15 +113,15 @@ async function settle() {
 
 async function mountPeer(name: string, filename = "doc.scholarpen.json") {
   const peer = await openCollabPeer("/p", filename);
-  const editor = BlockNoteEditor.create({
+  const editor = BlockNoteEditor.create(withCollaboration({
     schema: scholarSchema,
     collaboration: {
       fragment: peer.ydoc.getXmlFragment(COLLAB_FRAGMENT),
       user: { name, color: "#000" },
       provider: { awareness: peer.awareness },
     },
-    extensions: [AISelectionTargetExtension(), CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
-  });
+    extensions: [SuggestionMarksExtension(), AISelectionTargetExtension(), CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers })],
+  }));
   setEditorCollab(editor, peer);
   let changes = 0;
   editor.onChange(() => { changes++; });
@@ -272,7 +274,9 @@ test("editors seed once, stay in sync through Bun, and see Bun-side edits", asyn
   await settle();
 
   // Seeded once: no duplicated blocks, custom blocks intact.
-  expect(b.editor.document.map((block: any) => block.id)).toEqual(["intro", "eq", "cite", expect.any(String)]);
+  // (BlockNote 0.57 no longer appends an empty trailing block to a seeded document.)
+  expect(b.editor.document.map((block: any) => block.id).slice(0, 3)).toEqual(["intro", "eq", "cite"]);
+  expect(b.editor.document.slice(3).every((block: any) => !block.content?.length)).toBe(true);
   expect((b.editor.document[1] as any).props.formula).toBe("E = mc^2");
   expect((b.editor.document[2] as any).content[1]).toMatchObject({ type: "citation", props: { citekey: "smith2026" } });
 

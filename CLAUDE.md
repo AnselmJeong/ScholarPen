@@ -61,6 +61,12 @@ The editor uses a custom schema (`src/renderer/blocks/schema.ts`) extending Bloc
 
 Slash menu items (`/math`, `/figure`, `/abstract`, `/ai`) are in `slash-menu-items.tsx`.
 
+BlockNote is 0.57 (core, react, mantine, xl-ai), on the Yjs 13 collaboration path (`@blocknote/core/yjs`, `y-prosemirror` 1.x; the `@blocknote/core/y` path needs the Yjs 14 release candidates and is not used). Since 0.57:
+- An editor binds to the Y.Doc only through `withCollaboration({ ...options, collaboration })` from `@blocknote/core/yjs`; a plain `collaboration` option is silently ignored.
+- The tracked-change marks (`insertion` / `deletion` / `modification`) are not in the default schema. Every editor whose document can hold suggestions, the headless editor whose schema is shipped to Bun, and test editors register `SuggestionMarksExtension()` (`blocks/suggestion-marks.ts`, built from `@handlewithcare/prosemirror-suggest-changes` specs under xl-ai's extension key, so the two never both load).
+- `YjsThreadStore` comes from `@blocknote/core/yjs` and the `User` type from `@blocknote/core`; a seeded document no longer gets an empty trailing block.
+- Keep `prosemirror-*`, `@tiptap/core` and `yjs` at one installed copy each (BlockNote needs `prosemirror-model` ≥ 1.25.11, `prosemirror-view` ≥ 1.42.5, `yjs` ≥ 13.6.33); a duplicate `prosemirror-transform` breaks `instanceof` checks between steps and mappings.
+
 ## AI Integration
 
 `EditorArea.tsx` uses BlockNote's `AIExtension` with a custom `ClientSideTransport`. The transport (`ai/ollama-transport.ts`) wraps Ollama at `http://localhost:11434/v1` via `@ai-sdk/openai-compatible`.

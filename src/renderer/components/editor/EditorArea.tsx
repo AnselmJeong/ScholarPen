@@ -26,6 +26,8 @@ import {
   AddCommentButton,
 } from "@blocknote/react";
 import { CommentsExtension } from "@blocknote/core/comments";
+import { withCollaboration } from "@blocknote/core/yjs";
+import { SuggestionMarksExtension } from "../../blocks/suggestion-marks";
 import { resolveCollabUsers, LOCAL_COLOR } from "../../collab/users";
 import { requestAIScoreManuscript, requestHumanizeManuscript, requestRemoveWatermarkManuscript, ScholarFloatingComposerController, startCommentAtCursor } from "../../collab/comment-composer";
 import { CommentFileMentionsProvider } from "../../collab/comment-file-mentions";
@@ -238,7 +240,8 @@ function CollabEditorArea({
   // Shared by the suggestion-review plugin and the review bar.
   const [reviewStore] = useState(createReviewStore);
   const reviewMode = useSyncExternalStore(reviewStore.subscribe, () => reviewStore.mode);
-  const editor = useCreateBlockNote({
+  // BlockNote 0.57 binds the editor to Yjs through withCollaboration (an editor option no longer does).
+  const editor = useCreateBlockNote(withCollaboration({
     schema: scholarSchema,
     collaboration: {
       fragment: peer.ydoc.getXmlFragment(COLLAB_FRAGMENT),
@@ -251,6 +254,7 @@ function CollabEditorArea({
       ai: aiEn,
     },
     extensions: [
+      SuggestionMarksExtension(),
       CommentsExtension({ threadStore: peer.threadStore, resolveUsers: resolveCollabUsers }),
       AIEditHighlightExtension({ edits: peer.ydoc.getMap(AI_EDITS_MAP) }),
       AIZoneBadgeExtension({ zones: peer.ydoc.getMap(ZONES_MAP) }),
@@ -265,7 +269,7 @@ function CollabEditorArea({
           : createNoOpTransport(),
       }),
     ],
-  });
+  }));
   const deletingRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveStatusRef = useRef<SaveStatus>("saved");

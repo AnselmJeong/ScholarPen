@@ -27,6 +27,7 @@ mock.module("../../rpc", () => ({
 const { BlockNoteEditor } = await import("@blocknote/core");
 const { BlockNoteViewRaw } = await import("@blocknote/react");
 const { scholarSchema } = await import("../../blocks/schema");
+const { SuggestionMarksExtension } = await import("../../blocks/suggestion-marks");
 const { AIInlineEditPanel } = await import("./AIInlineEditPanel");
 const { AISelectionTargetExtension, applyAISelection, suggestAISelection, trackAISelection, releaseAISelection } = await import("./ai-selection-target");
 const { acceptedDocument, listChangeSets } = await import("../../collab/suggestions");
@@ -44,7 +45,7 @@ let changeCount = 0;
 let checkCitations: ((saved: SelectionSnapshot) => void) | undefined;
 
 async function mount() {
-  editor = BlockNoteEditor.create({ schema: scholarSchema, trailingBlock: false, extensions: [AISelectionTargetExtension()], initialContent: [
+  editor = BlockNoteEditor.create({ schema: scholarSchema, trailingBlock: false, extensions: [SuggestionMarksExtension(), AISelectionTargetExtension()], initialContent: [
     { id: "before", type: "paragraph", content: "Before the selection." },
     { id: "selected", type: "paragraph", content: [
       { type: "text", text: "The claim proves causation.", styles: { bold: true } },
