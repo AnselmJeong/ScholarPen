@@ -10,6 +10,7 @@ import { reviewEngine } from "./service";
 import { readStagedProposals, stageReviewProposals, stagedProposalsFor } from "./proposals";
 import { decisionSources } from "./decision-sources";
 import { ensureLetter, existingLetter } from "./letter";
+import { ensureLetterDocument, overlayLetterDocument, readLetterRecord, writeLetterResponses } from "./letter-document";
 import type { SessionStore } from "./session-store";
 import { readEditableResponses, updateRevisionResponses } from "./revision-responses";
 import { applyRewrittenResponses, commentSyncStates, proposalDecisions, rewriteResponses, type ProposalDecision } from "./response-sync";
@@ -57,7 +58,9 @@ const SYNC_FILE = ".scholarpen/response-sync.json";
 interface SyncRecord {
   schemaVersion: 1;
   comments: Record<string, { fingerprint: string; at: string; method: "model" | "template" }>;
-  last?: { at: string; updated: string[]; error?: string };
+  last?: { at: string; updated: string[]; error?: string;
+    /** Rewritten responses left out of the letter document because the author changed them there. */
+    kept?: string[] };
 }
 
 async function readSyncRecord(letter: string | null): Promise<SyncRecord> {
@@ -76,7 +79,7 @@ function statusOf(decisions: ProposalDecision[], session: ReviewSession, record:
     }),
     proposals: decisions.map(decision => ({ key: decision.proposal.key, id: decision.proposal.id, document: decision.proposal.document,
       blockId: decision.proposal.blockId, state: decision.state, commentIds: decision.proposal.comments.map(comment => comment.id) })),
-    ...(record.last ? { lastAt: record.last.at, ...(record.last.error ? { lastError: record.last.error } : {}) } : {}),
+    ...(record.last ? { lastAt: record.last.at, ...(record.last.error ? { lastError: record.last.error } : {}), ...(record.last.kept?.length ? { letterKept: record.last.kept } : {}) } : {}),
   };
 }
 
@@ -107,7 +110,10 @@ export async function editReviewResponse(a: ReviewAddress & { commentId: string;
   const session = await engine.store.load(a.sessionId);
   const result = session.rounds.find(round => round.round === session.selectedFinalRound);
   if (session.status !== "completed" || !result) throw new Error("완료된 세션의 답변만 고칠 수 있습니다.");
-  await updateRevisionResponses(await letterFolder(engine, session, result), session, result, items => {
+  const folder = await letterFolder(engine, session, result);
+  const document = await readLetterRecord(folder);
+  if (document) throw new Error(`답신서는 문서 documents/${document.filename}에서 고쳐 주세요. 그 문서가 답신서입니다.`);
+  await updateRevisionResponses(folder, session, result, items => {
     const item = items.find(value => value.commentId === a.commentId);
     if (!item) throw new Error("고칠 답변을 찾을 수 없습니다.");
     if (item.response !== a.expectedResponse && item.response !== a.response) throw new Error("이 답변이 그사이 다시 쓰였습니다. 입력한 내용은 그대로 두었습니다. 최신 답변을 확인한 뒤 다시 저장해 주세요.");
@@ -142,7 +148,8 @@ export async function syncReviewResponses(address: ReviewAddress, options: { for
       .filter(state => state.ready && (options.force || record.comments[state.commentId]?.fingerprint !== state.fingerprint));
     if (!targets.length) return statusOf(decisions, session, record);
     const comments = session.comments.filter(comment => targets.some(target => target.commentId === comment.id));
-    const current = await readEditableResponses(revision, result);
+    // The author's wording in the letter document is what the model rewrites from.
+    const current = await overlayLetterDocument(project, revision, session, await readEditableResponses(revision, result));
     const { responses, error } = await rewriteResponses(session, comments, current, decisions, {
       complete: (system, prompt) => engine.providers.complete({
         provider: "anthropic", model: session.roles.reviser.model, stage: "responses-sync", language: session.input.language,
@@ -150,11 +157,34 @@ export async function syncReviewResponses(address: ReviewAddress, options: { for
       }),
     });
     await updateRevisionResponses(revision, session, result, items => { applyRewrittenResponses(items, session.comments, responses, decisions); });
+    // Sections the author changed in the letter document stay theirs.
+    const letter = await writeLetterResponses(project, revision, session, new Map([...responses].map(([id, value]) => [id, value.response])));
     const at = new Date().toISOString();
     for (const target of targets) record.comments[target.commentId] = { fingerprint: target.fingerprint, at, method: responses.get(target.commentId)!.method };
-    record.last = { at, updated: targets.map(target => target.commentId), ...(error ? { error } : {}) };
+    record.last = { at, updated: targets.map(target => target.commentId), ...(error ? { error } : {}), ...(letter?.kept.length ? { kept: letter.kept } : {}) };
     await writeJSON(revision, SYNC_FILE, record);
     return statusOf(decisions, session, record);
+  });
+  running.set(key, job);
+  try { return await job; }
+  finally { if (running.get(key) === job) running.delete(key); }
+}
+
+/**
+ * The session's response letter as a document under `documents/` (made from
+ * the current responses the first time), for the author to edit in the main
+ * editor. From then on that document is the letter.
+ */
+export async function openLetterDocument(address: ReviewAddress): Promise<{ filename: string; created: boolean }> {
+  const engine = await reviewEngine(address.projectPath);
+  const key = `${engine.store.project}\n${address.sessionId}`;
+  const previous = running.get(key) ?? Promise.resolve();
+  const job = previous.catch(() => undefined).then(async () => {
+    const session = await engine.store.load(address.sessionId);
+    const result = session.rounds.find(round => round.round === session.selectedFinalRound);
+    if (session.status !== "completed" || !result) throw new Error("완료된 세션의 답신서만 문서로 열 수 있습니다.");
+    const folder = await letterFolder(engine, session, result);
+    return ensureLetterDocument(engine.store.project, folder, session, await readEditableResponses(folder, result));
   });
   running.set(key, job);
   try { return await job; }

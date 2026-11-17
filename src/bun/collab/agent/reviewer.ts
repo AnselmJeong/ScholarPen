@@ -18,6 +18,7 @@ import {
   type ReviewProgress,
 } from "../../../shared/collab/review";
 import { AI_META_ORIGIN, type Attachment, type CollabAgent } from "./agent";
+import { isLetterDocument } from "../../../shared/review-session/letter-document";
 import {
   anchorThread,
   blockContent,
@@ -338,7 +339,8 @@ export class Reviewer {
       if (previousProgress?.reviewedSections !== progress.reviewedSections || previousProgress?.totalSections !== progress.totalSections) {
         session.ydoc.transact(() => map.set("progress", progress), AI_META_ORIGIN);
       }
-      if (!settings.autoReview || !enabledReviewCategories(settings).length || this.agent.isPaused() || this.agent.isBusy(session.docKey)) continue;
+      // A response letter is not manuscript: it is reviewed only on request.
+      if (!settings.autoReview || isLetterDocument(session.filename) || !enabledReviewCategories(settings).length || this.agent.isPaused() || this.agent.isBusy(session.docKey)) continue;
       const history = (this.lastAuto.get(session.docKey) ?? []).filter((at) => this.now() - at < 3_600_000);
       if (history.length >= (this.deps.maxAutoPerHour ?? Infinity)) continue;
       if (history.length && this.now() - history[history.length - 1] < (this.deps.autoIntervalMs ?? 15_000)) continue;

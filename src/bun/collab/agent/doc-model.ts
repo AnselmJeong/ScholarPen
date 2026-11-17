@@ -138,6 +138,15 @@ function findYBlock(parent: Y.XmlFragment | Y.XmlElement, blockId: string): Y.Xm
   return null;
 }
 
+/** Writes the top-level block list back to the shared Y.Doc with a minimal diff. */
+export function writeTopLevel(session: CollabSession, doc: PMNode, origin: unknown) {
+  const root = session.ydoc.getXmlFragment(COLLAB_FRAGMENT).get(0);
+  if (!(root instanceof Y.XmlElement) || root.nodeName !== "blockGroup") throw new Error("Unexpected document structure.");
+  session.ydoc.transact(() => {
+    updateYFragment(session.ydoc, root, doc.firstChild!, { mapping: new Map(), isOMark: new Map() });
+  }, origin);
+}
+
 /**
  * Writes one block back to the shared Y.Doc with a minimal diff. Only this
  * block's Y element is touched, so concurrent edits elsewhere are untouched.

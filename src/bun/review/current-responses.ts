@@ -2,6 +2,7 @@ import type { ReviewSession, RoundResult, ReviewResponseDocument } from '../../s
 import type { SessionStore } from './session-store';
 import { readEditableResponses, waitForResponseSaves } from './revision-responses';
 import { existingLetter, letterMatches } from './letter';
+import { overlayLetterDocument, readLetterRecord } from './letter-document';
 
 /** The letter as it now stands: the session's edited letter once there is one, else the review's own answers. */
 export async function currentResponses(store: SessionStore, session: ReviewSession, result: RoundResult): Promise<ReviewResponseDocument> {
@@ -13,8 +14,10 @@ export async function currentResponses(store: SessionStore, session: ReviewSessi
   }
   if (!await letterMatches(path, session, result)) throw new Error('수정 답변서의 검토 기준이 일치하지 않습니다. 작업 폴더를 확인해 주세요.');
   await waitForResponseSaves(path);
-  const responses = await readEditableResponses(path, result);
-  return { source: 'revision', path, responses, editedCommentIds: responses.filter(response => {
+  // The letter document, once the author opened one, is the letter: its wording wins.
+  const responses = await overlayLetterDocument(store.project, path, session, await readEditableResponses(path, result));
+  const letterDocument = (await readLetterRecord(path))?.filename;
+  return { source: 'revision', path, responses, ...(letterDocument ? { letterDocument } : {}), editedCommentIds: responses.filter(response => {
     const original = result.responses.find(item => item.commentId === response.commentId);
     return response.response !== original?.response || response.verification !== original?.verification;
   }).map(response => response.commentId) };

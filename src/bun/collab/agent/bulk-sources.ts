@@ -3,6 +3,7 @@ import { relative, sep } from "path";
 import type { CitationMetadata, FileNode } from "../../../shared/rpc-types";
 import { normalizeDoi, parseBibtexEntries, type BibtexEntry } from "../../../shared/bibtex-utils";
 import type { CollabSession } from "../registry";
+import { isLetterDocument } from "../../../shared/review-session/letter-document";
 
 /** A project file other than the manuscript under revision, as plain text. */
 export interface ProjectText { path: string; text: string }
@@ -166,7 +167,7 @@ export async function projectBulkSources(session: CollabSession): Promise<BulkSo
       const files = flatten(await fileSystem.listProjectFiles(projectPath, 0, Number.POSITIVE_INFINITY))
         .map(file => ({ file, path: projectRelative(file.path) }))
         .filter(({ path }) => path.startsWith("documents/")
-          ? path.endsWith(".scholarpen.json") && path !== `documents/${session.filename}`
+          ? path.endsWith(".scholarpen.json") && path !== `documents/${session.filename}` && !isLetterDocument(path.slice("documents/".length))
           : path.startsWith("drafts/") && NOTE_EXTENSIONS.test(path))
         .sort((a, b) => a.path.localeCompare(b.path))
         .slice(0, MAX_PROJECT_FILES);

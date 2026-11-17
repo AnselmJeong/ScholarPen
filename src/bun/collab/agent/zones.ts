@@ -11,7 +11,7 @@ import { ZONES_MAP, zoneOf, type Zone } from "../../../shared/collab/zones";
 import type { CollabSession } from "../registry";
 import { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN, type Attachment, type CollabAgent } from "./agent";
 import type { EditMode } from "./block-edit";
-import { anchorThread, readDoc, readableText, sectionOf } from "./doc-model";
+import { anchorThread, readDoc, readableText, sectionOf, writeTopLevel } from "./doc-model";
 import { clip } from "./prompts";
 
 /** Maps a block's zone to how AI edits may land there. */
@@ -62,15 +62,6 @@ function draftMessages(title: string, brief: string, notes: string, context: str
     `<notes>\n${notes || "(no notes yet)"}\n</notes>\n\n` +
     `<rest_of_manuscript reference_only="true">\n${context}\n</rest_of_manuscript>`;
   return [{ role: "system", content: system }, { role: "user", content: user }];
-}
-
-/** Writes the top-level block list back to the shared Y.Doc with a minimal diff. */
-function writeTopLevel(session: CollabSession, doc: PMNode, origin: unknown) {
-  const root = session.ydoc.getXmlFragment(COLLAB_FRAGMENT).get(0);
-  if (!(root instanceof Y.XmlElement) || root.nodeName !== "blockGroup") throw new Error("Unexpected document structure.");
-  session.ydoc.transact(() => {
-    updateYFragment(session.ydoc, root, doc.firstChild!, { mapping: new Map(), isOMark: new Map() });
-  }, origin);
 }
 
 /**

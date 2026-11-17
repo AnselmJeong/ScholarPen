@@ -61,11 +61,8 @@ import { glossaryGuidance, type Glossary } from "../../../shared/glossary";
 import { mapGuidance, type ManuscriptMap } from "../../../shared/manuscript-map";
 import { recordRevision, REVISIONS_MAP, type RevisionEntry, type RevisionParagraph } from "../../../shared/collab/revision-log";
 
-/** Yjs transaction origin of every AI text edit; the undo manager tracks it. */
-export const AI_ORIGIN = "ai-agent";
-/** Origin of AI bookkeeping (comment anchors, review state) that "undo AI edit" must not revert. */
-export const AI_META_ORIGIN = "ai-meta";
-export const AI_EDITS_MAP = "aiEdits";
+import { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN } from "./origins";
+export { AI_EDITS_MAP, AI_META_ORIGIN, AI_ORIGIN };
 
 function detectionThread(thread: ThreadSnapshot) {
   const request = [...thread.comments].reverse().find(comment => !comment.deleted && !isAIUser(comment.userId));
