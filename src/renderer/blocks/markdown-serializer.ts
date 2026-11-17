@@ -8,6 +8,7 @@ import { NOTE_MARKER } from "./markdown-notes";
 import { normalizeFigureCaption } from "./caption-markdown";
 import { blockLabel, collectReferenceTargets, duplicateReferenceLabels, normalizeQuartoBlocks,
   validFigureDimension, validQuartoLabel } from "../../shared/quarto-references";
+import { withoutAIPlaceholders } from "../../shared/collab/ai-placeholder";
 
 export type ExportFormat = "md" | "qmd";
 
@@ -201,7 +202,8 @@ export async function blocksToScholarMarkdown(
   options: { filename?: string } = {},
 ): Promise<string> {
   const lines: string[] = [];
-  blocks = normalizeQuartoBlocks(blocks);
+  // AI drafting placeholders are plans, not text.
+  blocks = withoutAIPlaceholders(normalizeQuartoBlocks(blocks));
   if (format === "qmd") {
     // Quarto counts YAML title and a body H1 as separate book headings.
     // Keep the existing H1 (including its identifier) as the sole title.

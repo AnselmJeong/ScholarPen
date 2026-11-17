@@ -1,8 +1,11 @@
 import * as Y from "yjs";
-import type { Node as PMNode } from "prosemirror-model";
+import { randomUUID } from "crypto";
+import { Fragment, Slice, type Node as PMNode } from "prosemirror-model";
 import { EditorState } from "prosemirror-state";
 import { updateYFragment, yXmlFragmentToProseMirrorRootNode } from "y-prosemirror";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
+import { AI_PLACEHOLDER_TYPE } from "../../../shared/collab/ai-placeholder";
+import { AI_META_ORIGIN } from "./origins";
 import type { CollabSession } from "../registry";
 
 // BlockNote's ProseMirror layout: doc > blockGroup > blockContainer(id) > [blockContent, blockGroup?]
@@ -201,4 +204,29 @@ export function anchorThread(session: CollabSession, blockId: string, threadId: 
   const tr = state.tr.addMark(from ?? content.from, to ?? content.to,
     session.schema.marks.comment.create({ threadId, orphan: false }));
   writeBlock(session, tr.doc.nodeAt(block.pos)!, origin);
+}
+
+/** A top-level block by id, with its position. */
+export function topLevel(doc: PMNode, blockId: string) {
+  let found: { pos: number; node: PMNode } | null = null;
+  doc.firstChild?.forEach((node, offset) => { if (node.attrs.id === blockId) found = { pos: offset + 1, node }; });
+  return found as { pos: number; node: PMNode } | null;
+}
+
+/** Removes a drafting job's remaining placeholders (cancelled, failed, or left by a restart when `draftId` is omitted). */
+export function removePlaceholders(session: CollabSession, draftId?: string) {
+  let doc = readDoc(session);
+  const ids: string[] = [];
+  doc.firstChild?.forEach((node) => {
+    const content = node.firstChild;
+    if (content?.type.name === AI_PLACEHOLDER_TYPE && (draftId === undefined || content.attrs.draft === draftId)) ids.push(node.attrs.id);
+  });
+  if (!ids.length) return;
+  for (const id of ids.reverse()) {
+    const block = topLevel(doc, id);
+    if (block) doc = doc.replace(block.pos, block.pos + block.node.nodeSize, Slice.empty);
+  }
+  // An empty document still needs one block.
+  if (!doc.firstChild?.childCount) doc = doc.replace(1, 1, new Slice(Fragment.from(session.schema.nodes.blockContainer.create({ id: randomUUID() }, [session.schema.nodes.paragraph.create()])), 0, 0));
+  writeTopLevel(session, doc, AI_META_ORIGIN);
 }

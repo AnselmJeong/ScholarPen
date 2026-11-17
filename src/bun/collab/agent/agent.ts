@@ -27,6 +27,7 @@ import {
   listBlocks,
   readDoc,
   readableText,
+  removePlaceholders,
   threadRange,
   type BlockRef,
 } from "./doc-model";
@@ -98,7 +99,7 @@ export interface Attachment {
   releaseHold: (() => void) | null;
 }
 
-interface Job {
+export interface Job {
   references?: MentionedFileContext[];
   /** Edit level, glossary and manuscript map for every prompt of this job. */
   policy?: string;
@@ -225,6 +226,8 @@ export class CollabAgent {
         }
       }
     }, AI_META_ORIGIN);
+    // Placeholders of a draft cut short by a restart are plans no one is writing.
+    removePlaceholders(session);
     this.scanThreads(attachment);
   }
 
@@ -292,6 +295,11 @@ export class CollabAgent {
     list.unshift({ ...view });
     this.history.set(view.docKey, list.slice(0, RECENT_JOBS));
     this.deps.onActivity(view.docKey, this.history.get(view.docKey)!);
+  }
+
+  /** Shows what a running job is doing now (its detail line in the Activity tab). */
+  reportProgress(job: Job, detail: string) {
+    this.update(job, { detail });
   }
 
   private update(job: Job, patch: Partial<AgentJobView>) {

@@ -21,7 +21,8 @@ const Y = await import("yjs");
 const { CollabRegistry } = await import("../registry");
 const { CollabAgent } = await import("./agent");
 const { zoneEditMode, enqueueDraft, paragraphContent } = await import("./zones");
-const { readDoc, findBlock, blockContent, anchorThread, threadRange } = await import("./doc-model");
+const { readDoc, findBlock, blockContent, anchorThread, threadRange, topLevel, writeBlock, writeTopLevel } = await import("./doc-model");
+const { Slice } = await import("prosemirror-model");
 const { schemaToSpecJSON } = await import("../../../shared/collab/schema-spec");
 const { COLLAB_THREADS_MAP } = await import("../../../shared/collab/protocol");
 const { createThread, readThreads } = await import("../../../shared/collab/threads");
@@ -146,4 +147,70 @@ test("citations in drafts become citation nodes", () => {
   const nodes = paragraphContent(editor.pmSchema, "As shown [@a; @b, p. 3].");
   expect(nodes.map((node) => node.type.name)).toEqual(["text", "citation", "citation", "text"]);
   expect(nodes[2].attrs).toMatchObject({ citekey: "b", locator: "p. 3" });
+});
+
+test("a planned draft shows its paragraphs first and follows the author's changes to the plan", async () => {
+  const calls: string[] = [];
+  let session: any;
+  const placeholders = () => (yDocToBlocks(editor, session.ydoc, "document-store") as any[]).filter((block) => block.type === "aiPlaceholder");
+  let seenWhileWriting: any[] = [];
+  session = await setup(async (messages) => {
+    const system = messages[0].content as string;
+    const user = messages[1].content as string;
+    if (system.includes("First plan the section")) {
+      calls.push("plan");
+      return '{"paragraphs":[{"intent":"Who took part"},{"intent":"How long it ran"},{"intent":"Ethics approval"}]}';
+    }
+    const paragraph = user.match(/<this_paragraph>([\s\S]*?)<\/this_paragraph>/)![1];
+    calls.push(paragraph);
+    if (calls.length === 2) {
+      seenWhileWriting = placeholders().map((block) => ({ intent: block.props.intent, state: block.props.state }));
+      // While the first paragraph is written, the author rewords the second and drops the third.
+      const [, second, third] = placeholders();
+      const doc = readDoc(session);
+      const node = topLevel(doc, second.id)!.node;
+      writeBlock(session, node.type.create(node.attrs, [node.firstChild!.type.create({ ...node.firstChild!.attrs, intent: "The eight-week schedule" })]), "editor");
+      const after = readDoc(session);
+      const drop = topLevel(after, third.id)!;
+      writeTopLevel(session, after.replace(drop.pos, drop.pos + drop.node.nodeSize, Slice.empty), "editor");
+      return "Forty adults took part at two sites [@kim2021].";
+    }
+    return "The trial ran for eight weeks.";
+  });
+  session.ydoc.getMap(ZONES_MAP).set("methods", { trust: "edit" });
+  enqueueDraft(agent, session.docKey, "m2", async (messages) => (agent as any).deps.complete(messages));
+  for (let i = 0; i < 300 && agent.isBusy(session.docKey); i++) await new Promise((r) => setTimeout(r, 10));
+
+  expect(seenWhileWriting).toEqual([
+    { intent: "Who took part", state: "writing" },
+    { intent: "How long it ran", state: "pending" },
+    { intent: "Ethics approval", state: "pending" },
+  ]);
+  expect(calls).toEqual(["plan", "1. Who took part", "2. The eight-week schedule"]);
+  expect(placeholders()).toHaveLength(0);
+  const blocks = yDocToBlocks(editor, session.ydoc, "document-store") as any[];
+  const ids = blocks.map((block) => block.id);
+  const drafted = blocks.slice(ids.indexOf("m2") + 1, ids.indexOf("results"));
+  expect(drafted.map((block) => block.type)).toEqual(["paragraph", "paragraph"]);
+  expect(drafted[0].content[1].props.citekey).toBe("kim2021");
+  expect(drafted[1].content[0].text).toBe("The trial ran for eight weeks.");
+  expect(readThreads(session.ydoc.getMap(COLLAB_THREADS_MAP)).some((t) => t.meta.category === "draft")).toBe(true);
+  // One undo takes the whole draft back.
+  expect(agent.undoLast(session.docKey)).toBe(true);
+  expect((yDocToBlocks(editor, session.ydoc, "document-store") as any[]).map((block) => block.id)).toEqual(BLOCKS.map((block) => block.id));
+});
+
+test("a draft that stops part-way keeps what it wrote and clears its plan", async () => {
+  let paragraphs = 0;
+  const session = await setup(async (messages) => {
+    if ((messages[0].content as string).includes("First plan the section")) return '{"paragraphs":["One","Two","Three"]}';
+    if (++paragraphs === 2) throw new Error("model unavailable");
+    return "The first paragraph.";
+  });
+  session.ydoc.getMap(ZONES_MAP).set("methods", { trust: "edit" });
+  enqueueDraft(agent, session.docKey, "m2", async (messages) => (agent as any).deps.complete(messages));
+  for (let i = 0; i < 300 && agent.isBusy(session.docKey); i++) await new Promise((r) => setTimeout(r, 10));
+  const blocks = yDocToBlocks(editor, session.ydoc, "document-store") as any[];
+  expect(blocks.some((block) => block.type === "aiPlaceholder")).toBe(false);
+  expect(blocks.filter((block) => block.content?.[0]?.text === "The first paragraph.")).toHaveLength(1);
 });
