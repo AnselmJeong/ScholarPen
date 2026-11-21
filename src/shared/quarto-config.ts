@@ -249,6 +249,12 @@ function readFormatOption(
   return root[key];
 }
 
+/** The Word template `_quarto.yml` names for docx, or "" when pandoc's default is used. */
+export function quartoDocxReferenceDoc(source: string): string {
+  const value = readFormatOption(parseYamlRoot(source), ["docx"], "reference-doc");
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function readBookOptions(root: Record<string, unknown>): QuartoBookOptions {
   const book = readMapping(root, "book");
   const docx = formatMapping(root, "docx");

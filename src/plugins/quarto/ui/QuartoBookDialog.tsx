@@ -570,6 +570,7 @@ export function QuartoBookDialog({
                       <p className="text-xs font-medium">Template</p>
                       <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
                         A .docx whose styles set fonts, heading styles, spacing and margins.
+                        Without one, tables get a rule above, under the header row and below; a template’s own Table style decides instead.
                       </p>
                     </div>
                     <input

@@ -2,10 +2,11 @@ import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { join } from "path";
 import type { QuartoRenderFormat, QuartoRenderResult } from "../../../shared/rpc-types";
-import { getQuartoRenderFormats, parseQuartoBookConfig } from "../../../shared/quarto-config";
+import { getQuartoRenderFormats, parseQuartoBookConfig, quartoDocxReferenceDoc } from "../../../shared/quarto-config";
 import { isQuartoReference } from "../../../shared/quarto-references";
 import { duplicateBookReferenceDiagnostic } from "./reference-validation";
 import { prepareQuartoBookImages } from "./prepare-images";
+import { prepareDocxTableStyling, type DocxTableStyling } from "./docx-tables";
 
 const DEFAULT_RENDER_TIMEOUT_MS = 9 * 60 * 1000;
 const MAX_LOG_CHARACTERS = 24_000;
@@ -107,6 +108,7 @@ export async function renderQuartoBookProject(
   }
 
   let outputDirectory: string;
+  let hasWordTemplate = false;
   try {
     const configuredFormats = getQuartoRenderFormats(configSource);
     if (!configuredFormats.includes(options.format)) {
@@ -118,6 +120,7 @@ export async function renderQuartoBookProject(
     }
     const outputDir = parseQuartoBookConfig(configSource, []).outputDir;
     outputDirectory = join(options.projectDirectory, outputDir);
+    hasWordTemplate = options.format === "docx" && quartoDocxReferenceDoc(configSource) !== "";
   } catch (error) {
     return errorResult(
       options.format,
@@ -135,13 +138,18 @@ export async function renderQuartoBookProject(
     );
   }
 
+  let docxStyling: DocxTableStyling | null = null;
   try {
     const duplicateDiagnostic = await duplicateBookReferenceDiagnostic(options.projectDirectory, configSource);
     if (duplicateDiagnostic) return errorResult(options.format, startedAt, duplicateDiagnostic);
     await prepareQuartoBookImages(options.projectDirectory, configSource);
+    // An author's own Word template decides how its tables look.
+    if (options.format === "docx" && !hasWordTemplate) {
+      docxStyling = await prepareDocxTableStyling(executable, options.environment);
+    }
     const timeoutMs = options.timeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS;
     const process = Bun.spawn({
-      cmd: [executable, "render", "--to", options.format],
+      cmd: [executable, "render", "--to", options.format, ...(docxStyling?.args ?? [])],
       cwd: options.projectDirectory,
       env: options.environment,
       stdin: "ignore",
@@ -206,5 +214,7 @@ export async function renderQuartoBookProject(
       startedAt,
       error instanceof Error ? error.message : "Could not start Quarto rendering.",
     );
+  } finally {
+    await docxStyling?.cleanup();
   }
 }

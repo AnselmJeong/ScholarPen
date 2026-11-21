@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, stat } from "fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { initializeProjectSkeleton } from "./manager";
@@ -53,5 +53,19 @@ describe("new project skeleton", () => {
     expect(
       await readFile(join(projectPath, "exports", "references.bib"), "utf-8"),
     ).toBe("");
+    expect((await readdir(join(projectPath, "exports"))).sort()).toEqual(["index.qmd", "references.bib"]);
+    expect(await readFile(join(projectPath, "exports", "index.qmd"), "utf-8")).toBe("");
+  });
+
+  test("keeps an index.qmd that is already in exports", async () => {
+    const parentPath = await mkdtemp(join(tmpdir(), "scholarpen-project-skeleton-"));
+    temporaryProjects.push(parentPath);
+    const projectPath = join(parentPath, "existing-book");
+    await mkdir(join(projectPath, "exports"), { recursive: true });
+    await writeFile(join(projectPath, "exports", "index.qmd"), "# Preface\n");
+
+    await initializeProjectSkeleton(projectPath, "existing-book");
+
+    expect(await readFile(join(projectPath, "exports", "index.qmd"), "utf-8")).toBe("# Preface\n");
   });
 });

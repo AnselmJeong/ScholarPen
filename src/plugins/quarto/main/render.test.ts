@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, rm, writeFile } from "fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { renderQuartoBookProject } from "./render";
@@ -74,6 +74,50 @@ describe("Quarto book rendering", () => {
     if (result.status !== "success") return;
     expect(result.stdout).toContain("arguments:render --to html");
     expect(result.outputDirectory).toBe(join(fixture.projectDirectory, "rendered-book"));
+  });
+
+  describe("Word tables", () => {
+    // The fake Quarto writes the reference document when asked to build it and logs every call.
+    const fakeQuarto = (buildExit = 0) => [
+      'echo "$*" >> "$(dirname "$0")/calls.log"',
+      `if [ "$1" = pandoc ]; then [ ${buildExit} = 0 ] && printf PK > "$4"; exit ${buildExit}; fi`,
+      'printf "arguments:%s\\n" "$*"',
+    ].join("\n");
+    const calls = async (projectDirectory: string) =>
+      (await readFile(join(projectDirectory, "calls.log"), "utf8")).trim().split("\n");
+
+    test("adds ScholarPen's reference document and table filter without a Word template", async () => {
+      const fixture = await createFixture("  docx: {}", fakeQuarto());
+      const result = await renderQuartoBookProject({ ...fixture, format: "docx" });
+      expect(result.status).toBe("success");
+      const [build, render] = await calls(fixture.projectDirectory);
+      expect(build).toMatch(/^pandoc lua \S+\/reference-doc\.lua \S+\/scholarpen-reference\.docx$/);
+      const match = render.match(/^render --to docx --reference-doc (\S+\/scholarpen-reference\.docx) --lua-filter (\S+\/ruled-tables\.lua)$/);
+      expect(match).not.toBeNull();
+      // The generated files are removed once Quarto has finished.
+      expect(await stat(match![1]).catch(() => null)).toBeNull();
+      expect(await stat(match![2]).catch(() => null)).toBeNull();
+    });
+
+    test("leaves tables to the author's own Word template", async () => {
+      const fixture = await createFixture("  docx:\n    reference-doc: journal.docx", fakeQuarto());
+      const result = await renderQuartoBookProject({ ...fixture, format: "docx" });
+      expect(result.status).toBe("success");
+      expect(await calls(fixture.projectDirectory)).toEqual(["render --to docx"]);
+    });
+
+    test("still renders when the reference document cannot be built", async () => {
+      const fixture = await createFixture("  docx: {}", fakeQuarto(3));
+      const result = await renderQuartoBookProject({ ...fixture, format: "docx" });
+      expect(result.status).toBe("success");
+      expect((await calls(fixture.projectDirectory)).at(-1)).toBe("render --to docx");
+    });
+
+    test("does not change other formats", async () => {
+      const fixture = await createFixture("  html: {}", fakeQuarto());
+      await renderQuartoBookProject({ ...fixture, format: "html" });
+      expect(await calls(fixture.projectDirectory)).toEqual(["render --to html"]);
+    });
   });
 
   test("returns a useful diagnostic and logs when Quarto exits unsuccessfully", async () => {

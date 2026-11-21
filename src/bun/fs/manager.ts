@@ -190,6 +190,8 @@ function isProjectDirectoryCandidate(name: string): boolean {
   return true;
 }
 
+const QUARTO_INDEX_RELATIVE_PATH = "exports/index.qmd";
+
 const PROJECT_SKELETON_DIRECTORIES = [
   "documents",
   "drafts",
@@ -216,6 +218,11 @@ export async function initializeProjectSkeleton(
     JSON.stringify(emptyManuscript, null, 2),
   );
   await writeFile(join(projectPath, BIBLIOGRAPHY_RELATIVE_PATH), "");
+  // A Quarto book needs index.qmd as its first chapter. An exported document
+  // named "index" replaces it; an existing file is never overwritten here.
+  await writeFile(join(projectPath, QUARTO_INDEX_RELATIVE_PATH), "", { flag: "wx" }).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  });
 }
 
 class FileSystemManager {

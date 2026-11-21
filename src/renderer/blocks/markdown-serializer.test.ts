@@ -102,6 +102,48 @@ describe("Quarto export frontmatter", () => {
     expect(JSON.stringify(blocks)).toBe(original);
   });
 
+  test("makes an opening lower-level heading the chapter title instead of adding the filename", async () => {
+    const editor = { blocksToMarkdownLossy: async () => "Body text" } as unknown as BlockNoteEditor;
+    const blocks = [
+      { id: "blank", type: "paragraph", props: {}, content: [], children: [] },
+      { id: "results", type: "heading", props: { level: 2 },
+        content: [{ type: "text", text: "Results", styles: {} }], children: [] },
+      { id: "patients", type: "heading", props: { level: 2 },
+        content: [{ type: "text", text: "Patient characteristics", styles: {} }], children: [] },
+      { id: "body", type: "paragraph", props: {},
+        content: [{ type: "text", text: "Body text", styles: {} }], children: [] },
+    ];
+    const before = JSON.stringify(blocks);
+    const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd", documentTitleFromFilename("04_results.scholarpen.json"));
+    expect(qmd.match(/^#+ .*$/gm)).toEqual(["# Results", "## Patient characteristics"]);
+    expect(qmd).not.toContain("# results");
+    expect(JSON.stringify(blocks)).toBe(before);
+  });
+
+  test("adds the filename title when the opening heading is below the document's top level", async () => {
+    const editor = { blocksToMarkdownLossy: async () => "Body text" } as unknown as BlockNoteEditor;
+    const blocks = [
+      { id: "note", type: "heading", props: { level: 3 },
+        content: [{ type: "text", text: "Note", styles: {} }], children: [] },
+      { id: "methods", type: "heading", props: { level: 2 },
+        content: [{ type: "text", text: "Methods", styles: {} }], children: [] },
+    ];
+    const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd", "Results");
+    expect(qmd.match(/^#+ .*$/gm)).toEqual(["# Results", "### Note", "## Methods"]);
+  });
+
+  test("adds the filename title when the document opens with text, not a heading", async () => {
+    const editor = { blocksToMarkdownLossy: async () => "Body text" } as unknown as BlockNoteEditor;
+    const blocks = [
+      { id: "body", type: "paragraph", props: {},
+        content: [{ type: "text", text: "Body text", styles: {} }], children: [] },
+      { id: "section", type: "heading", props: { level: 2 },
+        content: [{ type: "text", text: "Methods", styles: {} }], children: [] },
+    ];
+    const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd", "Results");
+    expect(qmd.match(/^#+ .*$/gm)).toEqual(["# Results", "## Methods"]);
+  });
+
   test("marks an index title unnumbered without changing the source or other headings", async () => {
     const editor = {} as BlockNoteEditor;
     const blocks = [

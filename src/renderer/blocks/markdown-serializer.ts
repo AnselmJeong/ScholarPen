@@ -55,6 +55,10 @@ function extractInlineText(content: unknown): string {
   return "";
 }
 
+function isBlankParagraph(block: Block): boolean {
+  return block.type === "paragraph" && !extractInlineText(block.content).trim() && !block.children?.length;
+}
+
 function inlineProp(obj: Record<string, unknown>, key: string): unknown {
   const props = obj.props as Record<string, unknown> | undefined;
   return props?.[key] ?? obj[key];
@@ -209,6 +213,15 @@ export async function blocksToScholarMarkdown(
     // Keep the existing H1 (including its identifier) as the sole title.
     let chapter = blocks.find((block) => block.type === "heading" && (block.props.level ?? 1) === 1);
     const isIndex = /(?:^|[/\\])index\.(?:qmd|scholarpen\.json)$/i.test(options.filename ?? "");
+    // A document that opens with a top-level heading already names its chapter:
+    // make that heading the H1 instead of adding the filename above it as a second title.
+    const opening = chapter ? undefined : blocks.find((block) => !isBlankParagraph(block));
+    const headingLevel = (block: Block) => Number(block.props.level ?? 1);
+    const topLevel = Math.min(...blocks.filter((block) => block.type === "heading").map(headingLevel));
+    if (opening?.type === "heading" && headingLevel(opening) === topLevel) {
+      opening.props.level = 1;
+      chapter = opening;
+    }
     if (!chapter) {
       chapter = { id: "", type: "heading", props: { level: 1 },
         content: [{ type: "text", text: title, styles: {} }], children: [] };
