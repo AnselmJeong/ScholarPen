@@ -1,9 +1,10 @@
 import { afterAll, afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { fileSystem, normalizeSettings } from "../fs/manager";
 import { buildAgentMessages } from "./context-builder";
+import { snapshotActiveDocument } from "../../shared/active-document-context";
 import type { AgentStreamParams } from "../../shared/rpc-types";
 
 const recall = spyOn(fileSystem, "recallProjectMemory");
@@ -55,4 +56,24 @@ test("general chat in a project may hand manuscript edits to ScholarPen AI; sele
   const noProject = await buildAgentMessages({ ...request, projectPath: null }, settings);
   expect(noProject.messages[0].content).not.toContain("<scholarpen_edit");
   expect(noProject.messages[0].content).toContain("You are read-only");
+});
+
+test("a mentioned document that is also open is sent once, as the live snapshot", async () => {
+  recall.mockResolvedValue([]);
+  const request = await params();
+  const path = join(request.projectPath!, "documents", "04_results.scholarpen.json");
+  await mkdir(join(request.projectPath!, "documents"));
+  await writeFile(path, JSON.stringify([{ type: "paragraph", content: [{ type: "text", text: "SAVED COPY" }] }]));
+  files.mockResolvedValue([{ name: "documents", path: join(request.projectPath!, "documents"), isDirectory: true, kind: "folder", lastModified: 0,
+    children: [{ name: "04_results.scholarpen.json", path, isDirectory: false, kind: "document", lastModified: 0 }] }] as any);
+  // The scratch project is outside the configured project roots the real reader allows.
+  const read = spyOn(fileSystem, "readTextFile").mockImplementation(async (filePath: string) => Bun.file(filePath).text());
+  try {
+    const result = await buildAgentMessages({ ...request, message: "@[documents/04_results.scholarpen.json] 비교해줘",
+      activeDocument: snapshotActiveDocument(path, [{ type: "paragraph", content: [{ type: "text", text: "LIVE COPY" }] }]) }, settings);
+    const all = result.messages.map(message => message.content).join("\n");
+    expect(all).toContain('<mentioned_file path="documents/04_results.scholarpen.json" same_as="active_document" />');
+    expect(all).toContain("LIVE COPY");
+    expect(all).not.toContain("SAVED COPY");
+  } finally { files.mockResolvedValue([]); read.mockRestore(); }
 });

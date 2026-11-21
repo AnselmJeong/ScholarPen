@@ -3,6 +3,7 @@ import { realpath } from "fs/promises";
 import type { AgentMentionableFile, FileNode } from "../../shared/rpc-types";
 import { parseFileMentions, type ParsedFileMention } from "../../shared/file-mentions";
 import { fileSystem } from "../fs/manager";
+import { manuscriptText } from "../../shared/manuscript-text";
 
 const TEXT_EXTENSIONS = new Set([
   ".md",
@@ -51,6 +52,21 @@ function trimContent(content: string, limit = 20_000): { content: string; trunca
     content: `${head}\n\n[...truncated...]\n\n${tail}`,
     truncated: true,
   };
+}
+
+/**
+ * A manuscript is mentioned for its text: its saved block JSON is mostly
+ * markup, so trimming the JSON kept only a few percent of the writing.
+ */
+const DOCUMENT_TEXT_LIMIT = 40_000;
+
+function manuscriptFileText(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? manuscriptText(parsed) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function listAgentMentionableFiles(projectPath: string): Promise<AgentMentionableFile[]> {
@@ -127,7 +143,8 @@ export async function resolveMentionedFiles(params: {
       }
     }
     const raw = await readTextFile(filePath);
-    const { content, truncated } = trimContent(raw);
+    const document = filePath.endsWith(".scholarpen.json") ? manuscriptFileText(raw) : null;
+    const { content, truncated } = document === null ? trimContent(raw) : trimContent(document, DOCUMENT_TEXT_LIMIT);
     totalChars += content.length;
     if (totalChars > 80_000) throw new Error("Referenced content is too large. Select fewer files or a smaller folder.");
     contexts.push({

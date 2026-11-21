@@ -1,15 +1,16 @@
 import type { ActiveDocumentContext } from "./rpc-types";
+import { manuscriptText } from "./manuscript-text";
 
 export const ACTIVE_DOCUMENT_LIMIT = 50_000;
 
-/** Preserve structured citations, tables, math and nested blocks, without image bytes. */
+/**
+ * The live document as readable text (citations, tables, math and nesting
+ * kept; no image bytes). Block JSON was mostly markup: a results section with
+ * twelve tables took 160,000 characters for 27,000 of text, and lost its
+ * middle to the limit above.
+ */
 export function snapshotActiveDocument(path: string, blocks: unknown[]): ActiveDocumentContext {
-  const content = JSON.stringify(blocks, (key, value: unknown) => {
-    if (key === "id" || key === "styles") return undefined;
-    if (typeof value === "string" && value.startsWith("data:")) return "[embedded media]";
-    return value;
-  });
-  return boundActiveDocument({ path, content, truncated: false });
+  return boundActiveDocument({ path, content: manuscriptText(blocks), truncated: false });
 }
 
 export function boundActiveDocument(document: ActiveDocumentContext): ActiveDocumentContext {

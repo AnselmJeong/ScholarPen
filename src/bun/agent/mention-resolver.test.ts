@@ -190,3 +190,20 @@ describe("agent file mention resolution", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
+
+test("a mentioned manuscript is read as its text, not its block JSON", async () => {
+  const paragraph = (text: string) => ({ id: "x", type: "paragraph", props: { textColor: "default", backgroundColor: "default", textAlignment: "left" },
+    content: [{ type: "text", text, styles: {} }], children: [] });
+  const blocks = [
+    ...Array.from({ length: 400 }, (_, index) => paragraph(`Old result ${index}.`)),
+    { id: "d", type: "divider", props: {}, children: [] },
+    paragraph("New result."),
+  ];
+  const [context] = await resolveMentionedFiles({
+    projectPath, explicitFilePaths: [], message: "Compare @[documents/03 History of Neuromodulation.scholarpen.json]",
+  }, { listMentionableFiles: async () => mentionable, readTextFile: async () => JSON.stringify(blocks) });
+  expect(JSON.stringify(blocks).length).toBeGreaterThan(40_000);
+  expect(context.truncated).toBe(false);
+  expect(context.content).toStartWith("Old result 0.");
+  expect(context.content).toEndWith("Old result 399.\n\n---\n\nNew result.");
+});

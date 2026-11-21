@@ -59,9 +59,12 @@ export function detectionInputForRequest(params: Pick<AgentStreamParams, "messag
   const pasted = params.message.split(/\n\s*\n/).slice(1).join("\n\n").trim();
   let text = explicit || pasted || params.detectionInput?.text;
   const scope = explicit || pasted ? "제공한 텍스트" : params.detectionInput?.scope === "selection" ? "선택한 텍스트" : "현재 문서의 본문";
+  // The active document is readable text with headings, tables and citation keys, not prose
+  // alone; the editor always sends its own detection input, so ask for that instead.
   if (!text && params.activeDocument) {
-    if (params.activeDocument.truncated) throw new Error("문서가 일부 생략되어 분석할 수 없습니다. 편집기에서 /ai-score를 실행해 주세요.");
-    text = detectionTextFromBlocks(JSON.parse(params.activeDocument.content));
+    throw new Error(params.activeDocument.truncated
+      ? "문서가 일부 생략되어 분석할 수 없습니다. 편집기에서 /ai-score를 실행해 주세요."
+      : "편집기에서 /ai-score를 실행해 주세요.");
   }
   if (!text) throw new Error("분석할 문서를 열거나 /ai-score 뒤에 분석할 글을 붙여 주세요.");
   return { text, scope };

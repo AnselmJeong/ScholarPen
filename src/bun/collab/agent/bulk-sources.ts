@@ -4,6 +4,7 @@ import type { CitationMetadata, FileNode } from "../../../shared/rpc-types";
 import { normalizeDoi, parseBibtexEntries, type BibtexEntry } from "../../../shared/bibtex-utils";
 import type { CollabSession } from "../registry";
 import { isLetterDocument } from "../../../shared/review-session/letter-document";
+import { inlineText } from "../../../shared/manuscript-text";
 
 /** A project file other than the manuscript under revision, as plain text. */
 export interface ProjectText { path: string; text: string }
@@ -40,22 +41,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-export function inlineText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map(item => {
-    if (!record(item)) return "";
-    const props = record(item.props) ? item.props : {};
-    switch (item.type) {
-      case "text": return typeof item.text === "string" ? item.text : "";
-      case "citation": return `[@${props.citekey ?? ""}${props.locator ? `, ${props.locator}` : ""}]`;
-      case "crossReference": return `@${props.label ?? ""}`;
-      case "inlineMath": return `$${props.formula ?? ""}$`;
-      case "footnote": return `[^${props.index ?? ""}]`;
-      default: return inlineText(item.content);
-    }
-  }).join("");
-}
+export { inlineText };
 
 /** Readable text of a saved BlockNote document; citations keep their `[@key]` form. */
 export function blockNoteText(blocks: unknown): string {

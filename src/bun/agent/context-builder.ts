@@ -381,8 +381,10 @@ export async function buildAgentMessages(
         `<selected_skill id="${skill.id}" name="${skill.name}" source="${skill.source}">\n${skill.content}\n</selected_skill>`
     ),
     ...mentionedFiles.map(
-      (file) =>
-        `<mentioned_file path="${file.displayPath}" truncated="${file.truncated ? "true" : "false"}">\n${file.content}\n</mentioned_file>`
+      // The open document is sent once, as its live snapshot, which also holds unsaved edits.
+      (file) => file.filePath === activeDocument?.path
+        ? `<mentioned_file path="${file.displayPath}" same_as="active_document" />`
+        : `<mentioned_file path="${file.displayPath}" truncated="${file.truncated ? "true" : "false"}">\n${file.content}\n</mentioned_file>`
     ),
     buildProjectSourcePrompt(projectSources),
     projectMemoryPrompt(memories),
@@ -410,7 +412,7 @@ export async function buildAgentMessages(
       ...historyToMessages(params.history),
       ...(activeDocument ? [{
         role: "user" as const,
-        content: `<active_document reference_only="true" truncated="${activeDocument.truncated}">\nFile: ${JSON.stringify(activeDocument.path)}\nCurrent live editor snapshot (ScholarPen block JSON):\n${activeDocument.content}\n</active_document>`,
+        content: `<active_document reference_only="true" truncated="${activeDocument.truncated}">\nFile: ${JSON.stringify(activeDocument.path)}\nCurrent live editor snapshot as manuscript text (headings as #, tables as | rows, dividers as ---, citations as [@key], math as $…$):\n${activeDocument.content}\n</active_document>`,
       }] : []),
       { role: "user", content: trimMiddle(params.message || (images.length ? "첨부한 이미지를 설명해 주세요." : ""), USER_MESSAGE_LIMIT, "[...user message truncated...]"), ...(images.length ? { images } : {}) },
     ],
