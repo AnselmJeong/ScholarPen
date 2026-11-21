@@ -39,3 +39,20 @@ test("cancellation during memory lookup stops generation", async () => {
   recall.mockImplementation(async () => { controller.abort(); throw new DOMException("Aborted", "AbortError"); });
   await expect(buildAgentMessages(await params(), settings, controller.signal)).rejects.toThrow("Aborted");
 });
+
+test("general chat in a project may hand manuscript edits to ScholarPen AI; selection reviews may not", async () => {
+  recall.mockResolvedValue([]);
+  const request = await params();
+  const chat = await buildAgentMessages(request, settings);
+  expect(chat.messages[0].content).toContain("<scholarpen_edit document=");
+  expect(chat.messages[0].content).not.toContain("You are read-only");
+
+  const deepen = await buildAgentMessages({ ...request, analysisMode: "deepen", deepenContext: {
+    selectedText: "A sentence.", protectedText: "A sentence.", beforeSelection: "", afterSelection: "",
+  } }, settings);
+  expect(deepen.messages[0].content).not.toContain("<scholarpen_edit");
+
+  const noProject = await buildAgentMessages({ ...request, projectPath: null }, settings);
+  expect(noProject.messages[0].content).not.toContain("<scholarpen_edit");
+  expect(noProject.messages[0].content).toContain("You are read-only");
+});

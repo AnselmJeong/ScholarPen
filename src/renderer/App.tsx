@@ -42,6 +42,7 @@ import packageJson from "../../package.json";
 import { ActivityPanel, ActivityPanelHeader, type RightPanelTab } from "./components/sidebar/ActivityPanel";
 import { HistoryPanel } from "./components/sidebar/HistoryPanel";
 import { getEditorCollab } from "./collab/editor-collab";
+import { sendDocumentEditRequest, waitForDocumentEditor, type DocumentEditDispatch } from "./ai/document-edit-request";
 import { ProjectPanel } from "./components/sidebar/ProjectPanel";
 
 type AppView = "editor" | "settings";
@@ -279,6 +280,19 @@ export function App() {
     editorGroupRef.current?.openFile(target);
     setCurrentView("editor");
   }, [activeFile, fileTree]);
+
+  /** The Assistant hands a manuscript edit to ScholarPen AI; the document is opened first when it is not. */
+  const handleAssistantDocumentEdit = useCallback(async (path: string, instruction: string): Promise<DocumentEditDispatch> => {
+    const find = () => editorGroupRef.current?.getDocumentEditor(path) ?? null;
+    if (!find()) {
+      const target = collectDocumentNodes(fileTree).find((node) => node.path === path);
+      if (!target) return { ok: false, reason: "not-found" };
+      handleFileSelect(target);
+    }
+    const editor = await waitForDocumentEditor(find);
+    const sent = editor ? sendDocumentEditRequest(editor, instruction) : null;
+    return sent ? { ok: true, sent } : { ok: false, reason: "not-ready" };
+  }, [fileTree, handleFileSelect]);
 
   // ── Menu actions ──────────────────────────────────────────────────────────
 
@@ -697,6 +711,7 @@ export function App() {
                   editor={editorRef.current}
                   activeDocumentName={activeFile?.kind === "document" ? activeFile.name : null}
                   getActiveDocumentContext={() => editorGroupRef.current?.getActiveDocumentContext()}
+                  onRequestDocumentEdit={handleAssistantDocumentEdit}
                   onClose={() => setAiSidebarOpen(false)}
                   width={aiSidebarWidth}
                   deepenRequest={pendingDeepenRequest}

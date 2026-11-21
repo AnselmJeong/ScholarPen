@@ -46,6 +46,8 @@ export interface EditorPaneGroupHandle {
   prepareFileDeletion: (filePath: string) => Promise<() => void>;
   closeFileByPath: (filePath: string) => void;
   getDocumentSnapshot: (filePath: string) => unknown[] | null;
+  /** The mounted editor of an open document, or null when it is not open. */
+  getDocumentEditor: (filePath: string) => BlockNoteEditor<any, any, any> | null;
   getActiveDocumentContext: () => ActiveDocumentContext | undefined;
   openProjectFindReplace: () => boolean;
 }
@@ -276,6 +278,12 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         if (!tab || tab.file.kind !== "document") return undefined;
         const editor = editorMapRef.current.get(tab.id);
         return editor ? snapshotActiveDocument(tab.file.path, acceptedDocument(editor)) : undefined;
+      },
+
+      getDocumentEditor(filePath: string) {
+        const tabs = [...leftPaneRef.current.tabs, ...(rightPaneRef.current?.tabs ?? [])];
+        const tab = tabs.find((candidate) => candidate.file.path === filePath && candidate.file.kind === "document");
+        return tab ? editorMapRef.current.get(tab.id) ?? null : null;
       },
 
       getDocumentSnapshot(filePath: string) {

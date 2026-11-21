@@ -71,6 +71,19 @@ import { CitationCheckResults } from "./CitationCheckResults";
 import { CITATION_CHECK_MARKER, citationCheckResultText, parseCitationCheckResult } from "@shared/citation-check";
 import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult } from "@shared/citation-evidence";
 import { asksForAIScore, detectionTextFromBlocks, supersededDetectionMessages } from "@shared/ai-detection";
+import {
+  documentEditLabel,
+  extractDocumentEditRequests,
+  formatDocumentEditRequests,
+  hasUnfinishedDocumentEditRequest,
+  resolveDocumentEditTarget,
+} from "@shared/agent-document-edit";
+import {
+  describeDocumentEdit,
+  watchDocumentEdit,
+  type DocumentEditDispatch,
+  type DocumentEditNotice,
+} from "../../ai/document-edit-request";
 
 interface AISidebarProps {
   responsePreferences: AIResponsePreferences;
@@ -94,6 +107,8 @@ interface AISidebarProps {
   /** Stages a citation check's revision as a tracked change; returns an error message. */
   onApplyCitationRevision?: (requestId: string, protectedRevision: string) => string | null;
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
+  /** Hands a manuscript edit the author asked for to ScholarPen AI (opening the document if needed). */
+  onRequestDocumentEdit?: (path: string, instruction: string) => Promise<DocumentEditDispatch>;
 }
 
 type DropdownMode = "slash" | "file" | null;
@@ -843,6 +858,7 @@ export function AISidebar({
   onCitationCheckRequestConsumed,
   onApplyCitationRevision,
   onOpenProjectSource,
+  onRequestDocumentEdit,
 }: AISidebarProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [slashCommands, setSlashCommands] = useState<AgentSkill[]>([]);
@@ -861,6 +877,8 @@ export function AISidebar({
   const [preparedCitationCheckRequestId, setPreparedCitationCheckRequestId] = useState<string | null>(null);
   const [retryCitationRequest, setRetryCitationRequest] = useState<FindCitationRequest | null>(null);
   const [deepenApplyNotice, setDeepenApplyNotice] = useState<SelectionReviewNotice | null>(null);
+  const [editNotices, setEditNotices] = useState<Array<DocumentEditNotice & { id: string }>>([]);
+  const editWatchersRef = useRef<Array<() => void>>([]);
   const modelKeyRef = useRef<string | null>(null);
   const deepenRequestRef = useRef<DeepenAnalysisRequest | null>(null);
   const findCitationRequestRef = useRef<FindCitationRequest | null>(null);
@@ -899,7 +917,57 @@ export function AISidebar({
     });
   }, [project?.path]);
 
+  const clearEditNotices = useCallback(() => {
+    editWatchersRef.current.forEach((stop) => stop());
+    editWatchersRef.current = [];
+    setEditNotices([]);
+  }, []);
+
+  useEffect(() => clearEditNotices, [clearEditNotices]);
+
+  /** Sends each complete edit request in a finished answer to ScholarPen AI and follows it. */
+  const dispatchDocumentEdits = useCallback(async (
+    answer: string,
+    projectPath: string,
+    activeDocumentPath: string | undefined,
+    language: "ko" | "en",
+  ) => {
+    const show = (id: string, notice: DocumentEditNotice) => setEditNotices((current) =>
+      current.some((item) => item.id === id)
+        ? current.map((item) => item.id === id ? { ...notice, id } : item)
+        : [...current, { ...notice, id }]);
+    const update = (id: string, notice: DocumentEditNotice) => setEditNotices((current) =>
+      current.map((item) => item.id === id ? { ...notice, id } : item));
+    const requests = extractDocumentEditRequests(answer);
+    if (requests.length === 0) {
+      if (hasUnfinishedDocumentEditRequest(answer)) {
+        show(crypto.randomUUID(), describeDocumentEdit({ state: "refused", reason: "unfinished" }, "", language));
+      }
+      return;
+    }
+    for (const request of requests) {
+      const id = crypto.randomUUID();
+      const path = resolveDocumentEditTarget(request.document, projectPath, activeDocumentPath);
+      const name = documentEditLabel(path ?? request.document) || request.document;
+      if (!path || !onRequestDocumentEdit) {
+        show(id, describeDocumentEdit({ state: "refused", reason: path ? "not-ready" : "invalid-target" }, name, language));
+        continue;
+      }
+      show(id, describeDocumentEdit({ state: "sending" }, name, language));
+      const result = await onRequestDocumentEdit(path, request.instruction).catch((error) => {
+        console.error(error);
+        return { ok: false, reason: "not-ready" } as const;
+      });
+      if (!result.ok) {
+        update(id, describeDocumentEdit({ state: "refused", reason: result.reason }, name, language));
+        continue;
+      }
+      editWatchersRef.current.push(watchDocumentEdit(result.sent, (progress) => update(id, describeDocumentEdit(progress, name, language))));
+    }
+  }, [onRequestDocumentEdit]);
+
   const startNewThread = useCallback(() => {
+    clearEditNotices();
     setActiveThread(null);
     setLoadedMessages([]);
     setThreadResetKey(`new-${Date.now()}`);
@@ -907,13 +975,14 @@ export function AISidebar({
     setSelectedFilePaths([]);
     setProjectSourcesEnabled(true);
     setDeepenApplyNotice(null);
-  }, []);
+  }, [clearEditNotices]);
 
   const loadThread = useCallback(
     async (threadId: string) => {
       if (!project?.path) return;
       const data = await rpc.getAgentThread(project.path, threadId);
       setDeepenApplyNotice(null);
+      clearEditNotices();
       setActiveThread(data.thread);
       setLoadedMessages(savedMessagesToThreadMessages(data.messages));
       setThreadResetKey(`thread-${threadId}-${data.thread.updatedAt}`);
@@ -930,7 +999,7 @@ export function AISidebar({
           : true,
       );
     },
-    [project?.path],
+    [project?.path, clearEditNotices],
   );
 
   const deleteThread = useCallback(
@@ -1141,11 +1210,20 @@ export function AISidebar({
           ignoreHistory: isPreparedRequest || !canReuseThread,
           transformVisibleContent: isDeepen && deepen
             ? (content: string) => formatDeepenAnalysisForDisplay(content, deepen.protection)
-            : undefined,
+            : !isPreparedRequest
+              ? (content: string) => formatDocumentEditRequests(content, lang)
+              : undefined,
           onComplete: async (assistantMessage, status) => {
             const visibleAssistantMessage = isDeepen && deepen
               ? formatDeepenAnalysisForDisplay(assistantMessage, deepen.protection)
-              : assistantMessage;
+              : !isPreparedRequest
+                ? formatDocumentEditRequests(assistantMessage, lang, false)
+                : assistantMessage;
+
+            // Opening the document can take a moment: never hold the chat's completion for it.
+            if (!isPreparedRequest && status === "complete" && projectPath) {
+              void dispatchDocumentEdits(assistantMessage, projectPath, activeDocument?.path, lang);
+            }
 
             const reviewNotice = isDeepen && deepen
               ? applySelectionReviewResult(deepen, assistantMessage, status, onDeepenResult)
@@ -1185,6 +1263,7 @@ export function AISidebar({
       slashCommands,
       refreshThreads,
       onDeepenResult,
+      dispatchDocumentEdits,
     ],
   );
   const assistantRuntime = useLocalRuntime(assistantAdapter, { adapters: { attachments: imageAttachmentAdapter } });
@@ -1300,6 +1379,19 @@ export function AISidebar({
             <Banner status={deepenApplyNotice.kind === "error" ? "warning" : "success"} container="section" title={deepenApplyNotice.message} />
           </div>
         )}
+
+        {editNotices.map((notice) => (
+          <div key={notice.id} role={notice.status === "warning" ? "alert" : "status"}>
+            <Banner
+              status={notice.status}
+              container="section"
+              title={notice.title}
+              description={notice.description}
+              isDismissable
+              onDismiss={() => setEditNotices((current) => current.filter((item) => item.id !== notice.id))}
+            />
+          </div>
+        ))}
 
         {activeDocumentName && <div className="border-b border-sidebar-border px-3 py-1.5" title="전송할 때 현재 편집 내용과 저장 전 수정 사항을 자동으로 참조합니다. 긴 문서는 일부가 생략됩니다.">
           <Text type="supporting" maxLines={1}>문서 자동 참조: <span className="text-foreground">{activeDocumentName}</span></Text>

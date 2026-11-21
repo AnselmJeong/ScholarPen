@@ -5,6 +5,7 @@ import { legacyWritingPurpose, styleContext } from "../ai/context-composer";
 import { detectStyleLanguage } from "../../shared/author-style";
 import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
+import { DOCUMENT_EDIT_PROTOCOL } from "../../shared/agent-document-edit";
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
 import { citationClient, type SupportingCitation } from "../../plugins/bibliography/main/client";
 import { buildCitationReferenceList, buildWebReferenceList } from "./references";
@@ -365,7 +366,9 @@ export async function buildAgentMessages(
     "For academic writing, preserve nuance and cite provided web sources when used.",
     params.analysisMode === "deepen" || isValidate
       ? "The user's selection review action authorizes only the validated, selection-scoped replacement described below. No other document content may be changed."
-      : "You are read-only unless the user explicitly accepts a proposed write action.",
+      : !params.analysisMode && params.projectPath
+        ? DOCUMENT_EDIT_PROTOCOL
+        : "You are read-only: you cannot change documents or files.",
     params.analysisMode === "deepen" || isValidate ? deepenLanguageRule(params.lang) : languageRule(params.lang),
     params.projectPath ? `Current project path: ${params.projectPath}` : "No project is currently open.",
     "</scholarpen_system>",
