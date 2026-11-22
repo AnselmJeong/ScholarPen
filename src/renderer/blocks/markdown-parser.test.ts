@@ -132,6 +132,32 @@ $$x^2$$ {#eq-test}`;
       .toEqual(nodes(imported).filter((node) => ["math", "inlineMath", "citation"].includes(node.type)).map((node) => [node.type, node.props]));
   });
 
+  test("round-trips underline through QMD and Markdown as Pandoc spans and <u>", async () => {
+    const run = (text: string, styles: Record<string, unknown> = {}) => ({ type: "text", text, styles });
+    const content = [run("Plain "), run("under [1]", { underline: true }), run(", "), run("bold under", { bold: true, underline: true }),
+      run(" and wow!"), run("x", { underline: true })];
+    editor.replaceBlocks(editor.document, [{ type: "paragraph", content }] as any);
+    const qmd = await blocksToScholarMarkdown(editor, editor.document as any, "qmd", "Notes");
+    expect(qmd).toEndWith("Plain [under \\[1\\]]{.underline}, **[bold under]{.underline}** and wow\\![x]{.underline}");
+    const md = await blocksToScholarMarkdown(editor, editor.document as any, "md");
+    expect(md).toBe("Plain <u>under [1]</u>, **<u>bold under</u>** and wow!<u>x</u>");
+    for (const exported of [qmd, md]) {
+      const [paragraph] = (await markdownToScholarBlocks(exported, editor)).filter((block) => block.type === "paragraph");
+      expect(paragraph.content).toEqual(content);
+    }
+  });
+
+  test("imports Pandoc underline spans but leaves code and image-like text literal", async () => {
+    const texts = async (source: string) => (await markdownToScholarBlocks(source, editor))
+      .map((block) => (block.content as any[]).map((item) => [item.text, Object.keys(item.styles).sort().join(" ")]));
+    expect(await texts("a [x]{.ul} and [[nested]{.ul} span]{.underline}")).toEqual([
+      [["a ", ""], ["x", "underline"], [" and ", ""], ["nested span", "underline"]],
+    ]);
+    expect(await texts("`[x]{.underline}` and Wow![y]{.underline}")).toEqual([
+      [["[x]{.underline}", "code"], [" and Wow![y]{.underline}", ""]],
+    ]);
+  });
+
   test("preview renders inline, display and table math with KaTeX", () => {
     const prepared = prepareMarkdownMath(sample);
     const html = renderToStaticMarkup(React.createElement(ReactMarkdown, {

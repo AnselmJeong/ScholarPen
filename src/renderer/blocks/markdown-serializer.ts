@@ -5,6 +5,7 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 import { figureExportUrl } from "../../shared/figure-files";
 import { NOTE_MARKER } from "./markdown-notes";
+import { isEscaped } from "./markdown-math";
 import { normalizeFigureCaption } from "./caption-markdown";
 import { blockLabel, collectReferenceTargets, duplicateReferenceLabels, normalizeQuartoBlocks,
   validFigureDimension, validQuartoLabel } from "../../shared/quarto-references";
@@ -64,15 +65,18 @@ function inlineProp(obj: Record<string, unknown>, key: string): unknown {
   return props?.[key] ?? obj[key];
 }
 
-function containsCustomInline(content: unknown): boolean {
+/** BlockNote's own Markdown converter drops ScholarPen's inline content and
+ * underline, so blocks holding either are written by `InlineMarkdownWriter`. */
+function needsScholarInline(content: unknown): boolean {
   if (!content) return false;
-  if (Array.isArray(content)) return content.some(containsCustomInline);
+  if (Array.isArray(content)) return content.some(needsScholarInline);
   if (typeof content === "object" && content !== null) {
     const obj = content as Record<string, unknown>;
     if (["citation", "crossReference", "quartoLiteral", "footnote", "inlineMath"].includes(String(obj.type))) return true;
-    if (obj.type === "tableContent") return containsCustomInline(obj.rows);
-    if (Array.isArray(obj.cells)) return containsCustomInline(obj.cells);
-    return containsCustomInline(obj.content);
+    if ((obj.styles as Record<string, unknown> | undefined)?.underline) return true;
+    if (obj.type === "tableContent") return needsScholarInline(obj.rows);
+    if (Array.isArray(obj.cells)) return needsScholarInline(obj.cells);
+    return needsScholarInline(obj.content);
   }
   return false;
 }
@@ -116,6 +120,9 @@ const DELIMITED_STYLES: readonly DelimitedStyle[] = ["bold", "italic", "strike",
 const STYLE_DELIMITERS: Record<DelimitedStyle, readonly [string, string]> = {
   bold: ["**", "**"], italic: ["*", "*"], strike: ["~~", "~~"], underline: ["<u>", "</u>"],
 };
+/** Pandoc leaves raw `<u>` out of Word and PDF output; its own underline is a
+ * bracketed span (read back by `pandocUnderlineToHtml` on import). */
+const PANDOC_UNDERLINE = ["[", "]{.underline}"] as const;
 const ATOM_TYPES = new Set(["citation", "crossReference", "quartoLiteral", "footnote", "inlineMath", "link"]);
 
 interface TextRun { type?: string; text: string; styles?: Record<string, unknown> }
@@ -207,11 +214,28 @@ class InlineMarkdownWriter {
     this.flushSpace();
     for (const style of DELIMITED_STYLES) {
       if (!styles[style] || this.open.includes(style)) continue;
-      this.out += STYLE_DELIMITERS[style][0];
+      const opener = this.delimiters(style)[0];
+      if (opener.startsWith("[")) this.escapeImageBang();
+      this.out += opener;
       this.open.push(style);
     }
-    this.out += styles.code ? codeSpan(core) : this.tableCell ? core.replace(/\|/g, "\\|") : core;
+    let markdown = styles.code ? codeSpan(core) : core;
+    if (!styles.code && this.tableCell) markdown = markdown.replace(/\|/g, "\\|");
+    // Text brackets would end or unbalance a Pandoc underline span.
+    if (!styles.code && this.format === "qmd" && this.open.includes("underline")) {
+      markdown = markdown.replace(/[[\]]/g, "\\$&");
+    }
+    this.out += markdown;
     this.space = run.text.slice(run.text.trimEnd().length);
+  }
+
+  private delimiters(style: DelimitedStyle): readonly [string, string] {
+    return style === "underline" && this.format === "qmd" ? PANDOC_UNDERLINE : STYLE_DELIMITERS[style];
+  }
+
+  /** A `!` right before `[` turns a span, link, citation or footnote into an attempted image. */
+  private escapeImageBang() {
+    if (this.out.endsWith("!") && !isEscaped(this.out, this.out.length - 1)) this.out = `${this.out.slice(0, -1)}\\!`;
   }
 
   private inline(obj: Record<string, unknown>, next: unknown) {
@@ -230,8 +254,10 @@ class InlineMarkdownWriter {
         this.closeTo(0);
         this.flushSpace();
         const after = next === undefined ? "" : new InlineMarkdownWriter(this.format, this.tableCell).write([next]);
-        this.out += BARE_REFERENCE_UNSAFE_BEFORE.test(this.out) || BARE_REFERENCE_UNSAFE_AFTER.test(after)
-          ? `[${reference}]` : reference;
+        if (BARE_REFERENCE_UNSAFE_BEFORE.test(this.out) || BARE_REFERENCE_UNSAFE_AFTER.test(after)) {
+          this.escapeImageBang();
+          this.out += `[${reference}]`;
+        } else this.out += reference;
         return;
       }
       case "quartoLiteral":
@@ -257,11 +283,12 @@ class InlineMarkdownWriter {
     if (!markdown) return;
     this.closeTo(0);
     this.flushSpace();
+    if (markdown.startsWith("[")) this.escapeImageBang();
     this.out += markdown;
   }
 
   private closeTo(depth: number) {
-    while (this.open.length > depth) this.out += STYLE_DELIMITERS[this.open.pop()!][1];
+    while (this.open.length > depth) this.out += this.delimiters(this.open.pop()!)[1];
   }
 
   private flushSpace() {
@@ -374,7 +401,7 @@ async function blockToMarkdown(
       return abstractBlockToMarkdown(block, format);
 
     default:
-      if (block.type === "heading" || block.type === "table" || containsCustomInline(block.content)) {
+      if (block.type === "heading" || block.type === "table" || needsScholarInline(block.content)) {
         const custom = standardBlockToMarkdown(block, depth, format);
         if (block.children && block.children.length > 0) {
           const childLines: string[] = [];

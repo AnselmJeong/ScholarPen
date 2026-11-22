@@ -17,7 +17,7 @@ export interface PreparedMarkdownMath {
 
 const markdownParser = unified().use(remarkParse).use(remarkGfm);
 
-function isEscaped(source: string, offset: number): boolean {
+export function isEscaped(source: string, offset: number): boolean {
   let slashes = 0;
   while (offset > 0 && source[--offset] === "\\") slashes++;
   return slashes % 2 === 1;

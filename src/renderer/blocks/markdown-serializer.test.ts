@@ -271,7 +271,7 @@ describe("Pandoc inline math and styles", () => {
     expect(inlineContentToMarkdown([text("a"), text(" bold ", { bold: true }), text("b")], "qmd")).toBe("a **bold** b");
     expect(inlineContentToMarkdown([text("a"), text("  ", { italic: true }), text("b")], "qmd")).toBe("a  b");
     expect(inlineContentToMarkdown([text("a"), text("", { strike: true }), text("b")], "qmd")).toBe("ab");
-    expect(inlineContentToMarkdown([text("x "), text(" gone\n", { underline: true }), text("y")], "qmd")).toBe("x  <u>gone</u>\ny");
+    expect(inlineContentToMarkdown([text("x "), text(" gone\n", { underline: true }), text("y")], "qmd")).toBe("x  [gone]{.underline}\ny");
     expect(inlineContentToMarkdown([text(" code ", { code: true })], "qmd")).toBe(" `code` ");
   });
 
@@ -328,6 +328,23 @@ describe("Pandoc inline math and styles", () => {
     expect(await blocksToScholarMarkdown(editor, [equation(" \n ")], "md")).toBe("");
   });
 
+  test("writes underline as a Pandoc span in QMD and as <u> in Markdown, also without math or citations", async () => {
+    const underlined = [text("see "), text("this [1] ", { underline: true }), text("now")];
+    expect(await blocksToScholarMarkdown(editor, [paragraph(underlined)], "qmd", "Notes"))
+      .toEndWith("\n\nsee [this \\[1\\]]{.underline} now");
+    expect(await blocksToScholarMarkdown(editor, [paragraph(underlined)], "md")).toBe("see <u>this [1]</u> now");
+    expect(inlineContentToMarkdown([text("a"), text("b", { underline: true, italic: true })], "qmd")).toBe("a*[b]{.underline}*");
+  });
+
+  test("escapes a ! that would turn the following bracket into an image", () => {
+    const after = (item: unknown) => inlineContentToMarkdown([text("Wow!"), item], "qmd");
+    expect(after(text("x", { underline: true }))).toBe("Wow\\![x]{.underline}");
+    expect(after({ type: "link", href: "https://example.org", content: [text("site")] })).toBe("Wow\\![site](https://example.org)");
+    expect(after({ type: "citation", props: { citekey: "smith2020" } })).toBe("Wow\\![@smith2020]");
+    expect(after({ type: "footnote", props: { index: 2 } })).toBe("Wow\\![^2]");
+    expect(after(text(" x", { underline: true }))).toBe("Wow! [x]{.underline}");
+  });
+
   const quarto = [Bun.which("quarto"), "/usr/local/bin/quarto", "/opt/homebrew/bin/quarto", "/Applications/quarto/bin/quarto"]
     .find((candidate): candidate is string => Boolean(candidate && existsSync(candidate)));
 
@@ -336,6 +353,7 @@ describe("Pandoc inline math and styles", () => {
       paragraph(regressionSentence),
       paragraph([text("Shown", { italic: true }), reference("fig-a"), text(" and "), text("bold ", { bold: true }),
         math(" y "), text(" text", { bold: true, italic: true })]),
+      paragraph([text("Wow!"), text("under [1]", { underline: true }), text(" and "), text("both", { underline: true, bold: true })]),
       { id: "t", type: "table", props: {}, children: [], content: { type: "tableContent", rows: [
         { cells: [[text("A")], [text("B")]] },
         { cells: [[math("|x|")], [text("p|q")]] },
@@ -344,7 +362,8 @@ describe("Pandoc inline math and styles", () => {
     const qmd = await blocksToScholarMarkdown(editor, blocks, "qmd", "Methods");
     const result = Bun.spawnSync([quarto!, "pandoc", "-f", "markdown", "-t", "json"], { stdin: new TextEncoder().encode(qmd) });
     expect(result.exitCode).toBe(0);
-    const found = { math: [] as string[], emph: [] as string[], strong: [] as string[], cites: [] as string[], text: [] as string[] };
+    const found = { math: [] as string[], emph: [] as string[], strong: [] as string[], underline: [] as string[],
+      cites: [] as string[], text: [] as string[] };
     const plain = (nodes: any[]): string => nodes.map((node) => node.t === "Str" ? node.c : node.t === "Space" ? " "
       : Array.isArray(node.c) ? plain(node.c.filter((child: unknown) => typeof child === "object")) : "").join("");
     const walk = (node: any): void => {
@@ -353,6 +372,7 @@ describe("Pandoc inline math and styles", () => {
       if (node.t === "Math") found.math.push(node.c[1]);
       if (node.t === "Emph") found.emph.push(plain(node.c));
       if (node.t === "Strong") found.strong.push(plain(node.c));
+      if (node.t === "Underline") found.underline.push(plain(node.c));
       if (node.t === "Cite") found.cites.push(...node.c[0].map((citation: { citationId: string }) => citation.citationId));
       if (node.t === "Str") found.text.push(node.c);
       Object.values(node).forEach(walk);
@@ -360,9 +380,11 @@ describe("Pandoc inline math and styles", () => {
     walk(JSON.parse(result.stdout.toString()).blocks);
     expect(found.math).toEqual(["c", "a \\times b", "y", "|x|"]);
     expect(found.emph).toEqual(["for each predictor", "Shown", "text"]);
-    expect(found.strong).toEqual(["bold", "text"]);
+    expect(found.strong).toEqual(["bold", "text", "both"]);
+    expect(found.underline).toEqual(["under [1]", "both"]);
     expect(found.cites).toEqual(["fig-a"]);
-    expect(found.text.filter((value) => /[$*]/.test(value))).toEqual([]);
+    expect(found.text.filter((value) => /[$*{}]/.test(value))).toEqual([]);
+    expect(found.text).toContain("Wow!");
     expect(found.text).toContain("p|q");
   });
 });

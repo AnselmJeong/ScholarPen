@@ -117,6 +117,7 @@ my-paper/
 ## Quarto export
 
 - `.qmd` export (`renderer/blocks/markdown-serializer.ts`) gives each chapter exactly one H1: an existing H1, else a heading the document opens with (promoted to H1), else the filename-derived title.
+- Inline text is written by `InlineMarkdownWriter` for blocks with math, citations, cross-references, footnotes or underline (BlockNote's `blocksToMarkdownLossy` drops these; other blocks still use it). Formulas are trimmed, style delimiters open and close only where styles change with whitespace outside them, and underline is `[text]{.underline}` in `.qmd` (Word and PDF drop raw `<u>`) but `<u>` in `.md`. Import turns Pandoc underline spans back into `<u>` (`markdown-underline.ts`).
 - Word renders (`plugins/quarto/main/render.ts`, `docx-tables.ts`): when `_quarto.yml` names no docx `reference-doc`, the render builds one with `quarto pandoc lua docx/reference-doc.lua` (pandoc's own default plus the "ScholarPen Table" style: 1 pt rules above the table, under the header row and under the last row) and passes it with the `docx/ruled-tables.lua` filter on the command line, in a temp folder removed afterwards. The filter skips Quarto's one-cell layout tables around captions and figures (they hold a table or image), so no rule is drawn around a caption. An author's own Word template is left alone. Pandoc does not fill in styles a reference document lacks, which is why the reference document is generated, not shipped.
 
 ## Project memory and author learning

@@ -10,6 +10,7 @@ import { prepareMarkdownCitations, type PreparedMarkdownCitations } from "./mark
 import { prepareQuartoBlocks, tableWidthRatios } from "./markdown-quarto";
 import { isQuartoReference, normalizeQuartoBlocks } from "../../shared/quarto-references";
 import { prepareMarkdownNotes } from "./markdown-notes";
+import { pandocUnderlineToHtml } from "./markdown-underline";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyBlock = Record<string, any> & { type: string };
@@ -50,7 +51,7 @@ export async function markdownToScholarBlocks(
   const quarto = prepareQuartoBlocks(notes.markdown);
   const math = prepareMarkdownMath(quarto.markdown);
   const citations = prepareMarkdownCitations(math.markdown);
-  const annotated = annotateCustomBlocks(citations.markdown);
+  const annotated = annotateCustomBlocks(pandocUnderlineToHtml(citations.markdown));
 
   // Parse using BlockNote's built-in converter
   const blocks = await parseEditor.tryParseMarkdownToBlocks(annotated) as AnyBlock[];
