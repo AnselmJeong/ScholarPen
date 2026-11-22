@@ -478,6 +478,8 @@ body {
 }
 [data-review-mode="clean"] .bn-editor del[data-id] { display: none; }
 [data-review-mode="markup"] .sp-del-marker { display: none; }
+/* A citation or equation a pending suggestion removes or adds, written as its text until Keep or Revert (shared/collab/pending-nodes.ts). */
+.bn-editor .sp-pending-node { font-size: 0.88em; font-weight: 500; white-space: nowrap; }
 
 /* Where text was only removed. */
 .sp-del-marker {

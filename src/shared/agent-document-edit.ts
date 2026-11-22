@@ -46,8 +46,8 @@ export type AssistantEditRefusal =
   | "ambiguous"    // the quoted text occurs more than once
   | "overlap"      // it overlaps another change in the same paragraph
   | "level"        // the paragraph would change more than the edit level allows
-  | "atom"         // it would remove or alter a citation, equation, cross-reference or footnote
-  | "format"       // it would delete a whole formatted run (italic, bold, link…) or protected markup
+  | "atom"         // it would remove or alter a citation, equation, cross-reference or footnote the quote holds only in part, or drop a line break from a passage it rewrites
+  | "format"       // it would change protected literal markup (code, _, * …) only in part, or put text between two citations or equations
   | "markup"       // the new text has Markdown that would appear as literal characters
   | "not-prose"    // the target is code, a table or a figure
   | "unchanged"    // the replacement equals the original
@@ -254,7 +254,7 @@ export const DOCUMENT_EDIT_PROTOCOL = [
   "Rules:",
   "- old is the smallest span that holds the whole change (a phrase, a sentence or the whole paragraph), copied exactly from the paragraph and occurring only once in it. Write one <change> per separate place; several may target one paragraph, and they must not overlap.",
   "- new is plain text in the paragraph's language. Leave <new></new> empty to delete old.",
-  "- Keep every citation [@key], cross-reference @label, footnote [^n] and equation $…$ that lies inside old exactly as written in new: they can be moved within the change but not removed or altered. Add a citation as [@key] only with a key from the project's references.bib.",
+  "- A citation [@key], cross-reference @label, footnote [^n] or equation $…$ inside old stays when new has it exactly as written (it may move within the change). Leave it out of new only to delete it on purpose, for example with the sentence that carries it; italic, bold and link text inside old is deleted the same way. Never shorten or alter one: quote it whole. Add a citation as [@key] only with a key from the project's references.bib.",
   "- No Markdown in new: no *, **, _, # or new $…$; they would appear as literal characters.",
   "- A change stays inside its paragraph. You cannot add, delete, split, merge or move whole paragraphs, headings, tables, figures or equations; say so instead.",
   "- document is the project-relative path of the active document or of a document the user mentioned; leave it empty for the active document. Only documents under documents/ can be edited, never response letters.",

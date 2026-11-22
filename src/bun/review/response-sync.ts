@@ -1,9 +1,8 @@
 import * as Y from "yjs";
-import { EditorState } from "prosemirror-state";
-import { revertSuggestions } from "@handlewithcare/prosemirror-suggest-changes";
 import type { CollabSession } from "../collab/registry";
 import { blockContent, findBlock, readDoc, readableText } from "../collab/agent/doc-model";
 import { COLLAB_FRAGMENT } from "../../shared/collab/protocol";
+import { revertedDoc } from "../../shared/collab/resolve-suggestions";
 import { leafText } from "../../shared/collab/schema-spec";
 import { readProposalEntries, REVIEW_PROPOSALS_MAP, type ProposalEntry, type ProposalState } from "../../shared/collab/review-proposals";
 import type { ReviewProposal, StagedProposals } from "../../shared/review-session/proposals";
@@ -29,8 +28,7 @@ export const settled = (decision: ProposalDecision) => decision.state !== "not-s
 const applied = (decision: ProposalDecision) => decision.state === "accepted" || decision.state === "edited";
 
 function acceptedBlockText(session: CollabSession, blockId: string) {
-  let doc = readDoc(session);
-  revertSuggestions(EditorState.create({ schema: session.schema, doc }), (tr) => { doc = tr.doc; });
+  const doc = revertedDoc(readDoc(session));
   const block = findBlock(doc, blockId);
   if (!block) return null;
   const content = blockContent(block);

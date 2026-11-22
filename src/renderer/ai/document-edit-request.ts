@@ -91,10 +91,12 @@ export function refusalText(outcome: AssistantEditOutcome, lang: Lang): string {
     case "ambiguous": return ko ? "인용한 문장이 문단에 여러 번 나와 어느 곳인지 정할 수 없습니다." : "The quoted text occurs more than once, so the place is unclear.";
     case "overlap": return ko ? "같은 곳을 고치는 다른 수정과 겹칩니다." : "It overlaps another change to the same text.";
     case "level": return ko ? `편집 수준 한도를 넘는 변경이라 적용하지 않았습니다 (${detail}). 편집 수준을 올리면 허용됩니다.` : `The change exceeds the document's edit level (${detail}). Raise the level to allow it.`;
-    case "atom": return ko ? `인용·수식·상호참조 ${detail}를 지우거나 바꾸게 되어 적용하지 않았습니다. 편집기에서 직접 고쳐 주세요.` : `It would remove or alter ${detail}; citations, equations and cross-references are kept. Change it in the editor.`;
+    case "atom":
+      if (detail === "\n") return ko ? "고친 문장에서 줄바꿈이 빠지게 되어 적용하지 않았습니다. 줄바꿈은 그 부분을 통째로 지울 때만 함께 지워집니다." : "It would drop a line break from the passage it rewrites; a line break goes only with a passage deleted outright.";
+      return ko ? `인용·수식·상호참조 ${detail}를 일부만 인용한 채 지우거나 바꾸게 되어 적용하지 않았습니다. 지우거나 바꾸려면 통째로 인용해야 합니다.` : `It would remove or alter ${detail}, which the quoted text holds only in part. Quote it whole to change or delete it.`;
     case "format":
-      if (detail === "markup") return ko ? "본문에 그대로 둔 기호(코드, _, * 등)를 지우게 되어 적용하지 않았습니다. 편집기에서 직접 고쳐 주세요." : "It would remove protected literal markup (code, _, * …). Change it in the editor.";
-      return ko ? "서식(기울임·굵게·링크)이 있는 부분 전체를 지우게 되어 적용하지 않았습니다. 편집기에서 직접 지워 주세요." : "It would delete a whole formatted run (italic, bold, link), which edits keep. Delete it in the editor.";
+      if (detail === "markup") return ko ? "본문에 그대로 둔 기호(코드, _, * 등)를 일부만 바꾸게 되어 적용하지 않았습니다. 통째로 지우거나 편집기에서 직접 고쳐 주세요." : "It would change protected literal markup (code, _, * …) only in part. Delete it whole, or change it in the editor.";
+      return ko ? "인용·수식 사이에 새 글자를 넣게 되어 적용하지 않았습니다. 편집기에서 직접 고쳐 주세요." : "It would add text between two citations or equations, where nothing can hold it. Change it in the editor.";
     case "markup": return ko ? `새 문장에 Markdown 서식(${detail})이 있어 글자 그대로 들어가므로 적용하지 않았습니다.` : `The new text has Markdown (${detail}) that would appear as literal characters.`;
     case "not-prose": return ko ? "코드·표·그림·수식 블록은 이 방식으로 고칠 수 없습니다." : "Code, tables, figures and equations cannot be edited this way.";
     case "unchanged": return ko ? "바뀌는 내용이 없습니다." : "It changes nothing.";

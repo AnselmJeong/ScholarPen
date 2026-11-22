@@ -5,7 +5,8 @@ import {
   hasProtectedTextChanges,
   protectSelectionSlice,
   protectedRewritePreview,
-  restoreProtectedSelection,
+  readProtectedRewrite,
+  type ProtectedRemovals,
   type ProtectedSelection,
 } from "../../../shared/ai-text-protection";
 import type { CollabSession } from "../registry";
@@ -23,6 +24,7 @@ import { citationHunks, type CitationSpan } from "./citation-edits";
 
 import { nextSuggestionId, readableHunks, revisedInline, sentenceHunks, suggestReplacement } from "../../../shared/collab/suggested-edits";
 import { authorshipBlind } from "../../../shared/collab/ai-authorship";
+import { pendingNodeText } from "../../../shared/collab/pending-nodes";
 export { nextSuggestionId } from "../../../shared/collab/suggested-edits";
 
 /** How an AI edit lands in the document ("observe": not at all, proposals only). */
@@ -45,6 +47,20 @@ function textNodes(content: PMNode, from: number) {
   const nodes: Array<{ pos: number; text: string }> = [];
   content.descendants((node, pos) => {
     if (node.isText) nodes.push({ pos: from + pos, text: node.text ?? "" });
+    return true;
+  });
+  return nodes;
+}
+
+/** Inline leaf nodes (citations, math, cross-references, footnotes, line breaks), in the order their protection markers have. */
+function inlineNodes(content: PMNode, from: number) {
+  const nodes: Array<{ pos: number; size: number }> = [];
+  content.descendants((node, pos) => {
+    if (node.isText) return false;
+    if (node.isLeaf) {
+      nodes.push({ pos: from + pos, size: node.nodeSize });
+      return false;
+    }
     return true;
   });
   return nodes;
@@ -88,17 +104,6 @@ function withCitationNodes(content: readonly PMNode[], spans: readonly CitationS
   return [...parts, ...range(cursor, Infinity)];
 }
 
-/** Rewritten text of each text node, in document order. */
-function rewrittenTexts(base: BlockBase, response: string, schema: PMNode["type"]["schema"]) {
-  const slice = restoreProtectedSelection(schema, base.protection, response);
-  const texts: string[] = [];
-  slice.content.descendants((node) => {
-    if (node.isText) texts.push(node.text ?? "");
-    return true;
-  });
-  return texts;
-}
-
 /** Same inline structure (marks, atoms, text-node count) as when the block was read. */
 function sameStructure(base: BlockBase, current: BlockBase) {
   if (current.texts.length !== base.texts.length) return false;
@@ -124,13 +129,21 @@ export function applyBlockRewrite(
   changeSetId?: number,
   /** Citekeys in references.bib: new `[@key]` text with these keys becomes citation nodes. */
   citekeys?: ReadonlySet<string>,
+  /**
+   * Protected content the rewrite may remove (whole formatting runs, inline
+   * nodes, literal markup). Only an explicit, located deletion passes it: the
+   * Assistant's quoted passage. A model's own rewrite never does, so it can
+   * never drop protected content it was not asked to delete.
+   */
+  removals?: ProtectedRemovals,
 ): EditOutcome {
   const preview = protectedRewritePreview(response, base.protection);
-  if (!hasProtectedTextChanges(base.protection, response)) return { kind: "unchanged" };
+  if (!hasProtectedTextChanges(base.protection, response, removals)) return { kind: "unchanged" };
   if (mode === "observe") {
     return { kind: "conflict", reason: "This section is set to Observe, so I only propose changes.", preview };
   }
-  const aiTexts = rewrittenTexts(base, response, session.schema);
+  const rewrite = readProtectedRewrite(base.protection, response, removals);
+  const aiTexts = rewrite.texts;
 
   const doc = readDoc(session);
   const block = findBlock(doc, base.blockId);
@@ -164,10 +177,14 @@ export function applyBlockRewrite(
     ? citationHunks(node.text, targetTexts[index], known, base)
     : base(node.text, targetTexts[index]).map((hunk) => ({ ...hunk, citations: [] as CitationSpan[] })));
   const words = hunksFor(readableHunks);
-  if (words.every((hunks) => hunks.length === 0)) return { kind: "unchanged" };
+  // Inline nodes the rewrite removes; the stale check above made sure they are the ones it read.
+  const leaves = rewrite.removedNodes.length ? inlineNodes(authorshipBlind(content.node), content.from) : [];
+  const removed = rewrite.removedNodes.map((index) => leaves[index]);
+  if (removed.some((node) => !node)) throw new Error("The passage's citations and equations no longer match the rewrite.");
+  if (words.every((hunks) => hunks.length === 0) && !removed.length) return { kind: "unchanged" };
 
-  // Word-level changes decide whether an edit is minor. A new citation is a substantive change, never a silent direct edit.
-  const minor = words.every((hunks, index) => hunks.length === 0 ||
+  // Word-level changes decide whether an edit is minor. A new or removed citation (or other inline node) is a substantive change, never a silent direct edit.
+  const minor = !removed.length && words.every((hunks, index) => hunks.length === 0 ||
     (isMinorEdit(nodes[index].text, hunks) && hunks.every((hunk) => !hunk.citations.length)));
   const effective: "suggest" | "direct" = mode === "auto" ? (minor ? "direct" : "suggest") : mode === "direct" ? "direct" : "suggest";
   // A suggestion is reviewed sentence by sentence: the original sentence struck, the revised one written in full.
@@ -177,24 +194,36 @@ export function applyBlockRewrite(
   const tr = state.tr;
   // Every change of one request carries one suggestion id, so it is reviewed as one unit.
   const suggestionId = effective === "suggest" ? changeSetId ?? nextSuggestionId(doc) : undefined;
-  // Apply from the end so earlier positions stay valid.
-  for (let index = nodes.length - 1; index >= 0; index--) {
-    const hunks = hunksByNode[index];
-    for (let h = hunks.length - 1; h >= 0; h--) {
-      const hunk = hunks[h];
-      const from = nodes[index].pos + hunk.from;
-      const to = nodes[index].pos + hunk.to;
-      const $from = tr.doc.resolve(from);
-      const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
-      // Kept words keep their marks; the AI's words carry the authorship mark, kept once the author accepts them.
-      const inline = revisedInline(tr.doc, from, nodes[index].text.slice(hunk.from, hunk.to), hunk.insert, marks);
-      // One step, so a suggestion never shows the `[@key]` text as inserted and deleted again.
-      const parts = hunk.citations.length ? withCitationNodes(inline, hunk.citations, (span) =>
-        span.items.map((item) => citation.create({ citekey: item.key, locator: item.locator }))) : inline;
-      if (suggestionId !== undefined) suggestReplacement(tr, from, to, parts, suggestionId);
-      else if (parts.length) tr.replaceWith(from, to, parts);
-      else tr.delete(from, to);
+  // Text hunks and removed inline nodes, applied from the end so earlier positions stay valid.
+  const steps: Array<{ from: number; to: number; node?: number; hunk?: (typeof hunksByNode)[number][number] }> = [
+    ...hunksByNode.flatMap((hunks, index) => hunks.map((hunk) => ({ from: nodes[index].pos + hunk.from, to: nodes[index].pos + hunk.to, node: index, hunk }))),
+    ...removed.map((leaf) => ({ from: leaf.pos, to: leaf.pos + leaf.size })),
+  ].sort((a, b) => b.from - a.from || b.to - a.to);
+  for (const { from, to, node: index, hunk } of steps) {
+    if (!hunk || index === undefined) {
+      // A removed citation, equation or cross-reference, struck in the same change set: Keep removes it, Revert
+      // brings the node back. The Y.Doc keeps no marks on inline nodes, so the struck node is text standing in for it.
+      if (suggestionId !== undefined) {
+        const node = tr.doc.nodeAt(from)!;
+        const standIn = pendingNodeText(node, node.marks);
+        tr.replaceWith(from, to, standIn);
+        suggestReplacement(tr, from, from + standIn.nodeSize, [], suggestionId);
+      } else tr.delete(from, to);
+      continue;
     }
+    const $from = tr.doc.resolve(from);
+    const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
+    // Kept words keep their marks; the AI's words carry the authorship mark, kept once the author accepts them.
+    const inline = revisedInline(tr.doc, from, nodes[index].text.slice(hunk.from, hunk.to), hunk.insert, marks);
+    // One step, so a suggestion never shows the `[@key]` text as inserted and deleted again.
+    // A suggested citation is text standing in for the node until the author keeps it (see pending-nodes.ts).
+    const parts = hunk.citations.length ? withCitationNodes(inline, hunk.citations, (span) => span.items.map((item) => {
+      const node = citation.create({ citekey: item.key, locator: item.locator });
+      return suggestionId !== undefined ? pendingNodeText(node) : node;
+    })) : inline;
+    if (suggestionId !== undefined) suggestReplacement(tr, from, to, parts, suggestionId);
+    else if (parts.length) tr.replaceWith(from, to, parts);
+    else tr.delete(from, to);
   }
 
   const updated = tr.doc.nodeAt(block.pos);

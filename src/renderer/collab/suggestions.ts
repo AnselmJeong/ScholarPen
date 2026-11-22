@@ -1,10 +1,9 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 import { docToBlocks } from "@blocknote/core";
-import { EditorState } from "prosemirror-state";
 import type { Node as PMNode } from "prosemirror-model";
 import type * as Y from "yjs";
 import type { ChangeSetInfo } from "../../shared/collab/change-sets";
-import { applySuggestion, revertSuggestion, revertSuggestions } from "@handlewithcare/prosemirror-suggest-changes";
+import { resolveSuggestions, revertedDoc } from "../../shared/collab/resolve-suggestions";
 
 const SUGGESTION_MARKS = ["insertion", "deletion", "modification"];
 
@@ -32,9 +31,7 @@ export function acceptedDocument(editor: BlockNoteEditor<any, any, any>) {
 export function acceptedPMDoc(editor: BlockNoteEditor<any, any, any>) {
   const state = editor.prosemirrorState;
   if (!hasSuggestions(state.doc)) return state.doc;
-  let doc = state.doc;
-  revertSuggestions(EditorState.create({ schema: state.schema, doc }), (tr) => { doc = tr.doc; });
-  return doc;
+  return revertedDoc(state.doc);
 }
 
 /** One paragraph's part of a change set. */
@@ -97,8 +94,10 @@ export function resolveChangeSet(
 ) {
   const view = editor.prosemirrorView;
   if (!view) return false;
-  const command = accept ? applySuggestion(id, range?.from, range?.to) : revertSuggestion(id, range?.from, range?.to);
-  return command(view.state, view.dispatch);
+  const tr = view.state.tr;
+  if (!resolveSuggestions(tr, accept, id, range)) return false;
+  view.dispatch(tr);
+  return true;
 }
 
 /** Accepts or rejects every pending change set. */

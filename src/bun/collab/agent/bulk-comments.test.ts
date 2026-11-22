@@ -29,6 +29,8 @@ const { createThread, readThreads, updateThreadMeta, addThreadComment, AI_USER_I
 const { requestBulkComments, resolveAllComments } = await import("../../../shared/collab/bulk-comments");
 const { listChangeSets } = await import("../../../renderer/collab/suggestions");
 const { EditorState } = await import("prosemirror-state");
+const { Transform } = await import("prosemirror-transform");
+const { resolveSuggestions } = await import("../../../shared/collab/resolve-suggestions");
 const editor = getHeadlessEditor();
 let registry: InstanceType<typeof CollabRegistry>;
 let agent: InstanceType<typeof CollabAgent>;
@@ -384,15 +386,21 @@ function citing(cite: string, extra: Record<string, unknown> = {}) {
     return JSON.stringify(data);
   };
 }
+/** The document as the author gets it on Keep: a suggested citation is text standing in for its node until then. */
+function kept(session: CollabSession) {
+  const tr = new Transform(readDoc(session));
+  resolveSuggestions(tr, true);
+  return tr.doc;
+}
 /** `[@` left in a text node means a citation was not turned into a citation node. */
 function literalCitationText(session: CollabSession) {
   let found = false;
-  readDoc(session).descendants(node => { if (node.isText && node.text!.includes("[@")) found = true; return true; });
+  kept(session).descendants(node => { if (node.isText && node.text!.includes("[@")) found = true; return true; });
   return found;
 }
 function citationsIn(session: CollabSession) {
   const keys: string[] = [];
-  readDoc(session).descendants(node => { if (node.type.name === "citation") keys.push(node.attrs.citekey); return true; });
+  kept(session).descendants(node => { if (node.type.name === "citation") keys.push(node.attrs.citekey); return true; });
   return keys;
 }
 
@@ -420,7 +428,7 @@ test("a citation from references.bib is inserted as a structured [@citekey] cita
   expect(agent.jobs(session.docKey)[0].state).toBe("done");
   expect(citationsIn(session)).toEqual(["smith2020trial", "smith2020trial"]);
   let locator = "";
-  readDoc(session).descendants(node => { if (node.type.name === "citation") locator = node.attrs.locator; return true; });
+  kept(session).descendants(node => { if (node.type.name === "citation") locator = node.attrs.locator; return true; });
   expect(locator).toBe("p. 4");
   expect(literalCitationText(session)).toBe(false);
   expect(saved).toBe(false);

@@ -349,14 +349,44 @@ export function buildInlineEditMessages(
   return { system, user };
 }
 
-function parseProtectedRewrite(response: string, selection: ProtectedSelection) {
+/**
+ * Protected content a rewrite may remove. Only an explicit, located deletion
+ * passes it (the Assistant's quoted passage, see `planParagraph`), never a
+ * model's own rewrite: a model can never drop a citation, equation,
+ * formatting run or literal markup that it was not asked to delete.
+ */
+export interface ProtectedRemovals {
+  /** Text nodes (by index) the rewrite may empty: whole formatting runs inside the deleted passage. */
+  texts: readonly number[];
+  /** Markers (tokens) the rewrite may leave out: inline nodes (citations, math…) and literal markup inside it. */
+  markers: readonly string[];
+}
+
+/** A rewrite as it applies to the protected passage. */
+export interface ProtectedRewrite {
+  /** New text of each text node, in order; "" for a node the rewrite empties. */
+  texts: string[];
+  /** Inline nodes the rewrite removes, as indexes into the passage's inline nodes in document order. */
+  removedNodes: number[];
+}
+
+function parseProtectedRewrite(response: string, selection: ProtectedSelection, removals?: ProtectedRemovals): ProtectedRewrite {
   const rewrittenText = Array.from({ length: selection.textNodeCount }, () => "");
+  const removable = new Set(removals?.markers ?? []);
+  const removedNodes: number[] = [];
   let activeTextIndex: number | null = null;
   let cursor = 0;
+  let nodeIndex = -1;
 
   for (const marker of selection.markers) {
+    if (marker.kind === "node") nodeIndex++;
     const markerIndex = response.indexOf(marker.token, cursor);
     if (markerIndex < 0) {
+      // Left out on purpose by a located deletion: the node or literal goes, its neighbours join.
+      if ((marker.kind === "node" || marker.kind === "literal") && removable.has(marker.token)) {
+        if (marker.kind === "node") removedNodes.push(nodeIndex);
+        continue;
+      }
       throw new Error(
         "The AI changed or omitted a protected BlockNote marker. Retry the rewrite; the document was not modified."
       );
@@ -402,7 +432,8 @@ function parseProtectedRewrite(response: string, selection: ProtectedSelection) 
   if (response.slice(cursor).trim()) {
     throw new Error("The AI added trailing text outside the protected BlockNote selection. The document was not modified.");
   }
-  if (rewrittenText.some((text) => text.length === 0)) {
+  const emptiable = new Set(removals?.texts ?? []);
+  if (rewrittenText.some((text, index) => text.length === 0 && !emptiable.has(index))) {
     throw new Error(
       "The AI removed an entire formatted text segment. Retry the rewrite; the document was not modified."
     );
@@ -411,7 +442,7 @@ function parseProtectedRewrite(response: string, selection: ProtectedSelection) 
     throw new Error("The AI introduced an unknown BlockNote control marker. The document was not modified.");
   }
 
-  return rewrittenText;
+  return { texts: rewrittenText, removedNodes };
 }
 
 function replaceSerializedText(nodes: SerializedNode[] | undefined, rewrittenText: string[]) {
@@ -432,10 +463,20 @@ function replaceSerializedText(nodes: SerializedNode[] | undefined, rewrittenTex
 }
 
 /** Validate the marker structure before comparing editable text with the snapshot. */
-export function hasProtectedTextChanges(selection: ProtectedSelection, response: string): boolean {
-  const revised = parseProtectedRewrite(response, selection);
+export function hasProtectedTextChanges(selection: ProtectedSelection, response: string, removals?: ProtectedRemovals): boolean {
+  const revised = parseProtectedRewrite(response, selection, removals);
   const original = parseProtectedRewrite(selection.protectedText, selection);
-  return revised.some((text, index) => text !== original[index]);
+  return revised.removedNodes.length > 0 || revised.texts.some((text, index) => text !== original.texts[index]);
+}
+
+/**
+ * The rewrite of each text node and the inline nodes it removes, validated
+ * and cleaned up exactly as restoreProtectedSelection applies a rewrite. Only
+ * `removals` (an explicit, located deletion) lets it empty a text node or
+ * leave out an inline node or literal markup.
+ */
+export function readProtectedRewrite(selection: ProtectedSelection, response: string, removals?: ProtectedRemovals): ProtectedRewrite {
+  return parseProtectedRewrite(removeDiscouragedPunctuation(response, selection.punctuation), selection, removals);
 }
 
 export function restoreProtectedSelection(
@@ -444,7 +485,7 @@ export function restoreProtectedSelection(
   response: string
 ) {
   // Every AI rewrite lands here (inline edits, Deepen, Validate, comment threads, humanize).
-  const rewrittenText = parseProtectedRewrite(removeDiscouragedPunctuation(response, selection.punctuation), selection);
+  const rewrittenText = readProtectedRewrite(selection, response).texts;
   const rewrittenSlice: SerializedSlice = {
     ...selection.slice,
     content: replaceSerializedText(selection.slice.content, rewrittenText),

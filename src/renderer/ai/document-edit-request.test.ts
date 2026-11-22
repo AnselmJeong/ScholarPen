@@ -30,7 +30,7 @@ describe("describeAssistantEdit", () => {
     expect(notice.title).toBe("Methods 문서에 수정 1곳을 추적 변경으로 넣었습니다 (3곳 중).");
     expect(notice.description).toContain("Keep 또는 Revert");
     expect(notice.items).toEqual([
-      "“Earlier trials reported similar effects [@smith2020]” — 인용·수식·상호참조 [@smith2020]를 지우거나 바꾸게 되어 적용하지 않았습니다. 편집기에서 직접 고쳐 주세요.",
+      "“Earlier trials reported similar effects [@smith2020]” — 인용·수식·상호참조 [@smith2020]를 일부만 인용한 채 지우거나 바꾸게 되어 적용하지 않았습니다. 지우거나 바꾸려면 통째로 인용해야 합니다.",
       "“We recieve” — 이 섹션은 Observe로 설정되어 AI 수정을 받지 않습니다.",
       "[@ghost2000]는 references.bib에 없어 뺐습니다. 문헌을 먼저 추가해 주세요.",
     ]);

@@ -1,10 +1,9 @@
 import * as Y from "yjs";
 import * as encoding from "lib0/encoding";
 import type { Node as PMNode, Schema } from "prosemirror-model";
-import { EditorState } from "prosemirror-state";
 import { yXmlFragmentToProseMirrorRootNode } from "y-prosemirror";
-import { revertSuggestions } from "@handlewithcare/prosemirror-suggest-changes";
 import { COLLAB_FRAGMENT } from "../../../shared/collab/protocol";
+import { revertedDoc } from "../../../shared/collab/resolve-suggestions";
 
 export type DeleteSet = Y.Transaction["deleteSet"];
 
@@ -69,9 +68,7 @@ export function acceptedDoc(doc: PMNode, schema: Schema) {
     return !found;
   });
   if (!found) return doc;
-  let out = doc;
-  revertSuggestions(EditorState.create({ schema, doc }), (tr) => { out = tr.doc; });
-  return out;
+  return revertedDoc(doc);
 }
 
 export function readFragment(ydoc: Y.Doc, schema: Schema) {

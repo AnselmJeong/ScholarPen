@@ -8,7 +8,7 @@ import {
   type AssistantEditResult,
   type RemovedCitation,
 } from "../../../shared/agent-document-edit";
-import { protectedRewritePreview, type ProtectedSelection } from "../../../shared/ai-text-protection";
+import { protectedRewritePreview, type ProtectedRemovals, type ProtectedSelection } from "../../../shared/ai-text-protection";
 import { authorshipBlind } from "../../../shared/collab/ai-authorship";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../../shared/collab/change-sets";
 import { SCHOLARPEN_AI } from "../../../shared/collab/personas";
@@ -45,7 +45,10 @@ import { clip } from "./prompts";
 
 type Piece =
   | { kind: "text"; node: number; from: number; to: number; marks: number }
-  | { kind: "atom"; from: number; to: number; preview: string };
+  /** `index`: the inline node's place among the paragraph's inline nodes, as its protection marker has it. */
+  | { kind: "atom"; index: number; type: string; from: number; to: number; preview: string };
+type TextPiece = Extract<Piece, { kind: "text" }>;
+type AtomPiece = Extract<Piece, { kind: "atom" }>;
 
 /** A paragraph's text as manuscript-text renders it: text nodes, with atoms (citations, math…) as `[@key]`, `$…$`. */
 export interface FlatParagraph {
@@ -60,6 +63,7 @@ export function flatParagraph(content: PMNode): FlatParagraph {
   const pieces: Piece[] = [];
   const texts: string[] = [];
   let text = "";
+  let atoms = 0;
   content.descendants((node) => {
     if (node.isText) {
       const value = node.text ?? "";
@@ -70,7 +74,7 @@ export function flatParagraph(content: PMNode): FlatParagraph {
     }
     if (node.isLeaf) {
       const preview = leafText(node);
-      pieces.push({ kind: "atom", from: text.length, to: text.length + preview.length, preview });
+      pieces.push({ kind: "atom", index: atoms++, type: node.type.name, from: text.length, to: text.length + preview.length, preview });
       text += preview;
       return false;
     }
@@ -172,33 +176,53 @@ function newMarkup(oldText: string, newText: string) {
   return null;
 }
 
+/** The text of flat [from, to) without the inline nodes in it, and the flat position of each of its characters. */
+function textOf(view: FlatParagraph, from: number, to: number) {
+  let text = "";
+  const at: number[] = [];
+  for (const piece of view.pieces) {
+    if (piece.kind !== "text") continue;
+    for (let p = Math.max(from, piece.from); p < Math.min(to, piece.to); p++) {
+      text += view.text[p];
+      at.push(p);
+    }
+  }
+  return { text, at };
+}
+
 /**
- * Node-local hunks for replacing flat text [from, to), which holds no atom,
- * with `insert`. Inserted words go to the text node they sit in; at a boundary
- * between two formatting runs, to the plainer one.
+ * Node-local hunks for replacing the text of flat [from, to) with `insert`.
+ * The stretch holds no inline node the change keeps; those it removes are
+ * left out of the comparison. Inserted words go to the text node they sit in;
+ * at a boundary between two formatting runs, to the plainer one.
  */
 function gapHunks(view: FlatParagraph, from: number, to: number, insert: string): NodeHunk[] | Refusal {
-  const pieces = view.pieces.filter((piece): piece is Extract<Piece, { kind: "text" }> => piece.kind === "text");
+  const pieces = view.pieces.filter((piece): piece is TextPiece => piece.kind === "text");
+  const old = textOf(view, from, to);
   const result: NodeHunk[] = [];
-  for (const hunk of diffHunks(view.text.slice(from, to), insert)) {
-    const start = from + hunk.from;
-    const end = from + hunk.to;
-    const touched = pieces.filter((piece) => piece.from < end && piece.to > start);
+  for (const hunk of diffHunks(old.text, insert)) {
+    // Right after the text before the hunk, and at the hunk's first character: only removed inline nodes lie between.
+    const before = hunk.from > 0 ? old.at[hunk.from - 1] + 1 : from;
+    const start = hunk.from < old.at.length ? old.at[hunk.from] : to;
+    const end = hunk.to > hunk.from ? old.at[hunk.to - 1] + 1 : start;
+    const touched = hunk.to > hunk.from ? pieces.filter((piece) => piece.from < end && piece.to > start) : [];
     for (const piece of touched) {
       result.push({ node: piece.node, from: Math.max(start, piece.from) - piece.from, to: Math.min(end, piece.to) - piece.from, insert: "" });
     }
     if (!hunk.insert) continue;
-    let target: Extract<Piece, { kind: "text" }> | undefined;
+    let target: TextPiece | undefined;
+    let at = 0;
     if (touched.length) {
       target = touched.find((piece) => start > piece.from || end < piece.to) ?? touched[0];
+      at = Math.max(start, target.from) - target.from;
     } else {
-      const inside = pieces.find((piece) => piece.from < start && start < piece.to);
-      const left = pieces.find((piece) => piece.to === start);
+      const inside = before === start ? pieces.find((piece) => piece.from < start && start < piece.to) : undefined;
+      const left = pieces.find((piece) => piece.to === before);
       const right = pieces.find((piece) => piece.from === start);
       target = inside ?? (left && right ? (right.marks < left.marks ? right : left) : left ?? right);
+      if (target) at = (target === left ? before : start) - target.from;
     }
     if (!target) return { reason: "format", detail: "text between two citations or equations" };
-    const at = Math.max(start, target.from) - target.from;
     const existing = result.find((item) => item.node === target!.node && item.from === at && item.insert === "");
     if (existing) existing.insert = hunk.insert;
     else result.push({ node: target.node, from: at, to: at, insert: hunk.insert });
@@ -214,53 +238,178 @@ function applyNodeHunks(texts: string[], hunks: NodeHunk[]) {
   return next;
 }
 
-/** Literal markup protected inside each text node (`_`, `*`, typed `[@key]`…), in order. */
+type Literal = { token: string; from: number; to: number };
+
+/** Literal markup protected inside each text node (`_`, `*`, URLs, typed `[@key]`…), with its place in the node's text. */
 function literalsByNode(protection: ProtectedSelection) {
-  const literals: string[][] = Array.from({ length: protection.textNodeCount }, () => []);
+  const literals: Literal[][] = Array.from({ length: protection.textNodeCount }, () => []);
   let node = -1;
+  let offset = 0;
+  let cursor = 0;
   for (const marker of protection.markers) {
-    if (marker.kind === "text-open") node = marker.textIndex;
-    else if (marker.kind === "text-close") node = -1;
-    else if (marker.kind === "literal" && node >= 0) literals[node].push(marker.value);
+    const at = protection.protectedText.indexOf(marker.token, cursor);
+    if (node >= 0) offset += at - cursor;
+    if (marker.kind === "text-open") {
+      node = marker.textIndex;
+      offset = 0;
+    } else if (marker.kind === "text-close") {
+      node = -1;
+    } else if (marker.kind === "literal" && node >= 0) {
+      literals[node].push({ token: marker.token, from: offset, to: offset + marker.value.length });
+      offset += marker.value.length;
+    }
+    cursor = at + marker.token.length;
   }
   return literals;
 }
 
-function keepsLiterals(text: string, literals: string[]) {
-  let cursor = 0;
-  for (const literal of literals) {
-    const at = text.indexOf(literal, cursor);
-    if (at < 0) return false;
-    cursor = at + literal.length;
-  }
-  return true;
-}
-
-/** The block's protected text with each text node replaced; markers and literals stay where they were. */
-function protectedResponse(protection: ProtectedSelection, texts: string[]) {
-  let output = "";
-  let active: { text: string; cursor: number } | null = null;
-  for (const marker of protection.markers) {
-    if (marker.kind === "text-open") {
-      output += marker.token;
-      active = { text: texts[marker.textIndex], cursor: 0 };
-    } else if (marker.kind === "literal" && active) {
-      const at = active.text.indexOf(marker.value, active.cursor);
-      output += active.text.slice(active.cursor, at) + marker.token;
-      active.cursor = at + marker.value.length;
-    } else if (marker.kind === "text-close" && active) {
-      output += active.text.slice(active.cursor) + marker.token;
-      active = null;
-    } else {
-      output += marker.token;
+/** Literal markup a change removes whole (its tokens), or null when it would change one only in part. */
+function removedLiterals(literals: Literal[][], hunks: NodeHunk[]): string[] | null {
+  const removed: string[] = [];
+  for (const node of new Set(hunks.map((hunk) => hunk.node))) {
+    const own = hunks.filter((hunk) => hunk.node === node);
+    for (const literal of literals[node]) {
+      if (own.some((hunk) => hunk.to > hunk.from && hunk.from <= literal.from && literal.to <= hunk.to)) removed.push(literal.token);
+      else if (own.some((hunk) => hunk.from < literal.to && (hunk.to > literal.from || (hunk.to === hunk.from && hunk.from > literal.from)))) return null;
     }
   }
+  return removed;
+}
+
+/**
+ * The block's protected text with each text node rewritten by `hunks`; markers
+ * stay where they were, except those of the inline nodes and literal markup
+ * in `removed`.
+ */
+function protectedResponse(protection: ProtectedSelection, texts: string[], hunks: NodeHunk[], literals: Literal[][], removed: ReadonlySet<string>) {
+  const next = applyNodeHunks(texts, hunks);
+  // Where a kept literal lands: every hunk before it (or inserting right at it) moves it.
+  const moved = (node: number, at: number) => at + hunks
+    .filter((hunk) => hunk.node === node && hunk.to <= at)
+    .reduce((delta, hunk) => delta + hunk.insert.length - (hunk.to - hunk.from), 0);
+  let output = "";
+  for (const marker of protection.markers) {
+    if (removed.has(marker.token) || marker.kind === "literal") continue;
+    output += marker.token;
+    if (marker.kind !== "text-open") continue;
+    const text = next[marker.textIndex];
+    let cursor = 0;
+    for (const literal of literals[marker.textIndex]) {
+      if (removed.has(literal.token)) continue;
+      const at = moved(marker.textIndex, literal.from);
+      output += text.slice(cursor, at) + literal.token;
+      cursor = at + literal.to - literal.from;
+    }
+    output += text.slice(cursor);
+  }
   return output;
+}
+
+/**
+ * How a model writes a cross-reference or footnote it means to keep in altered
+ * form. Plain text would not become the node again, so that is refused; an
+ * altered citation comes back as a citation node and an altered equation is
+ * refused as Markdown.
+ */
+const ALTERED_ATOM: Record<string, RegExp> = {
+  crossReference: /(?<![\w@])@[A-Za-z][\w:.-]*/g,
+  footnote: /\[\^[^\]\s]+\]/g,
+};
+
+type ChangePlan = {
+  hunks: NodeHunk[];
+  /** Inline nodes the change removes: in the quote, whole, and left out of the replacement. */
+  atoms: AtomPiece[];
+  removedCitations: RemovedCitation[];
+  /** Keys of the citations it removes; typed again elsewhere in the change, they come back as citation nodes. */
+  movedCitekeys: string[];
+};
+
+/**
+ * One located change as node hunks. Inline nodes inside the quoted passage
+ * that the replacement still shows (its `[@key]`, `$…$`) stay, in order; one
+ * it leaves out is removed with the passage, so deleting a sentence takes its
+ * citation, equation or italic variable with it. Only what the quote holds
+ * whole can go: a citation the quote cuts through, or a line break in a
+ * passage that is reworded rather than deleted, refuses the change.
+ */
+function planChange(
+  view: FlatParagraph,
+  located: { from: number; to: number; replacement: string },
+  options: { citekeys: ReadonlySet<string> | null; level: EditLevel },
+): ChangePlan | (Refusal & { removedCitations: RemovedCitation[] }) {
+  let { from, to, replacement } = located;
+  // A quote that cuts through a citation or equation takes all of it, though it may not remove it.
+  for (const piece of view.pieces) {
+    if (piece.kind !== "atom") continue;
+    if (piece.from < from && from < piece.to) { replacement = view.text.slice(piece.from, from) + replacement; from = piece.from; }
+    if (piece.from < to && to < piece.to) { replacement += view.text.slice(to, piece.to); to = piece.to; }
+  }
+  const atoms = view.pieces.filter((piece): piece is AtomPiece => piece.kind === "atom" && piece.from >= from && piece.to <= to && piece.to > piece.from);
+  const kept: Array<{ atom: AtomPiece; at: number }> = [];
+  const dropped: AtomPiece[] = [];
+  let cursor = 0;
+  for (const atom of atoms) {
+    const at = replacement.indexOf(atom.preview, cursor);
+    if (at >= 0) {
+      kept.push({ atom, at });
+      cursor = at + atom.preview.length;
+      continue;
+    }
+    const quoted = atom.from >= located.from && atom.to <= located.to;
+    // Models drop line breaks when they rewrap text: one goes only with a passage deleted outright.
+    if (!quoted || (!atom.preview.trim() && replacement.trim())) return { reason: "atom", detail: atom.preview, removedCitations: [] };
+    dropped.push(atom);
+  }
+  // The replacement's own words: without the nodes it keeps and without citation groups.
+  let words = replacement;
+  for (const { atom, at } of [...kept].reverse()) words = words.slice(0, at) + " " + words.slice(at + atom.preview.length);
+  words = words.replace(/\[@[^\]\n]*\]/g, " ");
+  const passageText = textOf(view, from, to).text;
+  const altered = dropped.find((atom) => {
+    const syntax = ALTERED_ATOM[atom.type];
+    return !!syntax && [...words.matchAll(syntax)].some((match) => !passageText.includes(match[0]));
+  });
+  if (altered) return { reason: "atom", detail: altered.preview, removedCitations: [] };
+  const gaps: Array<{ from: number; to: number; text: string }> = [];
+  let gapStart = from;
+  let textStart = 0;
+  for (const { atom, at } of kept) {
+    gaps.push({ from: gapStart, to: atom.from, text: replacement.slice(textStart, at) });
+    textStart = at + atom.preview.length;
+    gapStart = atom.to;
+  }
+  gaps.push({ from: gapStart, to, text: replacement.slice(textStart) });
+
+  const movedCitekeys = findCitations(dropped.map((atom) => atom.preview).join(" ")).flatMap((span) => span.items.map((cite) => cite.key));
+  const hunks: NodeHunk[] = [];
+  const removedCitations: RemovedCitation[] = [];
+  const why: RemovedCitation["why"] = options.level === "proofread" ? "proofread" : options.citekeys ? "not-in-library" : "no-library";
+  for (const gap of gaps) {
+    const oldText = textOf(view, gap.from, gap.to).text;
+    const markup = newMarkup(oldText, gap.text);
+    if (markup) return { reason: "markup", detail: markup, removedCitations: [] };
+    // New citations must name a work in references.bib; the Proofread level adds none. The passage's own may move.
+    const own = new Set([...findCitations(oldText).flatMap((span) => span.items.map((cite) => cite.key)), ...movedCitekeys]);
+    const text = rewriteCitations(gap.text, (key) => {
+      if (own.has(key) || (options.level !== "proofread" && options.citekeys?.has(key))) return key;
+      removedCitations.push({ key, why });
+      return null;
+    });
+    const result = gapHunks(view, gap.from, gap.to, text);
+    if (!Array.isArray(result)) return { ...result, removedCitations: [] };
+    hunks.push(...result);
+  }
+  return { hunks, atoms: dropped, removedCitations, movedCitekeys };
 }
 
 export interface ParagraphPlan {
   /** The rewrite for `applyBlockRewrite`, or null when no change survived. */
   response: string | null;
+  /** What the rewrite removes (formatting runs, inline nodes, literal markup), all inside quoted passages. */
+  removals: ProtectedRemovals | null;
+  /** Keys of removed citations that a change typed again: they become citation nodes even if references.bib lacks them. */
+  movedCitekeys: string[];
   /** Indexes (into the request) of the changes the response carries. */
   accepted: number[];
   refused: Array<{ index: number } & Refusal>;
@@ -280,7 +429,8 @@ export function planParagraph(
 ): ParagraphPlan {
   const view = flatParagraph(content);
   const literals = literalsByNode(base.protection);
-  const plan: ParagraphPlan = { response: null, accepted: [], refused: [], removedCitations: [] };
+  const nodeTokens = base.protection.markers.filter((marker) => marker.kind === "node").map((marker) => marker.token);
+  const plan: ParagraphPlan = { response: null, removals: null, movedCitekeys: [], accepted: [], refused: [], removedCitations: [] };
   const located: Array<{ index: number; from: number; to: number; replacement: string }> = [];
   for (const { index, change } of changes) {
     const place = locateChange(view.text, change);
@@ -295,69 +445,39 @@ export function planParagraph(
     else placed.push(item);
   }
 
-  let texts = view.texts;
-  // From the end, so the node offsets of earlier changes stay valid.
-  for (const item of [...placed].reverse()) {
-    let { from, to, replacement } = item;
-    // A quote that cuts through a citation or equation takes all of it.
-    for (const piece of view.pieces) {
-      if (piece.kind !== "atom") continue;
-      if (piece.from < from && from < piece.to) { replacement = view.text.slice(piece.from, from) + replacement; from = piece.from; }
-      if (piece.from < to && to < piece.to) { replacement += view.text.slice(to, piece.to); to = piece.to; }
+  // Changes do not overlap, so every hunk is in the paragraph's original coordinates.
+  const hunks: NodeHunk[] = [];
+  const removed = new Set<string>();
+  for (const item of placed) {
+    const change = planChange(view, item, options);
+    if (!("hunks" in change)) {
+      plan.refused.push({ index: item.index, reason: change.reason, ...(change.detail ? { detail: change.detail } : {}) });
+      continue;
     }
-    // Atoms inside the passage must reappear, in order, in the replacement.
-    const atoms = view.pieces.filter((piece): piece is Extract<Piece, { kind: "atom" }> => piece.kind === "atom" && piece.from >= from && piece.to <= to && piece.to > piece.from);
-    const gaps: Array<{ from: number; to: number; text: string }> = [];
-    let cursor = 0;
-    let gapStart = from;
-    let refusal: Refusal | null = null;
-    for (const atom of atoms) {
-      const at = replacement.indexOf(atom.preview, cursor);
-      if (at < 0) { refusal = { reason: "atom", detail: atom.preview }; break; }
-      gaps.push({ from: gapStart, to: atom.from, text: replacement.slice(cursor, at) });
-      cursor = at + atom.preview.length;
-      gapStart = atom.to;
-    }
-    gaps.push({ from: gapStart, to, text: replacement.slice(cursor) });
-    const hunks: NodeHunk[] = [];
-    const removed: RemovedCitation[] = [];
-    const why: RemovedCitation["why"] = options.level === "proofread" ? "proofread" : options.citekeys ? "not-in-library" : "no-library";
-    for (const gap of refusal ? [] : gaps) {
-      const oldText = view.text.slice(gap.from, gap.to);
-      const markup = newMarkup(oldText, gap.text);
-      if (markup) { refusal = { reason: "markup", detail: markup }; break; }
-      // New citations must name a work in references.bib; the Proofread level adds none.
-      const kept = new Set(findCitations(oldText).flatMap((span) => span.items.map((cite) => cite.key)));
-      const text = rewriteCitations(gap.text, (key) => {
-        if (kept.has(key) || (options.level !== "proofread" && options.citekeys?.has(key))) return key;
-        removed.push({ key, why });
-        return null;
-      });
-      const gapResult = gapHunks(view, gap.from, gap.to, text);
-      if (!Array.isArray(gapResult)) { refusal = gapResult; break; }
-      hunks.push(...gapResult);
-    }
-    if (!refusal) {
-      const next = applyNodeHunks(texts, hunks);
-      const touched = [...new Set(hunks.map((hunk) => hunk.node))];
-      // A formatting run (italic, bold, link…) cannot be emptied, nor protected markup dropped.
-      if (touched.some((node) => !next[node].length)) refusal = { reason: "format" };
-      else if (touched.some((node) => !keepsLiterals(next[node], literals[node]))) refusal = { reason: "format", detail: "markup" };
-      else if (next.every((text, node) => text === texts[node])) refusal = { reason: "unchanged" };
-      else {
-        texts = next;
-        plan.accepted.push(item.index);
-        plan.removedCitations.push(...removed);
-      }
-    }
-    if (refusal) {
-      plan.refused.push({ index: item.index, ...refusal });
+    if (!change.hunks.length && !change.atoms.length) {
       // "Changes nothing" because its citation was removed: say which and why.
-      if (refusal.reason === "unchanged") plan.removedCitations.push(...removed);
+      plan.refused.push({ index: item.index, reason: "unchanged" });
+      plan.removedCitations.push(...change.removedCitations);
+      continue;
     }
+    // Literal markup (code, URLs, `_`, `*`) goes only whole, with the quoted passage.
+    const literalsRemoved = removedLiterals(literals, change.hunks);
+    if (!literalsRemoved) {
+      plan.refused.push({ index: item.index, reason: "format", detail: "markup" });
+      continue;
+    }
+    hunks.push(...change.hunks);
+    for (const token of [...literalsRemoved, ...change.atoms.map((atom) => nodeTokens[atom.index])]) removed.add(token);
+    plan.accepted.push(item.index);
+    plan.removedCitations.push(...change.removedCitations);
+    plan.movedCitekeys.push(...change.movedCitekeys);
   }
-  plan.accepted.reverse();
-  if (plan.accepted.length) plan.response = protectedResponse(base.protection, texts);
+  if (plan.accepted.length) {
+    const next = applyNodeHunks(view.texts, hunks);
+    plan.response = protectedResponse(base.protection, view.texts, hunks, literals, removed);
+    // A formatting run the changes empty is removed whole, like the inline nodes and literals they leave out.
+    plan.removals = { texts: next.flatMap((text, node) => text ? [] : [node]), markers: [...removed] };
+  }
   return plan;
 }
 
@@ -536,7 +656,9 @@ async function applyAssistantEdit(
     }
     attachment.presence.claim(blockId, "editing");
     // Observe was refused above, so every edit lands as a tracked suggestion.
-    const outcome = applyBlockRewrite(session, base, plan.response, "suggest", AI_ORIGIN, changeSetId, citekeys ?? undefined);
+    // A removed citation typed again elsewhere in its change comes back as a citation node.
+    const known = plan.movedCitekeys.length ? new Set([...(citekeys ?? []), ...plan.movedCitekeys]) : citekeys ?? undefined;
+    const outcome = applyBlockRewrite(session, base, plan.response, "suggest", AI_ORIGIN, changeSetId, known, plan.removals ?? undefined);
     attachment.presence.release();
     if (outcome.kind === "applied") {
       for (const index of plan.accepted) outcomes.set(index, { index, applied: true, blockId });
