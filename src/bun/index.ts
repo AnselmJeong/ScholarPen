@@ -45,6 +45,8 @@ import { createFileHistoryStorage } from "./collab/history/store";
 import { Reviewer } from "./collab/agent/reviewer";
 import { ProjectWriting } from "./collab/project-writing";
 import { enqueueDraft, zoneEditMode } from "./collab/agent/zones";
+import { assistantEditRules, runAssistantEdit } from "./collab/agent/assistant-edit";
+import { setDocumentEditGuide } from "./agent/document-edit-guide";
 import { parseBibtexCitekeys } from "../shared/bibtex-utils";
 import { completeAgentModel } from "./agent/providers";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
@@ -128,6 +130,17 @@ const collabReviewer = new Reviewer(collabAgent, {
     const bibtex = await fileSystem.loadBibtex(projectPath).catch(() => "");
     return bibtex.trim() ? new Set(parseBibtexCitekeys(bibtex)) : null;
   },
+});
+// The Assistant edits open manuscripts through the agent's own edit path; its prompt carries the document's rules.
+const projectCitekeys = async (projectPath: string) => {
+  const bibtex = await fileSystem.loadBibtex(projectPath).catch(() => null);
+  return bibtex === null ? null : new Set(parseBibtexCitekeys(bibtex));
+};
+setDocumentEditGuide(async (projectPath, documentPath) => {
+  const documents = `${projectPath.replace(/\/+$/, "")}/documents/`;
+  if (!documentPath.startsWith(documents)) return null;
+  const session = collabRegistry.get(collabDocKey(projectPath, documentPath.slice(documents.length)));
+  return session ? assistantEditRules(session, await projectWriting.guide(projectPath).catch(() => null)) : null;
 });
 
 // Version history: every change to an open document, grouped into checkpoints.
@@ -590,6 +603,7 @@ async function main() {
         collabDraftSection: ({ docKey, blockId }) => {
           enqueueDraft(collabAgent, docKey, blockId, completeWithSettings);
         },
+        assistantEditDocument: (request) => runAssistantEdit(collabAgent, request, { citekeys: projectCitekeys }),
         collabHistoryList: ({ docKey }) => collabHistory.list(docKey),
         collabHistoryVersion: ({ docKey, entryId }) => collabHistory.version(docKey, entryId),
         collabHistoryCheckpoint: ({ docKey, kind, label }) => collabHistory.checkpoint(docKey, { kind, label }),

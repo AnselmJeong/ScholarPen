@@ -3,8 +3,9 @@
  * The JSON form spends most of its length on block structure (a document with
  * a dozen tables is >90% markup), so prompts get Markdown-like text instead:
  * headings as `#`, tables as `|` rows, dividers as `---`, citations as
- * `[@key]`, math as `$…$`. Edits never use this text: ScholarPen AI reads the
- * live document itself.
+ * `[@key]`, math as `$…$`. Edits never write this text back: the Assistant
+ * quotes it to say what to replace, and Bun finds that passage in the live
+ * document (see bun/collab/agent/assistant-edit.ts).
  */
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -77,17 +78,55 @@ function blockText(block: Record<string, unknown>): string {
   }
 }
 
-/** The whole manuscript as Markdown-like text; nested blocks are indented under their parent. */
-export function manuscriptText(blocks: unknown, depth = 0): string {
-  if (!Array.isArray(blocks)) return "";
-  const parts: string[] = [];
-  const indent = "  ".repeat(depth);
+/** Blocks whose text is inline content the Assistant can edit (not code, tables, equations or figures). */
+function editableText(block: Record<string, unknown>) {
+  return Array.isArray(block.content) && block.type !== "codeBlock";
+}
+
+function blockIds(blocks: unknown, into: string[] = []) {
+  if (!Array.isArray(blocks)) return into;
   for (const block of blocks) {
     if (!record(block)) continue;
-    const text = blockText(block);
-    if (text.trim()) parts.push(depth ? text.split("\n").map(line => indent + line).join("\n") : text);
-    const children = manuscriptText(block.children, depth + 1);
-    if (children) parts.push(children);
+    if (typeof block.id === "string") into.push(block.id);
+    blockIds(block.children, into);
   }
-  return parts.join("\n\n");
+  return into;
+}
+
+/**
+ * Short paragraph ids for the Assistant: the first eight letters and digits
+ * of each block id, or the whole id where two blocks share those.
+ */
+export function shortParagraphIds(blocks: unknown): Map<string, string> {
+  const ids = blockIds(blocks);
+  const short = (id: string) => id.replace(/[^A-Za-z0-9]/g, "").slice(0, 8);
+  const count = new Map<string, number>();
+  for (const id of ids) count.set(short(id), (count.get(short(id)) ?? 0) + 1);
+  return new Map(ids.map(id => [id, (count.get(short(id)) ?? 0) > 1 ? id.replace(/[^A-Za-z0-9]/g, "") : short(id)]));
+}
+
+export interface ManuscriptTextOptions {
+  /** Start each editable paragraph and heading with `[¶id] ` (the Assistant's edit protocol). */
+  paragraphIds?: boolean;
+}
+
+/** The whole manuscript as Markdown-like text; nested blocks are indented under their parent. */
+export function manuscriptText(blocks: unknown, options: ManuscriptTextOptions = {}): string {
+  const tags = options.paragraphIds ? shortParagraphIds(blocks) : null;
+  const write = (list: unknown, depth: number): string => {
+    if (!Array.isArray(list)) return "";
+    const parts: string[] = [];
+    const indent = "  ".repeat(depth);
+    for (const block of list) {
+      if (!record(block)) continue;
+      let text = blockText(block);
+      const tag = tags && typeof block.id === "string" && editableText(block) ? tags.get(block.id) : undefined;
+      if (tag && text.trim()) text = `[¶${tag}] ${text}`;
+      if (text.trim()) parts.push(depth ? text.split("\n").map(line => indent + line).join("\n") : text);
+      const children = write(block.children, depth + 1);
+      if (children) parts.push(children);
+    }
+    return parts.join("\n\n");
+  };
+  return write(blocks, 0);
 }

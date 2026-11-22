@@ -80,7 +80,7 @@ export function RevisionHistory({ ydoc, documentName, projectPath, onExported }:
             {expanded === entry.id && (
               <div className="space-y-1.5 border-t border-sidebar-border px-2 py-1.5 text-xs leading-5">
                 <PanelNote>
-                  {entry.kind === "coordinated" ? "Coordinated revision" : entry.kind === "peer-review" ? "Reviewer revision (Review & Revision)" : "Comment revision"}
+                  {entry.kind === "coordinated" ? "Coordinated revision" : entry.kind === "peer-review" ? "Reviewer revision (Review & Revision)" : entry.kind === "assistant" ? "Assistant chat edit" : "Comment revision"}
                   {entry.level ? ` · ${editLevelLabel(entry.level)} level` : ""} · {entry.paragraphs.length} paragraphs
                 </PanelNote>
                 {entry.summary && <p className="text-foreground">{entry.summary}</p>}

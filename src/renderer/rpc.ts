@@ -44,6 +44,7 @@ import type {
 import { DEFAULT_OLLAMA_BASE_URL } from "../shared/ollama-connection";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "../shared/collab/protocol";
 import type { AgentActivityMessage } from "../shared/collab/agent-types";
+import type { AssistantEditRequest, AssistantEditResult } from "../shared/agent-document-edit";
 import type { HistoryEntry, HistoryEntryKind, HistoryVersion } from "../shared/collab/history";
 import type { Glossary } from "../shared/glossary";
 import type { ManuscriptMapView } from "../shared/manuscript-map";
@@ -62,7 +63,7 @@ const strictRpcMethods = new Set([
   "getWritingPreferences", "saveWritingPreferences", "extensionsList", "extensionsInvoke", "extensionsSetEnabled", "extensionsCancel",
   ...Object.keys(legacyExtensionCommands),
   "getAIDetectorStatus", "installAIDetector", "cancelAIDetectorInstall",
-  "reviewConfirmSnapshot",
+  "reviewConfirmSnapshot", "assistantEditDocument",
   "reviewExportResponses", "reviewSaveRevisionResponse", "reviewRevisionContext", "reviewDelete", "reviewManuscript", "reviewList", "reviewCreate", "reviewStart", "reviewGet", "reviewStageProposals", "reviewPlaceProposals", "reviewSyncResponses", "reviewEditResponse", "reviewOpenLetter", "reviewStop", "reviewDecideFigure", "reviewImportFigure", "reviewFigurePreview", "reviewExport",
   "getProjectMemoryStatus", "retainProjectMemory", "recallProjectMemory", "getProjectMemoryOperation",
   "getAuthorLearning", "dismissAuthorPreference",
@@ -664,6 +665,7 @@ export const rpc = {
   collabReviewSection: (docKey: string, blockId: string) =>
     call<void>("collabReviewSection", { docKey, blockId }),
   collabDraftSection: (docKey: string, blockId: string) => call<void>("collabDraftSection", { docKey, blockId }),
+  assistantEditDocument: (request: AssistantEditRequest) => call<AssistantEditResult>("assistantEditDocument", request),
   collabHistoryList: (docKey: string) => call<HistoryEntry[] | null>("collabHistoryList", { docKey }),
   collabHistoryVersion: (docKey: string, entryId: string) =>
     call<HistoryVersion | null>("collabHistoryVersion", { docKey, entryId }),

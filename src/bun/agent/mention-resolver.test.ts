@@ -207,3 +207,13 @@ test("a mentioned manuscript is read as its text, not its block JSON", async () 
   expect(context.content).toStartWith("Old result 0.");
   expect(context.content).toEndWith("Old result 399.\n\n---\n\nNew result.");
 });
+
+test("a mentioned manuscript carries paragraph ids when the Assistant may edit it", async () => {
+  const blocks = [{ id: "a81b0d22-1111", type: "paragraph", props: {}, content: [{ type: "text", text: "Only paragraph.", styles: {} }], children: [] }];
+  const read = { listMentionableFiles: async () => mentionable, readTextFile: async () => JSON.stringify(blocks) };
+  const message = "Edit @[documents/03 History of Neuromodulation.scholarpen.json]";
+  const [editable] = await resolveMentionedFiles({ projectPath, explicitFilePaths: [], message, paragraphIds: true }, read);
+  const [plain] = await resolveMentionedFiles({ projectPath, explicitFilePaths: [], message }, read);
+  expect(editable.content).toBe("[¶a81b0d22] Only paragraph.");
+  expect(plain.content).toBe("Only paragraph.");
+});

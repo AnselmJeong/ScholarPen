@@ -2,7 +2,8 @@
 export interface AgentJobView {
   id: string;
   docKey: string;
-  kind: "comment" | "review" | "draft";
+  /** "assistant": an edit the Assistant tab wrote, applied through the same path. */
+  kind: "comment" | "review" | "draft" | "assistant";
   label: string;
   state: "queued" | "waiting" | "working" | "done" | "failed" | "cancelled";
   threadId?: string;

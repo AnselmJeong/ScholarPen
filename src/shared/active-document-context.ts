@@ -1,5 +1,5 @@
 import type { ActiveDocumentContext } from "./rpc-types";
-import { manuscriptText } from "./manuscript-text";
+import { manuscriptText, type ManuscriptTextOptions } from "./manuscript-text";
 
 export const ACTIVE_DOCUMENT_LIMIT = 50_000;
 
@@ -7,10 +7,11 @@ export const ACTIVE_DOCUMENT_LIMIT = 50_000;
  * The live document as readable text (citations, tables, math and nesting
  * kept; no image bytes). Block JSON was mostly markup: a results section with
  * twelve tables took 160,000 characters for 27,000 of text, and lost its
- * middle to the limit above.
+ * middle to the limit above. The Assistant gets paragraph ids, which Bun strips
+ * again when a request cannot edit.
  */
-export function snapshotActiveDocument(path: string, blocks: unknown[]): ActiveDocumentContext {
-  return boundActiveDocument({ path, content: manuscriptText(blocks), truncated: false });
+export function snapshotActiveDocument(path: string, blocks: unknown[], options: ManuscriptTextOptions = {}): ActiveDocumentContext {
+  return boundActiveDocument({ path, content: manuscriptText(blocks, options), truncated: false });
 }
 
 export function boundActiveDocument(document: ActiveDocumentContext): ActiveDocumentContext {

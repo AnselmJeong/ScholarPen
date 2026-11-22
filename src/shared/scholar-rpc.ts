@@ -16,6 +16,7 @@ import type { ManuscriptMapView } from "./manuscript-map";
 import type { ConsistencyView } from "./consistency-report";
 import type { CollabOpenParams, CollabOpenResult, CollabUpdateMessage } from "./collab/protocol";
 import type { AgentActivityMessage } from "./collab/agent-types";
+import type { AssistantEditRequest, AssistantEditResult } from "./agent-document-edit";
 import type { HistoryEntry, HistoryEntryKind, HistoryVersion } from "./collab/history";
 import type {
   OllamaStatus,
@@ -231,6 +232,8 @@ type BunRequests = RPCSchema<{
     collabSetReviewCategory: { params: { docKey: string; category: ReviewCategory; enabled: boolean }; response: ProjectReviewSettings };
     collabReviewSection: { params: { docKey: string; blockId: string }; response: void };
     collabDraftSection: { params: { docKey: string; blockId: string }; response: void };
+    /** Applies an edit the Assistant tab wrote to an open manuscript, through ScholarPen AI's edit path. */
+    assistantEditDocument: { params: AssistantEditRequest; response: AssistantEditResult };
     // Version history of an open document (see bun/collab/history)
     collabHistoryList: { params: { docKey: string }; response: HistoryEntry[] };
     collabHistoryVersion: { params: { docKey: string; entryId: string }; response: HistoryVersion | null };

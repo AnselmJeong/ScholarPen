@@ -42,7 +42,8 @@ import packageJson from "../../package.json";
 import { ActivityPanel, ActivityPanelHeader, type RightPanelTab } from "./components/sidebar/ActivityPanel";
 import { HistoryPanel } from "./components/sidebar/HistoryPanel";
 import { getEditorCollab } from "./collab/editor-collab";
-import { sendDocumentEditRequest, waitForDocumentEditor, type DocumentEditDispatch } from "./ai/document-edit-request";
+import { waitForDocumentEditor, type AssistantEditDispatch } from "./ai/document-edit-request";
+import type { AssistantEditRequest } from "@shared/agent-document-edit";
 import { ProjectPanel } from "./components/sidebar/ProjectPanel";
 
 type AppView = "editor" | "settings";
@@ -281,8 +282,11 @@ export function App() {
     setCurrentView("editor");
   }, [activeFile, fileTree]);
 
-  /** The Assistant hands a manuscript edit to ScholarPen AI; the document is opened first when it is not. */
-  const handleAssistantDocumentEdit = useCallback(async (path: string, instruction: string): Promise<DocumentEditDispatch> => {
+  /**
+   * Applies an edit the Assistant wrote to a manuscript, through ScholarPen
+   * AI's edit path in Bun; the document is opened first when it is not.
+   */
+  const handleAssistantDocumentEdit = useCallback(async (path: string, edit: Omit<AssistantEditRequest, "docKey">): Promise<AssistantEditDispatch> => {
     const find = () => editorGroupRef.current?.getDocumentEditor(path) ?? null;
     if (!find()) {
       const target = collectDocumentNodes(fileTree).find((node) => node.path === path);
@@ -290,8 +294,13 @@ export function App() {
       handleFileSelect(target);
     }
     const editor = await waitForDocumentEditor(find);
-    const sent = editor ? sendDocumentEditRequest(editor, instruction) : null;
-    return sent ? { ok: true, sent } : { ok: false, reason: "not-ready" };
+    const collab = editor ? getEditorCollab(editor) : null;
+    if (!collab) return { ok: false, reason: "not-ready" };
+    try {
+      return { ok: true, result: await rpc.assistantEditDocument({ ...edit, docKey: collab.docKey }), ydoc: collab.ydoc };
+    } catch (error) {
+      return { ok: false, reason: "failed", error: error instanceof Error ? error.message : String(error) };
+    }
   }, [fileTree, handleFileSelect]);
 
   // ── Menu actions ──────────────────────────────────────────────────────────
@@ -711,7 +720,7 @@ export function App() {
                   editor={editorRef.current}
                   activeDocumentName={activeFile?.kind === "document" ? activeFile.name : null}
                   getActiveDocumentContext={() => editorGroupRef.current?.getActiveDocumentContext()}
-                  onRequestDocumentEdit={handleAssistantDocumentEdit}
+                  onApplyDocumentEdit={handleAssistantDocumentEdit}
                   onClose={() => setAiSidebarOpen(false)}
                   width={aiSidebarWidth}
                   deepenRequest={pendingDeepenRequest}

@@ -277,7 +277,8 @@ export const EditorPaneGroup = forwardRef<EditorPaneGroupHandle, EditorPaneGroup
         const tab = pane.tabs.find((candidate) => candidate.id === pane.activeTabId);
         if (!tab || tab.file.kind !== "document") return undefined;
         const editor = editorMapRef.current.get(tab.id);
-        return editor ? snapshotActiveDocument(tab.file.path, acceptedDocument(editor)) : undefined;
+        // Paragraph ids let the Assistant say which paragraph an edit is for.
+        return editor ? snapshotActiveDocument(tab.file.path, acceptedDocument(editor), { paragraphIds: true }) : undefined;
       },
 
       getDocumentEditor(filePath: string) {

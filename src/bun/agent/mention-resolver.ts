@@ -60,10 +60,10 @@ function trimContent(content: string, limit = 20_000): { content: string; trunca
  */
 const DOCUMENT_TEXT_LIMIT = 40_000;
 
-function manuscriptFileText(raw: string): string | null {
+function manuscriptFileText(raw: string, paragraphIds: boolean): string | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? manuscriptText(parsed) : null;
+    return Array.isArray(parsed) ? manuscriptText(parsed, { paragraphIds }) : null;
   } catch {
     return null;
   }
@@ -93,6 +93,8 @@ export async function resolveMentionedFiles(params: {
   message: string;
   explicitFilePaths: string[];
   projectPath: string;
+  /** Start each manuscript paragraph with its id, for the Assistant's edit protocol. */
+  paragraphIds?: boolean;
 }, dependencies: MentionResolverDependencies = {}): Promise<MentionedFileContext[]> {
   const mentions = parseFileMentions(params.message).filter(mention =>
     mention.syntax !== "legacy" || !/^(ai|stats|reviewer2)[,.:!?]?$/i.test(mention.value));
@@ -143,7 +145,7 @@ export async function resolveMentionedFiles(params: {
       }
     }
     const raw = await readTextFile(filePath);
-    const document = filePath.endsWith(".scholarpen.json") ? manuscriptFileText(raw) : null;
+    const document = filePath.endsWith(".scholarpen.json") ? manuscriptFileText(raw, !!params.paragraphIds) : null;
     const { content, truncated } = document === null ? trimContent(raw) : trimContent(document, DOCUMENT_TEXT_LIMIT);
     totalChars += content.length;
     if (totalChars > 80_000) throw new Error("Referenced content is too large. Select fewer files or a smaller folder.");

@@ -73,15 +73,16 @@ import { CITATION_RESULT_MARKER, citationResultText, parseCitationSearchResult }
 import { asksForAIScore, detectionTextFromBlocks, supersededDetectionMessages } from "@shared/ai-detection";
 import {
   documentEditLabel,
-  extractDocumentEditRequests,
-  formatDocumentEditRequests,
-  hasUnfinishedDocumentEditRequest,
+  extractDocumentEdits,
+  formatDocumentEdits,
+  hasUnfinishedDocumentEdit,
   resolveDocumentEditTarget,
+  type AssistantEditRequest,
 } from "@shared/agent-document-edit";
 import {
-  describeDocumentEdit,
-  watchDocumentEdit,
-  type DocumentEditDispatch,
+  describeAssistantEdit,
+  watchEditDecision,
+  type AssistantEditDispatch,
   type DocumentEditNotice,
 } from "../../ai/document-edit-request";
 
@@ -107,8 +108,8 @@ interface AISidebarProps {
   /** Stages a citation check's revision as a tracked change; returns an error message. */
   onApplyCitationRevision?: (requestId: string, protectedRevision: string) => string | null;
   onOpenProjectSource?: (reference: ProjectFileReference) => void;
-  /** Hands a manuscript edit the author asked for to ScholarPen AI (opening the document if needed). */
-  onRequestDocumentEdit?: (path: string, instruction: string) => Promise<DocumentEditDispatch>;
+  /** Applies a manuscript edit the Assistant wrote (opening the document if needed). */
+  onApplyDocumentEdit?: (path: string, edit: Omit<AssistantEditRequest, "docKey">) => Promise<AssistantEditDispatch>;
 }
 
 type DropdownMode = "slash" | "file" | null;
@@ -858,7 +859,7 @@ export function AISidebar({
   onCitationCheckRequestConsumed,
   onApplyCitationRevision,
   onOpenProjectSource,
-  onRequestDocumentEdit,
+  onApplyDocumentEdit,
 }: AISidebarProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [slashCommands, setSlashCommands] = useState<AgentSkill[]>([]);
@@ -925,9 +926,14 @@ export function AISidebar({
 
   useEffect(() => clearEditNotices, [clearEditNotices]);
 
-  /** Sends each complete edit request in a finished answer to ScholarPen AI and follows it. */
+  /**
+   * Applies each complete edit block in a finished answer to its document,
+   * reports what landed and what was refused, then follows the author's
+   * keep/revert decision.
+   */
   const dispatchDocumentEdits = useCallback(async (
     answer: string,
+    request: string,
     projectPath: string,
     activeDocumentPath: string | undefined,
     language: "ko" | "en",
@@ -936,35 +942,42 @@ export function AISidebar({
       current.some((item) => item.id === id)
         ? current.map((item) => item.id === id ? { ...notice, id } : item)
         : [...current, { ...notice, id }]);
-    const update = (id: string, notice: DocumentEditNotice) => setEditNotices((current) =>
-      current.map((item) => item.id === id ? { ...notice, id } : item));
-    const requests = extractDocumentEditRequests(answer);
-    if (requests.length === 0) {
-      if (hasUnfinishedDocumentEditRequest(answer)) {
-        show(crypto.randomUUID(), describeDocumentEdit({ state: "refused", reason: "unfinished" }, "", language));
+    const edits = extractDocumentEdits(answer);
+    if (edits.length === 0) {
+      if (hasUnfinishedDocumentEdit(answer)) {
+        show(crypto.randomUUID(), describeAssistantEdit({ state: "refused", reason: "unfinished" }, "", language));
       }
       return;
     }
-    for (const request of requests) {
+    for (const edit of edits) {
       const id = crypto.randomUUID();
-      const path = resolveDocumentEditTarget(request.document, projectPath, activeDocumentPath);
-      const name = documentEditLabel(path ?? request.document) || request.document;
-      if (!path || !onRequestDocumentEdit) {
-        show(id, describeDocumentEdit({ state: "refused", reason: path ? "not-ready" : "invalid-target" }, name, language));
+      const target = resolveDocumentEditTarget(edit.document, projectPath, activeDocumentPath);
+      const name = documentEditLabel(target.ok ? target.path : edit.document) || edit.document;
+      if (!target.ok || !onApplyDocumentEdit) {
+        show(id, describeAssistantEdit({ state: "refused", reason: target.ok ? "not-ready" : target.reason }, name, language));
         continue;
       }
-      show(id, describeDocumentEdit({ state: "sending" }, name, language));
-      const result = await onRequestDocumentEdit(path, request.instruction).catch((error) => {
-        console.error(error);
-        return { ok: false, reason: "not-ready" } as const;
-      });
-      if (!result.ok) {
-        update(id, describeDocumentEdit({ state: "refused", reason: result.reason }, name, language));
+      if (!edit.changes.length) {
+        show(id, describeAssistantEdit({ state: "refused", reason: "malformed" }, name, language));
         continue;
       }
-      editWatchersRef.current.push(watchDocumentEdit(result.sent, (progress) => update(id, describeDocumentEdit(progress, name, language))));
+      show(id, describeAssistantEdit({ state: "applying", count: edit.changes.length }, name, language));
+      const dispatched = await onApplyDocumentEdit(target.path, { request, summary: edit.summary, changes: edit.changes });
+      if (!dispatched.ok) {
+        show(id, dispatched.reason === "failed"
+          ? describeAssistantEdit({ state: "failed", error: dispatched.error }, name, language)
+          : describeAssistantEdit({ state: "refused", reason: dispatched.reason }, name, language));
+        continue;
+      }
+      const { result } = dispatched;
+      show(id, describeAssistantEdit({ state: "done", result, changes: edit.changes, malformed: edit.malformed }, name, language));
+      if (result.status === "applied" && result.revisionId) {
+        const applied = result.outcomes.filter((outcome) => outcome.applied).length;
+        editWatchersRef.current.push(watchEditDecision(dispatched.ydoc, result.revisionId, (decision) =>
+          show(id, describeAssistantEdit({ state: "decided", decision, applied }, name, language))));
+      }
     }
-  }, [onRequestDocumentEdit]);
+  }, [onApplyDocumentEdit]);
 
   const startNewThread = useCallback(() => {
     clearEditNotices();
@@ -1211,18 +1224,18 @@ export function AISidebar({
           transformVisibleContent: isDeepen && deepen
             ? (content: string) => formatDeepenAnalysisForDisplay(content, deepen.protection)
             : !isPreparedRequest
-              ? (content: string) => formatDocumentEditRequests(content, lang)
+              ? (content: string) => formatDocumentEdits(content, lang)
               : undefined,
           onComplete: async (assistantMessage, status) => {
             const visibleAssistantMessage = isDeepen && deepen
               ? formatDeepenAnalysisForDisplay(assistantMessage, deepen.protection)
               : !isPreparedRequest
-                ? formatDocumentEditRequests(assistantMessage, lang, false)
+                ? formatDocumentEdits(assistantMessage, lang, false)
                 : assistantMessage;
 
-            // Opening the document can take a moment: never hold the chat's completion for it.
+            // Opening the document and applying the edit take a moment: never hold the chat's completion for it.
             if (!isPreparedRequest && status === "complete" && projectPath) {
-              void dispatchDocumentEdits(assistantMessage, projectPath, activeDocument?.path, lang);
+              void dispatchDocumentEdits(assistantMessage, message, projectPath, activeDocument?.path, lang);
             }
 
             const reviewNotice = isDeepen && deepen
@@ -1389,7 +1402,14 @@ export function AISidebar({
               description={notice.description}
               isDismissable
               onDismiss={() => setEditNotices((current) => current.filter((item) => item.id !== notice.id))}
-            />
+              collapsible={notice.items?.length ? { defaultIsOpen: true } : undefined}
+            >
+              {notice.items?.length ? (
+                <ul className="list-disc space-y-1 pl-4 text-xs leading-5">
+                  {notice.items.map((item, index) => <li key={index}>{item}</li>)}
+                </ul>
+              ) : null}
+            </Banner>
           </div>
         ))}
 

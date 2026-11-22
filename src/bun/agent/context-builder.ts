@@ -5,7 +5,8 @@ import { legacyWritingPurpose, styleContext } from "../ai/context-composer";
 import { detectStyleLanguage } from "../../shared/author-style";
 import { fileSystem } from "../fs/manager";
 import { boundActiveDocument } from "../../shared/active-document-context";
-import { DOCUMENT_EDIT_PROTOCOL } from "../../shared/agent-document-edit";
+import { DOCUMENT_EDIT_PROTOCOL, stripParagraphTags } from "../../shared/agent-document-edit";
+import { documentEditGuide } from "./document-edit-guide";
 import type { AgentMessage, AgentStreamParams, AppSettings, OllamaMessage } from "../../shared/rpc-types";
 import { citationClient, type SupportingCitation } from "../../plugins/bibliography/main/client";
 import { buildCitationReferenceList, buildWebReferenceList } from "./references";
@@ -189,7 +190,12 @@ export async function buildAgentMessages(
     throw new Error("Validate에는 검색이 필요합니다. Settings에서 검색을 켜 주세요. 원문은 유지했습니다.");
   }
   const images = validateAgentImages(params.images);
-  const activeDocument = params.activeDocument ? boundActiveDocument(params.activeDocument) : undefined;
+  // General chat in a project may edit manuscripts; every other request is read-only.
+  const canEdit = !params.analysisMode && !!params.projectPath;
+  const activeDocument = params.activeDocument
+    ? boundActiveDocument(canEdit ? params.activeDocument : { ...params.activeDocument, content: stripParagraphTags(params.activeDocument.content) })
+    : undefined;
+  const editGuide = canEdit && activeDocument ? await documentEditGuide(params.projectPath!, activeDocument.path) : null;
   const selectedSkills = await Promise.all(
     params.selectedSkillIds.map((id) => loadAgentSkill(id, params.projectPath ?? undefined))
   );
@@ -199,6 +205,7 @@ export async function buildAgentMessages(
         message: params.message,
         explicitFilePaths: params.selectedFilePaths,
         projectPath: params.projectPath,
+        paragraphIds: canEdit,
       })
     : [];
   const query = researchQuery(params);
@@ -366,9 +373,10 @@ export async function buildAgentMessages(
     "For academic writing, preserve nuance and cite provided web sources when used.",
     params.analysisMode === "deepen" || isValidate
       ? "The user's selection review action authorizes only the validated, selection-scoped replacement described below. No other document content may be changed."
-      : !params.analysisMode && params.projectPath
+      : canEdit
         ? DOCUMENT_EDIT_PROTOCOL
         : "You are read-only: you cannot change documents or files.",
+    editGuide ? `<active_document_edit_rules>\n${editGuide}\n</active_document_edit_rules>` : "",
     params.analysisMode === "deepen" || isValidate ? deepenLanguageRule(params.lang) : languageRule(params.lang),
     params.projectPath ? `Current project path: ${params.projectPath}` : "No project is currently open.",
     "</scholarpen_system>",
@@ -412,7 +420,7 @@ export async function buildAgentMessages(
       ...historyToMessages(params.history),
       ...(activeDocument ? [{
         role: "user" as const,
-        content: `<active_document reference_only="true" truncated="${activeDocument.truncated}">\nFile: ${JSON.stringify(activeDocument.path)}\nCurrent live editor snapshot as manuscript text (headings as #, tables as | rows, dividers as ---, citations as [@key], math as $…$):\n${activeDocument.content}\n</active_document>`,
+        content: `<active_document reference_only="true" truncated="${activeDocument.truncated}">\nFile: ${JSON.stringify(activeDocument.path)}\nCurrent live editor snapshot as manuscript text (headings as #, tables as | rows, dividers as ---, citations as [@key], math as $…$${canEdit ? ", each paragraph and heading after its id [¶…]" : ""}):\n${activeDocument.content}\n</active_document>`,
       }] : []),
       { role: "user", content: trimMiddle(params.message || (images.length ? "첨부한 이미지를 설명해 주세요." : ""), USER_MESSAGE_LIMIT, "[...user message truncated...]"), ...(images.length ? { images } : {}) },
     ],

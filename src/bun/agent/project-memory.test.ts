@@ -5,6 +5,7 @@ import { join } from "path";
 import { fileSystem, normalizeSettings } from "../fs/manager";
 import { buildAgentMessages } from "./context-builder";
 import { snapshotActiveDocument } from "../../shared/active-document-context";
+import { setDocumentEditGuide } from "./document-edit-guide";
 import type { AgentStreamParams } from "../../shared/rpc-types";
 
 const recall = spyOn(fileSystem, "recallProjectMemory");
@@ -41,21 +42,34 @@ test("cancellation during memory lookup stops generation", async () => {
   await expect(buildAgentMessages(await params(), settings, controller.signal)).rejects.toThrow("Aborted");
 });
 
-test("general chat in a project may hand manuscript edits to ScholarPen AI; selection reviews may not", async () => {
+test("general chat in a project may edit manuscripts, with paragraph ids and the document's rules; selection reviews may not", async () => {
   recall.mockResolvedValue([]);
   const request = await params();
-  const chat = await buildAgentMessages(request, settings);
-  expect(chat.messages[0].content).toContain("<scholarpen_edit document=");
-  expect(chat.messages[0].content).not.toContain("You are read-only");
+  const documentPath = join(request.projectPath!, "documents", "intro.scholarpen.json");
+  const activeDocument = snapshotActiveDocument(documentPath,
+    [{ id: "3f2a9c1e-0000", type: "paragraph", content: [{ type: "text", text: "LIVE TEXT" }] }], { paragraphIds: true });
+  const asked: string[] = [];
+  setDocumentEditGuide(async (projectPath, path) => { asked.push(`${projectPath}|${path}`); return "Edit level of the active document: Proofread."; });
+  try {
+    const chat = await buildAgentMessages({ ...request, activeDocument }, settings);
+    const all = chat.messages.map(message => message.content).join("\n");
+    expect(chat.messages[0].content).toContain("<scholarpen_edit document=");
+    expect(chat.messages[0].content).not.toContain("You are read-only");
+    expect(chat.messages[0].content).toContain("<active_document_edit_rules>\nEdit level of the active document: Proofread.\n</active_document_edit_rules>");
+    expect(asked).toEqual([`${request.projectPath}|${documentPath}`]);
+    expect(all).toContain("[¶3f2a9c1e] LIVE TEXT");
 
-  const deepen = await buildAgentMessages({ ...request, analysisMode: "deepen", deepenContext: {
-    selectedText: "A sentence.", protectedText: "A sentence.", beforeSelection: "", afterSelection: "",
-  } }, settings);
-  expect(deepen.messages[0].content).not.toContain("<scholarpen_edit");
+    const deepen = await buildAgentMessages({ ...request, activeDocument, analysisMode: "deepen", deepenContext: {
+      selectedText: "A sentence.", protectedText: "A sentence.", beforeSelection: "", afterSelection: "",
+    } }, settings);
+    expect(deepen.messages[0].content).not.toContain("<scholarpen_edit");
+    expect(deepen.messages[0].content).not.toContain("active_document_edit_rules");
+    expect(deepen.messages.map(message => message.content).join("\n")).not.toContain("[¶");
 
-  const noProject = await buildAgentMessages({ ...request, projectPath: null }, settings);
-  expect(noProject.messages[0].content).not.toContain("<scholarpen_edit");
-  expect(noProject.messages[0].content).toContain("You are read-only");
+    const noProject = await buildAgentMessages({ ...request, projectPath: null }, settings);
+    expect(noProject.messages[0].content).not.toContain("<scholarpen_edit");
+    expect(noProject.messages[0].content).toContain("You are read-only");
+  } finally { setDocumentEditGuide(null); }
 });
 
 test("a mentioned document that is also open is sent once, as the live snapshot", async () => {
