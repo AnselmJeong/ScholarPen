@@ -53,3 +53,34 @@ test("changes from different requests or paragraphs stay apart", () => {
 test("a document without suggestions has no changes", () => {
   expect(listHunks(schema.nodes.doc.create(null, [block("a", plain("Clean text."))]))).toEqual([]);
 });
+
+test("word-level changes inside one sentence are one change, shown as the whole sentence before and after", () => {
+  const doc = schema.nodes.doc.create(null, [
+    block("a", plain("Earlier work agreed. Both the charge "), del("may", 1), ins("and", 1), plain(" the dose "),
+      del("is", 1), ins("are", 1), plain(" relevant. Later work agreed.")),
+  ]);
+  const hunks = listHunks(doc);
+  expect(hunks).toHaveLength(1);
+  const [hunk] = hunks;
+  expect(hunk).toMatchObject({
+    id: 1, blockId: "a", deleted: "mayis", inserted: "andare",
+    before: "Both the charge may the dose is relevant.",
+    after: "Both the charge and the dose are relevant.",
+  });
+  expect(hunk.insertions).toHaveLength(2);
+  expect(hunk.deletions).toHaveLength(2);
+  // The sentence's range in the document, both versions included, for highlighting it.
+  expect(doc.textBetween(hunk.span.from, hunk.span.to)).toBe("Both the charge mayand the dose isare relevant.");
+  // Deciding the change covers every suggested run of the sentence and nothing outside it.
+  expect(doc.textBetween(hunk.from, hunk.to)).toBe("mayand the dose isare");
+});
+
+test("an added or removed sentence has no other side", () => {
+  const doc = schema.nodes.doc.create(null, [
+    block("a", plain("First one. "), ins("A new sentence. ", 3), plain("Second one."), del(" Gone now.", 3)),
+  ]);
+  expect(listHunks(doc).map(({ before, after }) => ({ before, after }))).toEqual([
+    { before: "", after: "A new sentence." },
+    { before: "Gone now.", after: "" },
+  ]);
+});

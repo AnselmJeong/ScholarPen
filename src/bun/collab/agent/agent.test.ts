@@ -226,6 +226,16 @@ test("a comment for the AI becomes a tracked suggestion and a thread reply", asy
   const parts = marks(session, "p1");
   expect(parts.filter((p) => p.mark === "deletion").map((p) => p.text).join("|")).toContain("prove");
   expect(parts.filter((p) => p.mark === "insertion").map((p) => p.text).join("|")).toContain("suggest");
+  // The whole sentence is struck and written anew, but only the AI's own words carry its authorship.
+  expect(parts.filter((p) => p.mark === "deletion").map((p) => p.text).join("")).toBe("These results prove that the drug causes recovery in all patients.");
+  expect(parts.filter((p) => p.mark === "insertion").map((p) => p.text).join(""))
+    .toBe("These results suggest that the drug may support recovery in all patients.");
+  const authored: string[] = [];
+  blockContent(findBlock(readDoc(session), "p1")!).node.descendants((node) => {
+    if (node.isText && node.marks.some((mark) => mark.type.name === "aiAuthored")) authored.push(node.text!);
+    return true;
+  });
+  expect(authored).toEqual(["suggest", "may support"]);
   // The comment still anchors the passage.
   expect(threadRange(readDoc(session), threadId)).not.toBeNull();
   // Every change of this request carries one id: the change set the thread points to.
@@ -238,14 +248,18 @@ test("a comment for the AI becomes a tracked suggestion and a thread reply", asy
   expect(session.ydoc.getMap("changeSets").get(String(thread.meta.changeSet))).toMatchObject({ threadId, persona: "scholarpen-ai" });
 });
 
-test("a rewrite of most of a paragraph is one replaced span, not a patchwork of words", async () => {
+test("a rewrite of most of a paragraph is one replaced sentence, not a patchwork of words", async () => {
   const { session } = await setup(async (messages) => rewrite(messages,
     "These results prove that the drug causes recovery in all patients.",
     "In this cohort, recovery was more frequent among treated patients, although causality remains uncertain."));
   const threadId = comment(session, "p1", "@AI rewrite this paragraph");
   await waitFor(() => threadOf(session, threadId).comments.length === 2);
   const parts = marks(session, "p1").filter((p) => p.mark);
-  expect(parts.map((p) => p.mark)).toEqual(["deletion", "insertion"]);
+  // Text nodes may split where the AI-authorship mark starts or stops; the redline is one struck and one new sentence.
+  expect(parts.map((p) => p.mark).filter((mark, index, all) => mark !== all[index - 1])).toEqual(["deletion", "insertion"]);
+  expect(parts.filter((p) => p.mark === "deletion").map((p) => p.text).join("")).toBe("These results prove that the drug causes recovery in all patients.");
+  expect(parts.filter((p) => p.mark === "insertion").map((p) => p.text).join(""))
+    .toBe("In this cohort, recovery was more frequent among treated patients, although causality remains uncertain.");
 });
 
 test("citations survive and concurrent edits elsewhere in the paragraph are merged", async () => {

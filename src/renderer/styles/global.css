@@ -589,6 +589,8 @@ body {
   text-decoration-color: hsl(var(--muted-foreground) / 0.8);
   white-space: pre-wrap;
 }
+.sp-review-popover .sp-sentence-caption { margin-top: 0; }
+.sp-review-popover .sp-sentence[data-side="before"] { color: hsl(var(--foreground) / 0.75); white-space: pre-wrap; }
 
 /* Manuscript review: semantic ink, shared numbers, and anchored margin notes. */
 :root {
@@ -656,6 +658,11 @@ body {
 .sp-margin-excerpt ins { color: hsl(var(--foreground)); background: hsl(var(--review-edit) / 0.1); text-decoration: none; }
 .sp-margin-card[data-kind="proposal"] .sp-margin-excerpt ins { background: hsl(var(--review-peer) / 0.12); }
 .sp-margin-detail { color: hsl(var(--foreground) / 0.7); font-size: 11px; }
+/* A revised sentence read in full on both sides; only the words that differ are marked. */
+.sp-sentence-caption { display: block; margin: 7px 0 2px; color: hsl(var(--foreground) / 0.6); font-size: 10.5px; font-weight: 600; }
+.sp-margin-card-header + .sp-sentence-caption { margin-top: 0; }
+.sp-margin-excerpt.sp-sentence[data-side="before"] { color: hsl(var(--foreground) / 0.68); }
+.sp-margin-excerpt.sp-sentence :is(del, ins) { padding: 0 1px; border-radius: 2px; }
 .sp-margin-card > .sp-margin-detail { margin-top: 6px; }
 .sp-margin-comment { display: block; text-align: left; width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 156px; overflow-y: auto; }
 .sp-margin-link { display: flex; align-items: center; gap: 5px; padding-block: 5px 0; margin-top: 5px; }
@@ -682,6 +689,9 @@ body {
 /* Preserve the prose's typography while distinguishing a comment from a revision. */
 .bn-editor ins[data-id] { text-decoration-color: hsl(var(--review-edit) / 0.8); text-decoration-style: dotted; text-decoration-thickness: 2px; }
 .bn-editor .sp-hunk-active { background: hsl(var(--review-edit) / 0.13); }
+/* The whole sentence of the change being looked at. */
+.bn-editor .sp-hunk-sentence { background: hsl(var(--review-edit) / 0.1); border-radius: 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.bn-editor .sp-hunk-sentence-peer { background: hsl(var(--review-peer) / 0.1); }
 .sp-del-marker { border-color: hsl(var(--review-edit)); }
 .bn-editor .bn-thread-mark:not([data-orphan]) {
   background: hsl(var(--review-comment) / 0.09); border-bottom: 1px solid hsl(var(--review-comment) / 0.65);

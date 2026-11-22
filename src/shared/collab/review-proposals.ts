@@ -1,10 +1,8 @@
 import type * as Y from "yjs";
 import type { Node as PMNode } from "prosemirror-model";
 import type { EditorState, Transaction } from "prosemirror-state";
-import { transformToSuggestionTransaction } from "@handlewithcare/prosemirror-suggest-changes";
 import type { ReviewProposal } from "../review-session/proposals";
-import { diffHunks, type Hunk } from "./text-diff";
-import { withAIAuthored } from "./ai-authorship";
+import { revisedInline, sentenceHunks, suggestReplacement } from "./suggested-edits";
 
 /**
  * Review & Revision proposals placed in a document, keyed by proposal key.
@@ -39,25 +37,8 @@ export interface ProposalEntry extends ReviewProposal {
   layout?: number;
 }
 
-/** Phrase-level redlines (see phraseHunks). */
-export const PROPOSAL_LAYOUT = 2;
-
-/**
- * Word-level changes joined across short unchanged stretches, so the redline
- * in the text reads as whole phrases ("struck original, new wording") rather
- * than alternating single words.
- */
-export function phraseHunks(before: string, after: string, maxGap = 12): Hunk[] {
-  const merged: Hunk[] = [];
-  for (const hunk of diffHunks(before, after)) {
-    const last = merged.at(-1);
-    if (last && hunk.from - last.to <= maxGap) {
-      last.insert += before.slice(last.to, hunk.from) + hunk.insert;
-      last.to = hunk.to;
-    } else merged.push({ ...hunk });
-  }
-  return merged.filter((hunk) => before.slice(hunk.from, hunk.to) !== hunk.insert);
-}
+/** Sentence-level redlines (see sentenceHunks). */
+export const PROPOSAL_LAYOUT = 3;
 
 /** States that still need the author; settled proposals leave the manuscript. */
 export const OPEN_PROPOSAL_STATES: ReadonlySet<ProposalState> = new Set(["pending", "editing", "redo", "unplaced"]);
@@ -116,7 +97,7 @@ export type ProposalPlacement =
 
 /**
  * The tracked change that turns `before` into `after` inside the block at
- * `blockPos`, word by word, carrying suggestion id `changeSetId`.
+ * `blockPos`, sentence by sentence, carrying suggestion id `changeSetId`.
  */
 export function buildProposalTransaction(state: EditorState, blockPos: number, before: string, after: string, changeSetId: number): ProposalPlacement {
   const block = state.doc.nodeAt(blockPos);
@@ -125,18 +106,15 @@ export function buildProposalTransaction(state: EditorState, blockPos: number, b
   const range = locateText(content, blockPos + 2, before);
   if (!range) return hasSuggestionBetween(state.doc, blockPos, blockPos + block.nodeSize) ? { kind: "pending" } : { kind: "missing" };
   if (hasSuggestionBetween(state.doc, range.from, range.to)) return { kind: "pending" };
-  let tr = state.tr;
-  const hunks = phraseHunks(before, after);
-  for (const hunk of [...hunks].reverse()) {
+  const tr = state.tr;
+  for (const hunk of [...sentenceHunks(before, after)].reverse()) {
     const from = range.from + hunk.from;
     const to = range.from + hunk.to;
     const $from = tr.doc.resolve(from);
     const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
-    if (hunk.insert) tr.replaceWith(from, to, state.schema.text(hunk.insert, withAIAuthored(state.schema, marks)));
-    else tr.delete(from, to);
+    suggestReplacement(tr, from, to, revisedInline(tr.doc, from, before.slice(hunk.from, hunk.to), hunk.insert, marks), changeSetId);
   }
   if (!tr.docChanged) return { kind: "missing" };
-  tr = transformToSuggestionTransaction(tr, state, () => changeSetId);
   return { kind: "ready", tr, from: range.from, to: tr.mapping.map(range.to, 1) };
 }
 

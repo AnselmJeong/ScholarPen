@@ -7,6 +7,7 @@ import { decideAllChangeSets, decideChangeSet } from "../../collab/use-change-se
 import { useAgentActivity } from "../../collab/use-agent-activity";
 import type { ReviewStore } from "../../collab/suggestion-review";
 import type { SuggestionHunk } from "../../collab/suggestion-hunks";
+import { SentenceSide, sentenceChangeKind } from "./SentenceChange";
 import { hunkDecisionRange } from "../../collab/margin-review-layout";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../../shared/collab/change-sets";
 import { REVISIONS_MAP, type RevisionEntry } from "../../../shared/collab/revision-log";
@@ -228,14 +229,19 @@ function HunkPopover({ editor, hunk, scrollContainer, onDecide, onClose }: {
   }, [editor, hunk, scrollContainer]);
 
   if (!position) return null;
-  const deleted = hunk.deleted.trim();
+  const kind = sentenceChangeKind(hunk);
   return createPortal(
     <div className="sp-review-popover" style={position} role="dialog" aria-label="AI change">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 max-h-40 overflow-y-auto">
-          {deleted
-            ? <del>{hunk.deleted}</del>
-            : <span className="text-muted-foreground">Added by ScholarPen AI — nothing was removed here.</span>}
+          {kind === "added"
+            ? <span className="text-muted-foreground">New sentence added by ScholarPen AI — nothing was removed here.</span>
+            : <>
+              <span className="sp-sentence-caption">{kind === "removed" ? "Removed sentence" : "Original sentence"}</span>
+              {kind === "removed"
+                ? <del>{hunk.before}</del>
+                : <span className="sp-sentence" data-side="before"><SentenceSide hunk={hunk} side="before" /></span>}
+            </>}
         </div>
         <button type="button" className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted" aria-label="Close" onClick={onClose}>
           <X className="h-3 w-3" />

@@ -54,14 +54,16 @@ export function rewriteCitations(text: string, map: (key: string) => string | nu
 type Located = Hunk & { nf: number; ne: number };
 
 /**
- * Readable hunks whose inserted text always contains whole citation groups,
- * so each group can be turned into citation nodes. Only groups whose keys are
- * all known are returned; the rest stay plain text.
+ * Hunks (readable word-level ones unless `base` says otherwise) whose
+ * inserted text always contains whole citation groups, so each group can be
+ * turned into citation nodes. Only groups whose keys are all known are
+ * returned; the rest stay plain text.
  */
-export function citationHunks(original: string, revised: string, known: (key: string) => boolean) {
+export function citationHunks(original: string, revised: string, known: (key: string) => boolean,
+  base: (original: string, revised: string) => Hunk[] = readableHunks) {
   const spans = findCitations(revised).filter(span => span.items.every(item => known(item.key)));
   let delta = 0;
-  let hunks: Located[] = readableHunks(original, revised).map(hunk => {
+  let hunks: Located[] = base(original, revised).map(hunk => {
     const nf = hunk.from + delta;
     delta += hunk.insert.length - (hunk.to - hunk.from);
     return { ...hunk, nf, ne: nf + hunk.insert.length };

@@ -470,7 +470,10 @@ test("selection suggestions sync metadata and support per-paragraph Accept/Rejec
   expect(sets).toHaveLength(1);
   expect(sets[0].info?.label).toBe("Deepen");
   expect(JSON.stringify(withoutAuthorship(acceptedDocument(b.editor)))).not.toContain("qualified");
-  expect(b.editor.prosemirrorView.dom.querySelector("ins")?.textContent).toBe("qualified");
+  // Each revised sentence is suggested whole: the original sentence struck, the new one written in full.
+  expect([...b.editor.prosemirrorView.dom.querySelectorAll("ins")].map((node) => node.textContent).join(""))
+    .toBe("A qualified claim.Another qualified claim.");
+  expect([...b.editor.prosemirrorView.dom.querySelectorAll("del")].map((node) => node.textContent).join("")).toContain("A strong claim.");
   const panel = document.createElement("div");
   document.body.append(panel);
   const panelRoot = createRoot(panel);

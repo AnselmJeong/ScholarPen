@@ -247,18 +247,20 @@ test("decisions of a closed document come from its saved state and manuscript JS
 
 const { transformToSuggestionTransaction } = await import("@handlewithcare/prosemirror-suggest-changes");
 const { diffHunks } = await import("../../shared/collab/text-diff");
-const { locateText, phraseHunks } = await import("../../shared/collab/review-proposals");
+const { locateText } = await import("../../shared/collab/review-proposals");
+const { sentenceHunks } = await import("../../shared/collab/suggested-edits");
 
-test("phrase-level changes join words separated by short unchanged stretches", () => {
-  const before = "Earlier meta-analyses pooled tasks with very different demands.";
-  const after = "Earlier meta-analyses pooled tasks whose demands differed by up to a factor of three.";
+test("a proposal's redline replaces whole sentences, never single words", () => {
+  const before = "Earlier work agreed. Earlier meta-analyses pooled tasks with very different demands. Later work agreed.";
+  const after = "Earlier work agreed. Earlier meta-analyses pooled tasks whose demands differed by up to a factor of three. Later work agreed.";
   expect(diffHunks(before, after).length).toBeGreaterThan(2);
-  const hunks = phraseHunks(before, after);
+  const hunks = sentenceHunks(before, after);
   expect(hunks).toHaveLength(1);
-  expect(before.slice(hunks[0].from, hunks[0].to)).toBe("with very different demands");
+  expect(before.slice(hunks[0].from, hunks[0].to)).toBe("Earlier meta-analyses pooled tasks with very different demands.");
+  expect(hunks[0].insert).toBe("Earlier meta-analyses pooled tasks whose demands differed by up to a factor of three.");
 });
 
-/** A placement made before phrase-level layout: one tracked change per word. */
+/** A placement made before sentence-level layout: one tracked change per word. */
 function placeWordByWord(target: any, proposal: any, changeSetId: number) {
   const doc = readDoc(target);
   const block = findBlock(doc, proposal.blockId)!;
@@ -281,15 +283,15 @@ const runs = (target: any, blockId: string, mark: string) => {
   return count;
 };
 
-test("an untouched older placement is laid out again as phrases; one edited by hand is left alone", async () => {
+test("an untouched older placement is laid out again as sentences; one edited by hand is left alone", async () => {
   const target = await open();
   const [proposal] = proposalsFromSession(session, result);
   placeWordByWord(target, proposal, 7);
   const wordRuns = runs(target, "b1", "deletion");
   expect(wordRuns).toBeGreaterThan(2);
   expect(placeReviewProposals(target, [proposal])).toEqual({ placed: 0, unplaced: 0, waiting: 0, relaid: 1 });
-  expect(runs(target, "b1", "deletion")).toBe(2);
-  expect(target.ydoc.getMap<any>(REVIEW_PROPOSALS_MAP).get(proposal.key)).toMatchObject({ layout: 2, changeSetId: 7, state: "pending" });
+  expect(runs(target, "b1", "deletion")).toBe(1);
+  expect(target.ydoc.getMap<any>(REVIEW_PROPOSALS_MAP).get(proposal.key)).toMatchObject({ layout: 3, changeSetId: 7, state: "pending" });
   // Same original and proposal as before.
   accept(target, 7);
   expect(marks(target, "b1").map((part) => part.text).join("")).toContain(proposal.after.trim());

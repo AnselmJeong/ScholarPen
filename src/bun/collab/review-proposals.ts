@@ -29,7 +29,7 @@ function run(state: EditorState, command: (state: EditorState, dispatch: (tr: Tr
 }
 
 /**
- * Lays an older placement out again with phrase-level changes, only while it
+ * Lays an older placement out again with sentence-level changes, only while it
  * is still exactly the review's proposal: undecided, and neither its original
  * nor its proposed wording edited by hand.
  */

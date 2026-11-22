@@ -3,10 +3,11 @@ import { createPortal } from "react-dom";
 import type { BlockNoteEditor } from "@blocknote/core";
 import { CommentsExtension } from "@blocknote/core/comments";
 import { useThreads } from "@blocknote/react";
-import { Check, ChevronDown, ChevronUp, MessageSquare, X } from "lucide-react";
+import { Check, ChevronUp, MessageSquare, X } from "lucide-react";
 import type { CollabPeer } from "../../collab/collab-peer";
 import { MarginThread } from "./MarginThread";
 import { ProposalCard, type ProposalItem } from "./ProposalCard";
+import { SentenceSide, sentenceChangeKind, sentenceChangeLabel } from "./SentenceChange";
 import type { ReviewStore } from "../../collab/suggestion-review";
 import type { SuggestionHunk } from "../../collab/suggestion-hunks";
 import { decideChangeSet } from "../../collab/use-change-sets";
@@ -61,7 +62,6 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
   const [wide, setWide] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const cards = useRef(new Map<string, HTMLElement>());
-  const [expanded, setExpanded] = useState<string | null>(null);
   const threadSlot = useRef<HTMLDivElement>(null);
   const [threadHeight, setThreadHeight] = useState(180);
   const revealedSelection = useRef<string | undefined>(undefined);
@@ -185,7 +185,7 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
     const off = editor.onChange(schedule);
     window.addEventListener("resize", schedule);
     return () => { cancelAnimationFrame(frame); observer.disconnect(); mutations.disconnect(); off(); window.removeEventListener("resize", schedule); };
-  }, [editor, items, wide, visible, expanded, commentState.selectedThreadId, canvasRef]);
+  }, [editor, items, wide, visible, commentState.selectedThreadId, canvasRef]);
 
   const active = (item: Annotation) => item.kind === "edit"
     ? store.open && store.active === item.index
@@ -248,7 +248,6 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
       if (event.key !== "Escape") return;
       comments.selectThread(undefined);
       store.set({ open: false });
-      setExpanded(null);
       setSelectedProposal(null);
     };
     window.addEventListener("keydown", close);
@@ -331,8 +330,8 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
                   aria-label={`${label}: show in text`} aria-pressed={selected}>
                   <span className="sp-margin-number">{item.number}</span>
                   {/* The AI's own review notes are not answers to the journal's reviewers. */}
-                  <span>{item.kind === "edit" ? "Revision" : first && isAIUser(first.userId) ? "AI review" : "Comment"}</span>
-                  {item.kind === "edit" && <span className="sp-margin-detail">· {item.hunk.deleted ? "Original" : "Addition"}</span>}
+                  {/* An edit is named by what it did to the text: "Sentence revised", "Sentence added", … */}
+                  <span>{item.kind === "edit" ? sentenceChangeLabel(item.hunk) : first && isAIUser(first.userId) ? "AI review" : "Comment"}</span>
                 </button>
                 {item.kind === "edit" ? <>
                   <button type="button" className="sp-margin-action" aria-label={`Accept edit ${item.number}`} title="Accept this edit"
@@ -346,17 +345,15 @@ export function ReviewMargin({ editor, peer, store, canvasRef, scrollRef, visibl
                     onClick={() => comments.selectThread(undefined)}><X size={14} /></button>}
                 </>}
               </div>
-              {item.kind === "edit" ? <>
-                <div className="sp-margin-excerpt">{item.hunk.deleted ? <del>{item.hunk.deleted}</del> : <ins>{item.hunk.inserted}</ins>}</div>
-                {!!item.hunk.deleted && !!item.hunk.inserted && <>
-                  <button className="sp-margin-link" type="button" aria-expanded={expanded === item.key}
-                    onClick={() => setExpanded(expanded === item.key ? null : item.key)}>
-                    {expanded === item.key ? <ChevronUp size={12} /> : <ChevronDown size={12} />} Revised text
-                  </button>
-                  {expanded === item.key && <div className="sp-margin-excerpt"><ins>{item.hunk.inserted}</ins></div>}
-                </>}
-                {!item.hunk.inserted && <p className="sp-margin-detail">Removed from the revised text</p>}
-              </> : selected && nativeThreads.get(item.thread.id) ? (
+              {item.kind === "edit" ? (sentenceChangeKind(item.hunk) === "revised" ? <>
+                <span className="sp-sentence-caption">Original</span>
+                <div className="sp-margin-excerpt sp-sentence" data-side="before"><SentenceSide hunk={item.hunk} side="before" /></div>
+                <span className="sp-sentence-caption">Revised</span>
+                <div className="sp-margin-excerpt sp-sentence" data-side="after"><SentenceSide hunk={item.hunk} side="after" /></div>
+              </> : sentenceChangeKind(item.hunk) === "added"
+                ? <div className="sp-margin-excerpt"><ins>{item.hunk.after}</ins></div>
+                : <div className="sp-margin-excerpt"><del>{item.hunk.before}</del></div>
+              ) : selected && nativeThreads.get(item.thread.id) ? (
                 <div ref={threadSlot} className="sp-margin-thread-slot" style={{ height: threadHeight }} />
               ) : <>
                 <button type="button" className="sp-margin-comment" onClick={() => select(item)}>{first?.text}</button>

@@ -1,7 +1,6 @@
 import type { PunctuationPolicy } from "../../../shared/writing-preferences";
 import { EditorState } from "prosemirror-state";
 import type { Node as PMNode } from "prosemirror-model";
-import { transformToSuggestionTransaction } from "@handlewithcare/prosemirror-suggest-changes";
 import {
   hasProtectedTextChanges,
   protectSelectionSlice,
@@ -19,11 +18,11 @@ import {
   writeBlock,
   type BlockRef,
 } from "./doc-model";
-import { isMinorEdit, mergeText } from "./text-diff";
+import { isMinorEdit, mergeText, type Hunk } from "./text-diff";
 import { citationHunks, type CitationSpan } from "./citation-edits";
 
-import { readableHunks } from "../../../shared/collab/suggested-edits";
-import { authorshipBlind, withAIAuthored } from "../../../shared/collab/ai-authorship";
+import { nextSuggestionId, readableHunks, revisedInline, sentenceHunks, suggestReplacement } from "../../../shared/collab/suggested-edits";
+import { authorshipBlind } from "../../../shared/collab/ai-authorship";
 export { nextSuggestionId } from "../../../shared/collab/suggested-edits";
 
 /** How an AI edit lands in the document ("observe": not at all, proposals only). */
@@ -64,6 +63,29 @@ export function captureBlock(block: BlockRef, punctuation?: PunctuationPolicy): 
     protection,
     texts: textNodes(doc, 0).map((node) => node.text),
   };
+}
+
+/** Text nodes reading some text, with each span of it replaced by atom nodes (citation groups). */
+function withCitationNodes(content: readonly PMNode[], spans: readonly CitationSpan[], atoms: (span: CitationSpan) => PMNode[]) {
+  const range = (from: number, to: number) => {
+    const out: PMNode[] = [];
+    let offset = 0;
+    for (const node of content) {
+      const end = offset + node.nodeSize;
+      const a = Math.max(from, offset);
+      const b = Math.min(to, end);
+      if (b > a) out.push(node.cut(a - offset, b - offset));
+      offset = end;
+    }
+    return out;
+  };
+  const parts: PMNode[] = [];
+  let cursor = 0;
+  for (const span of spans) {
+    parts.push(...range(cursor, span.from), ...atoms(span));
+    cursor = span.to;
+  }
+  return [...parts, ...range(cursor, Infinity)];
 }
 
 /** Rewritten text of each text node, in document order. */
@@ -138,18 +160,23 @@ export function applyBlockRewrite(
   const nodes = textNodes(authorshipBlind(content.node), content.from);
   const citation = session.schema.nodes.citation;
   const known = (key: string) => !!citation && !!citekeys?.has(key);
-  const hunksByNode = nodes.map((node, index) => citekeys
-    ? citationHunks(node.text, targetTexts[index], known)
-    : readableHunks(node.text, targetTexts[index]).map((hunk) => ({ ...hunk, citations: [] as CitationSpan[] })));
-  if (hunksByNode.every((hunks) => hunks.length === 0)) return { kind: "unchanged" };
+  const hunksFor = (base: (original: string, revised: string) => Hunk[]) => nodes.map((node, index) => citekeys
+    ? citationHunks(node.text, targetTexts[index], known, base)
+    : base(node.text, targetTexts[index]).map((hunk) => ({ ...hunk, citations: [] as CitationSpan[] })));
+  const words = hunksFor(readableHunks);
+  if (words.every((hunks) => hunks.length === 0)) return { kind: "unchanged" };
 
-  // A new citation is a substantive change, never a silent direct edit.
-  const minor = hunksByNode.every((hunks, index) => hunks.length === 0 ||
+  // Word-level changes decide whether an edit is minor. A new citation is a substantive change, never a silent direct edit.
+  const minor = words.every((hunks, index) => hunks.length === 0 ||
     (isMinorEdit(nodes[index].text, hunks) && hunks.every((hunk) => !hunk.citations.length)));
   const effective: "suggest" | "direct" = mode === "auto" ? (minor ? "direct" : "suggest") : mode === "direct" ? "direct" : "suggest";
+  // A suggestion is reviewed sentence by sentence: the original sentence struck, the revised one written in full.
+  const hunksByNode = effective === "suggest" ? hunksFor(sentenceHunks) : words;
 
   const state = EditorState.create({ schema: session.schema, doc });
-  let tr = state.tr;
+  const tr = state.tr;
+  // Every change of one request carries one suggestion id, so it is reviewed as one unit.
+  const suggestionId = effective === "suggest" ? changeSetId ?? nextSuggestionId(doc) : undefined;
   // Apply from the end so earlier positions stay valid.
   for (let index = nodes.length - 1; index >= 0; index--) {
     const hunks = hunksByNode[index];
@@ -157,30 +184,17 @@ export function applyBlockRewrite(
       const hunk = hunks[h];
       const from = nodes[index].pos + hunk.from;
       const to = nodes[index].pos + hunk.to;
-      if (hunk.citations.length) {
-        // One step, so a suggestion never shows the `[@key]` text as inserted and deleted again.
-        const $from = tr.doc.resolve(from);
-        const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
-        const parts: PMNode[] = [];
-        let cursor = 0;
-        for (const span of hunk.citations) {
-          if (span.from > cursor) parts.push(session.schema.text(hunk.insert.slice(cursor, span.from), withAIAuthored(session.schema, marks)));
-          parts.push(...span.items.map((item) => citation.create({ citekey: item.key, locator: item.locator })));
-          cursor = span.to;
-        }
-        if (cursor < hunk.insert.length) parts.push(session.schema.text(hunk.insert.slice(cursor), withAIAuthored(session.schema, marks)));
-        tr.replaceWith(from, to, parts);
-      } else if (hunk.insert) {
-        // The AI's words carry the authorship mark, kept once the author accepts them.
-        const $from = tr.doc.resolve(from);
-        const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
-        tr.replaceWith(from, to, session.schema.text(hunk.insert, withAIAuthored(session.schema, marks)));
-      }
+      const $from = tr.doc.resolve(from);
+      const marks = from === to ? $from.marks() : $from.marksAcross(tr.doc.resolve(to)) ?? $from.marks();
+      // Kept words keep their marks; the AI's words carry the authorship mark, kept once the author accepts them.
+      const inline = revisedInline(tr.doc, from, nodes[index].text.slice(hunk.from, hunk.to), hunk.insert, marks);
+      // One step, so a suggestion never shows the `[@key]` text as inserted and deleted again.
+      const parts = hunk.citations.length ? withCitationNodes(inline, hunk.citations, (span) =>
+        span.items.map((item) => citation.create({ citekey: item.key, locator: item.locator }))) : inline;
+      if (suggestionId !== undefined) suggestReplacement(tr, from, to, parts, suggestionId);
+      else if (parts.length) tr.replaceWith(from, to, parts);
       else tr.delete(from, to);
     }
-  }
-  if (effective === "suggest") {
-    tr = transformToSuggestionTransaction(tr, state, changeSetId === undefined ? undefined : () => changeSetId);
   }
 
   const updated = tr.doc.nodeAt(block.pos);

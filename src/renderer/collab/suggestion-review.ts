@@ -148,6 +148,11 @@ function buildDecorations(doc: PMNode, state: Omit<ReviewState, "decorations">, 
   state.hunks.forEach((hunk, index) => {
     const active = store.active === index;
     const className = `sp-hunk${active ? " sp-hunk-active" : ""}${store.peer.has(String(hunk.id)) ? " sp-hunk-peer" : ""}`;
+    // The change being looked at is a sentence: tint all of it, not only the words that differ.
+    if (active && hunk.span.to > hunk.span.from) {
+      decorations.push(Decoration.inline(hunk.span.from, hunk.span.to,
+        { class: `sp-hunk-sentence${store.peer.has(String(hunk.id)) ? " sp-hunk-sentence-peer" : ""}` }));
+    }
     for (const range of hunk.deletions) {
       decorations.push(Decoration.inline(range.from, range.to, { class: className, "data-hunk": String(index) }));
     }

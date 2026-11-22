@@ -1,7 +1,7 @@
 import type { BlockNoteEditor } from "@blocknote/core";
 import type * as Y from "yjs";
 import { CHANGE_SETS_MAP, type ChangeSetInfo } from "../../shared/collab/change-sets";
-import { buildProposalTransaction, proposalLabel, REVIEW_PROPOSALS_MAP, type ProposalEntry } from "../../shared/collab/review-proposals";
+import { buildProposalTransaction, PROPOSAL_LAYOUT, proposalLabel, REVIEW_PROPOSALS_MAP, type ProposalEntry } from "../../shared/collab/review-proposals";
 import { nextSuggestionId } from "../../shared/collab/suggested-edits";
 import type { ReviewProposal } from "../../shared/review-session/proposals";
 
@@ -37,6 +37,6 @@ export function placeDemoProposal(editor: BlockNoteEditor<any, any, any>, ydoc: 
   view.dispatch(placement.tr);
   ydoc.transact(() => {
     ydoc.getMap<ChangeSetInfo>(CHANGE_SETS_MAP).set(String(id), { id, label: proposalLabel(SAMPLE), persona: "scholarpen-ai", reviewProposal: SAMPLE.key, createdAt: Date.now() });
-    entries.set(SAMPLE.key, { ...SAMPLE, blockId, state: "pending", changeSetId: id, placedAt: Date.now(), layout: 2 });
+    entries.set(SAMPLE.key, { ...SAMPLE, blockId, state: "pending", changeSetId: id, placedAt: Date.now(), layout: PROPOSAL_LAYOUT });
   });
 }

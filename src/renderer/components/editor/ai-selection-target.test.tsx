@@ -219,7 +219,7 @@ test("tracked Improve follows outside edits but rejects edits inside the selecti
   expect(JSON.stringify(editor.document)).toBe(before);
 });
 
-test("a partial selection tracks only the changed words, and Reject restores the exact original", async () => {
+test("a partial selection is redlined as the selected passage, never beyond it, and Reject restores the exact original", async () => {
   await mount();
   const original = JSON.stringify(editor.document);
   const from = snapshot.from + "The ".length;
@@ -230,7 +230,9 @@ test("a partial selection tracks only the changed words, and Reject restores the
     trackAISelection(view, from, to, protection);
     expect(suggestAISelection(editor, protection, protection.protectedText.replace("proves", "supports"), "Improve")).toBeNull();
   });
-  expect([...view.dom.querySelectorAll("del")].map(node => node.textContent)).toEqual(["proves"]);
+  // Less than a sentence was selected, so the selection is the unit: struck as a whole, written anew.
+  expect([...view.dom.querySelectorAll("del")].map(node => node.textContent).join("")).toBe("claim proves");
+  expect([...view.dom.querySelectorAll("ins")].map(node => node.textContent).join("")).toBe("claim supports");
   expect(JSON.stringify(withoutAuthorship(acceptedDocument(editor)))).toBe(original);
   await clickButton("Reject");
   expect(JSON.stringify(editor.document)).toBe(original);
