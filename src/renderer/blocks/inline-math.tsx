@@ -94,7 +94,8 @@ export const inlineMath = createReactInlineContentSpec(
           if (node && node.type.name === "inlineMath") {
             const tr = view.state.tr.setNodeMarkup(pos, undefined, {
               ...node.attrs,
-              formula: value,
+              // Pandoc reads `$a \times b $` as text, not math: never store edge spaces.
+              formula: value.trim(),
             });
             view.dispatch(tr);
           }

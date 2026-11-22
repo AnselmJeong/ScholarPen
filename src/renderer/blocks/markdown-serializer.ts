@@ -95,101 +95,188 @@ function citationToMarkdown(content: unknown): string | null {
 }
 
 /**
- * Convert inline content to Markdown with styling preserved.
+ * Inline TeX for Pandoc's `tex_math_dollars`: no whitespace may follow the opening
+ * `$` or precede the closing one, or Pandoc reads the dollars
+ * (and drops commands such as `\times` as raw TeX) instead of math. A formula with
+ * nothing but whitespace is no formula.
  */
-function inlineContentToMarkdown(content: unknown, format: ExportFormat): string {
-  if (!content) return "";
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
+export function inlineMathToMarkdown(formula: string): string {
+  const tex = formula.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  return tex ? `$${tex}$` : "";
+}
 
-    for (let index = 0; index < content.length;) {
-      const citation = format === "qmd"
-        ? citationToMarkdown(content[index])
-        : null;
+/** Display math may not contain a blank line between its `$$` delimiters. */
+function displayMathBody(formula: string): string {
+  return formula.split(/\r?\n/).map((line) => line.trimEnd()).filter((line) => line.trim()).join("\n");
+}
 
+type DelimitedStyle = "bold" | "italic" | "strike" | "underline";
+/** Outermost first, for styles that start on the same character. */
+const DELIMITED_STYLES: readonly DelimitedStyle[] = ["bold", "italic", "strike", "underline"];
+const STYLE_DELIMITERS: Record<DelimitedStyle, readonly [string, string]> = {
+  bold: ["**", "**"], italic: ["*", "*"], strike: ["~~", "~~"], underline: ["<u>", "</u>"],
+};
+const ATOM_TYPES = new Set(["citation", "crossReference", "quartoLiteral", "footnote", "inlineMath", "link"]);
+
+interface TextRun { type?: string; text: string; styles?: Record<string, unknown> }
+
+function isTextRun(item: unknown): item is TextRun {
+  if (typeof item !== "object" || item === null) return false;
+  const obj = item as Record<string, unknown>;
+  return typeof obj.text === "string" && !ATOM_TYPES.has(String(obj.type));
+}
+
+function runStyleKey(run: TextRun): string {
+  const styles = run.styles ?? {};
+  return [...DELIMITED_STYLES, "code"].filter((style) => styles[style]).join(" ");
+}
+
+/** Runs that only differ in styles Markdown cannot show (colour, AI authorship)
+ * are one run: `*a**b*` is not emphasis, and two code spans in a row merge. */
+function mergeTextRuns(items: unknown[]): unknown[] {
+  const merged: unknown[] = [];
+  for (const item of items) {
+    const previous = merged.at(-1);
+    if (isTextRun(item) && isTextRun(previous) && runStyleKey(item) === runStyleKey(previous)) {
+      merged[merged.length - 1] = { ...previous, text: previous.text + item.text };
+    } else merged.push(item);
+  }
+  return merged;
+}
+
+function codeSpan(code: string): string {
+  const fence = "`".repeat(Math.max(0, ...Array.from(code.matchAll(/`+/g), (match) => match[0].length)) + 1);
+  const pad = code.startsWith("`") || code.endsWith("`") ? " " : "";
+  return `${fence}${pad}${code}${pad}${fence}`;
+}
+
+/** Pandoc reads text glued to a bare `@label` as part of the key or not as a
+ * citation at all; brackets keep it a reference. */
+const BARE_REFERENCE_UNSAFE_BEFORE = /[\p{L}\p{N}_@.*]$/u;
+const BARE_REFERENCE_UNSAFE_AFTER = /^(?:[\p{L}\p{N}_@[]|[:.#$%&\-+?<>~/][\p{L}\p{N}_])/u;
+
+/**
+ * Writes inline content as Pandoc Markdown. Styles open and close only where
+ * they change between runs, whitespace at a style boundary goes outside the
+ * delimiters (Pandoc does not read `* for each*` as emphasis), and a run with
+ * no visible text never gets delimiters.
+ */
+class InlineMarkdownWriter {
+  private out = "";
+  private open: DelimitedStyle[] = [];
+  /** Whitespace not yet written, held until we know which delimiters go before it. */
+  private space = "";
+
+  constructor(private readonly format: ExportFormat, private readonly tableCell: boolean) {}
+
+  write(content: unknown[]): string {
+    const items = mergeTextRuns(content);
+    for (let index = 0; index < items.length;) {
+      const item = items[index];
+      const citation = this.format === "qmd" ? citationToMarkdown(item) : null;
       if (citation) {
         const citations = [citation];
-        index += 1;
-
-        while (index < content.length) {
-          const nextCitation = citationToMarkdown(content[index]);
-          if (!nextCitation) break;
-          citations.push(nextCitation);
-          index += 1;
+        for (index += 1; index < items.length; index += 1) {
+          const next = citationToMarkdown(items[index]);
+          if (!next) break;
+          citations.push(next);
         }
-
-        parts.push(`[${citations.join("; ")}]`);
+        this.atom(`[${citations.join("; ")}]`);
         continue;
       }
-
-      let part = inlineContentToMarkdown(content[index], format);
-      const item = content[index] as Record<string, unknown> | null;
-      if (item?.type === "crossReference" && !inlineProp(item, "bracketed")) {
-        const before = parts.at(-1) ?? "";
-        const after = inlineContentToMarkdown(content[index + 1], format);
-        if (/[\p{L}\p{N}_@]$/u.test(before) || /^[\p{L}\p{N}_@]/u.test(after)) part = `[${part}]`;
-      }
-      parts.push(part);
+      if (isTextRun(item)) this.text(item);
+      else if (typeof item === "object" && item !== null) this.inline(item as Record<string, unknown>, items[index + 1]);
       index += 1;
     }
-
-    return parts.join("");
+    this.closeTo(0);
+    this.flushSpace();
+    return this.out;
   }
 
-  if (typeof content === "object" && content !== null) {
-    const obj = content as Record<string, unknown>;
-    const text = typeof obj.text === "string" ? obj.text : "";
-    const styles = (obj.styles || {}) as Record<string, unknown>;
-
-    // Citation inline: [@citekey]
-    if (obj.type === "citation") {
-      const citation = citationToMarkdown(obj);
-      if (citation) return `[${citation}]`;
+  private text(run: TextRun) {
+    const styles = run.styles ?? {};
+    let keep = 0;
+    while (keep < this.open.length && styles[this.open[keep]]) keep += 1;
+    this.closeTo(keep);
+    const core = run.text.trim();
+    if (!core) {
+      this.space += run.text;
+      return;
     }
-
-    if (obj.type === "crossReference") {
-      const label = String(inlineProp(obj, "label") ?? "");
-      if (!validQuartoLabel(label)) throw new Error(`Invalid cross-reference: @${label}`);
-      const locator = String(inlineProp(obj, "locator") ?? "");
-      const reference = `@${label}${locator ? `, ${locator}` : ""}`;
-      return inlineProp(obj, "bracketed") ? `[${reference}]` : reference;
+    this.space += run.text.slice(0, run.text.length - run.text.trimStart().length);
+    this.flushSpace();
+    for (const style of DELIMITED_STYLES) {
+      if (!styles[style] || this.open.includes(style)) continue;
+      this.out += STYLE_DELIMITERS[style][0];
+      this.open.push(style);
     }
-    if (obj.type === "quartoLiteral") return String(inlineProp(obj, "source") ?? "");
-
-    // Footnote inline: [^N]
-    if (obj.type === "footnote") {
-      const index = inlineProp(obj, "index") ?? inlineProp(obj, "number");
-      if (typeof index === "number" || typeof index === "string") return `[^${index}]`;
-    }
-
-    if (obj.type === "inlineMath") {
-      const formula = inlineProp(obj, "formula");
-      if (typeof formula === "string") return `$${formula}$`;
-    }
-
-    if (obj.type === "link" && typeof obj.href === "string") {
-      return `[${inlineContentToMarkdown(obj.content, format)}](${obj.href})`;
-    }
-
-    let result = text;
-
-    // Apply styles
-    if (styles.bold) result = `**${result}**`;
-    if (styles.italic) result = `*${result}*`;
-    if (styles.underline) result = `<u>${result}</u>`;
-    if (styles.strike) result = `~~${result}~~`;
-    if (styles.code) result = `\`${result}\``;
-
-    // Links
-    if (obj.type === "link" && typeof obj.href === "string") {
-      return `[${result}](${obj.href})`;
-    }
-
-    return result;
+    this.out += styles.code ? codeSpan(core) : this.tableCell ? core.replace(/\|/g, "\\|") : core;
+    this.space = run.text.slice(run.text.trimEnd().length);
   }
 
-  return "";
+  private inline(obj: Record<string, unknown>, next: unknown) {
+    switch (obj.type) {
+      case "citation": {
+        const citation = citationToMarkdown(obj);
+        if (citation) this.atom(`[${citation}]`);
+        return;
+      }
+      case "crossReference": {
+        const label = String(inlineProp(obj, "label") ?? "");
+        if (!validQuartoLabel(label)) throw new Error(`Invalid cross-reference: @${label}`);
+        const locator = String(inlineProp(obj, "locator") ?? "");
+        const reference = `@${label}${locator ? `, ${locator}` : ""}`;
+        if (inlineProp(obj, "bracketed")) return this.atom(`[${reference}]`);
+        this.closeTo(0);
+        this.flushSpace();
+        const after = next === undefined ? "" : new InlineMarkdownWriter(this.format, this.tableCell).write([next]);
+        this.out += BARE_REFERENCE_UNSAFE_BEFORE.test(this.out) || BARE_REFERENCE_UNSAFE_AFTER.test(after)
+          ? `[${reference}]` : reference;
+        return;
+      }
+      case "quartoLiteral":
+        return this.atom(String(inlineProp(obj, "source") ?? ""));
+      case "footnote": {
+        const index = inlineProp(obj, "index") ?? inlineProp(obj, "number");
+        if (typeof index === "number" || typeof index === "string") this.atom(`[^${index}]`);
+        return;
+      }
+      case "inlineMath": {
+        const formula = inlineProp(obj, "formula");
+        if (typeof formula === "string") this.atom(inlineMathToMarkdown(formula));
+        return;
+      }
+      case "link":
+        if (typeof obj.href !== "string") return;
+        return this.atom(`[${inlineContentToMarkdown(obj.content, this.format, this.tableCell)}](${obj.href})`);
+    }
+  }
+
+  /** Math, citations and other unstyled inline content end every open style. */
+  private atom(markdown: string) {
+    if (!markdown) return;
+    this.closeTo(0);
+    this.flushSpace();
+    this.out += markdown;
+  }
+
+  private closeTo(depth: number) {
+    while (this.open.length > depth) this.out += STYLE_DELIMITERS[this.open.pop()!][1];
+  }
+
+  private flushSpace() {
+    this.out += this.space;
+    this.space = "";
+  }
+}
+
+/**
+ * Convert inline content to Markdown with styling preserved.
+ */
+export function inlineContentToMarkdown(content: unknown, format: ExportFormat, tableCell = false): string {
+  if (!content) return "";
+  if (typeof content === "string") return tableCell ? content.replace(/\|/g, "\\|") : content;
+  return new InlineMarkdownWriter(format, tableCell).write(Array.isArray(content) ? content : [content]);
 }
 
 /**
@@ -341,9 +428,11 @@ function standardBlockToMarkdown(
         throw new Error("Quarto pipe tables cannot preserve merged cells or multiple header rows. Split merged cells and use one header row before exporting.");
       }
       const alignment = table.rows[0]?.cells.map((cell) => cell.props?.textAlignment ?? "left") ?? [];
+      // Pandoc splits pipe-table cells around math and code spans, so only plain
+      // text escapes `|`: `$\|x\|$` would turn |x| into ‖x‖.
       const rows = table.rows.map((row) => `${indent}| ${row.cells.map((cell) => {
         const content = Array.isArray(cell) ? cell : (cell as { content: unknown }).content;
-        return inlineContentToMarkdown(content, format).replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+        return inlineContentToMarkdown(content, format, true).replace(/\n/g, "<br>");
       }).join(" | ")} |`);
       if (rows.length) rows.splice(1, 0, `${indent}| ${alignment.map((align) => align === "right" ? "---:" : align === "center" ? ":---:" : ":---").join(" | ")} |`);
       if (format === "qmd") {
@@ -393,7 +482,8 @@ function standardBlockToMarkdown(
 }
 
 function mathBlockToMarkdown(block: Block, format: ExportFormat): string {
-  const formula = (block.props.formula as string) || "";
+  const formula = displayMathBody(typeof block.props.formula === "string" ? block.props.formula : "");
+  if (!formula) return "";
   const label = format === "qmd" && typeof block.props.label === "string" && /^eq-[\w:.-]+$/.test(block.props.label)
     ? ` {#${block.props.label}}` : "";
   return `$$\n${formula}\n$$${label}`;
